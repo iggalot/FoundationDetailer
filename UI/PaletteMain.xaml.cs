@@ -1,133 +1,98 @@
-﻿using System;
-using System.Windows;
-using System.Windows.Controls;
-using FoundationDetailer.Model;
+﻿using FoundationDetailer.Model;
 using FoundationDetailer.Storage;
 using FoundationDetailer.AutoCAD;
+using System.Windows;
+using System.Windows.Controls;
 
 namespace FoundationDetailer.UI
 {
     public partial class PaletteMain : UserControl
     {
-        // The foundation model for this session
         public FoundationModel CurrentModel { get; set; } = new FoundationModel();
 
         public PaletteMain()
         {
             InitializeComponent();
-            WireButtonEvents();
+            WireEvents();
         }
 
-        /// <summary>
-        /// Hook all button click events to their handlers
-        /// </summary>
-        private void WireButtonEvents()
+        private void WireEvents()
         {
-            BtnSelectBoundary.Click += BtnSelectBoundary_Click;
-            BtnAddPiers.Click += BtnAddPiers_Click;
-            BtnAddGradeBeams.Click += BtnAddGradeBeams_Click;
-            BtnAddRebar.Click += BtnAddRebar_Click;
-            BtnAddStrands.Click += BtnAddStrands_Click;
-            BtnPreview.Click += BtnPreview_Click;
-            BtnClearPreview.Click += BtnClearPreview_Click;
-            BtnCommit.Click += BtnCommit_Click;
-            BtnSave.Click += BtnSave_Click;
-            BtnLoad.Click += BtnLoad_Click;
+            BtnSelectBoundary.Click += (s, e) => SelectBoundary();
+            BtnAddPiers.Click += (s, e) => AddPiers();
+            BtnAddGradeBeams.Click += (s, e) => AddGradeBeams();
+            BtnAddRebar.Click += (s, e) => AddRebarBars();
+            BtnAddStrands.Click += (s, e) => AddStrands();
+
+            BtnPreview.Click += (s, e) => ShowPreview();
+            BtnClearPreview.Click += (s, e) => ClearPreview();
+            BtnCommit.Click += (s, e) => CommitToDrawing();
+
+            BtnSave.Click += (s, e) => SaveModel();
+            BtnLoad.Click += (s, e) => LoadModel();
         }
 
-        #region --- Button Handlers ---
-
-        private void BtnSelectBoundary_Click(object sender, RoutedEventArgs e)
+        private void SelectBoundary()
         {
-            MessageBox.Show("Select boundary in AutoCAD.");
+            MessageBox.Show("TODO: implement boundary picker.");
         }
 
-        private void BtnAddPiers_Click(object sender, RoutedEventArgs e)
+        private void AddPiers()
         {
-            MessageBox.Show("Add piers to model.");
+            MessageBox.Show("TODO: add piers dialog.");
         }
 
-        private void BtnAddGradeBeams_Click(object sender, RoutedEventArgs e)
+        private void AddGradeBeams()
         {
-            MessageBox.Show("Add grade beams to model.");
+            MessageBox.Show("TODO: add grade beams dialog.");
         }
 
-        private void BtnAddRebar_Click(object sender, RoutedEventArgs e)
+        private void AddRebarBars()
         {
-            MessageBox.Show("Add rebar bars to model.");
+            MessageBox.Show("TODO: add rebar dialog.");
         }
 
-        private void BtnAddStrands_Click(object sender, RoutedEventArgs e)
+        private void AddStrands()
         {
-            MessageBox.Show("Add slab/beam strands to model.");
+            MessageBox.Show("TODO: add strands dialog.");
         }
 
-        private void BtnPreview_Click(object sender, RoutedEventArgs e)
+        private void ShowPreview()
         {
-            try
-            {
-                PreviewManager.ShowPreview(CurrentModel);
-                TxtStatus.Text = "Preview shown.";
-            }
-            catch (Exception ex)
-            {
-                TxtStatus.Text = $"Preview error: {ex.Message}";
-            }
+            PreviewManager.ShowPreview(CurrentModel);
+            TxtStatus.Text = "Preview shown.";
         }
 
-        private void BtnClearPreview_Click(object sender, RoutedEventArgs e)
+        private void ClearPreview()
         {
             PreviewManager.ClearPreview();
             TxtStatus.Text = "Preview cleared.";
         }
 
-        private void BtnCommit_Click(object sender, RoutedEventArgs e)
+        private void CommitToDrawing()
         {
-            try
-            {
-                AutoCADAdapter.CommitModelToDrawing(CurrentModel);
-                TxtStatus.Text = "Model committed to DWG.";
-            }
-            catch (Exception ex)
-            {
-                TxtStatus.Text = $"Commit error: {ex.Message}";
-            }
+            AutoCADAdapter.CommitModelToDrawing(CurrentModel);
+            TxtStatus.Text = "Committed to DWG.";
         }
 
-        private void BtnSave_Click(object sender, RoutedEventArgs e)
+        private void SaveModel()
         {
-            try
-            {
-                JsonStorage.SaveModel(CurrentModel);
-                TxtStatus.Text = "Model saved.";
-            }
-            catch (Exception ex)
-            {
-                TxtStatus.Text = $"Save error: {ex.Message}";
-            }
+            JsonStorage.SaveModel(CurrentModel);
+            TxtStatus.Text = "Model saved.";
         }
 
-        private void BtnLoad_Click(object sender, RoutedEventArgs e)
+        private void LoadModel()
         {
-            try
+            var loaded = JsonStorage.LoadModel();
+            if (loaded != null)
             {
-                var model = JsonStorage.LoadModel();
-                if (model != null)
-                {
-                    CurrentModel = model;
-                    TxtStatus.Text = "Model loaded.";
-                }
-                else
-                {
-                    TxtStatus.Text = "No saved model found.";
-                }
+                CurrentModel = loaded;
+                TxtStatus.Text = "Model loaded.";
             }
-            catch (Exception ex)
+            else
             {
-                TxtStatus.Text = $"Load error: {ex.Message}";
+                TxtStatus.Text = "No saved model found.";
             }
         }
-
-        #endregion
     }
 }
