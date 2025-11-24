@@ -1,0 +1,36 @@
+﻿<UserControl x:Class="FoundationDetailer.UI.PaletteMain"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Height="400" Width="250">
+    <Grid Margin="5">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Orientation="Vertical" Grid.Row="0" Margin="0,0,0,5">
+            <TextBlock Text="Foundation Detailer" FontWeight="Bold" FontSize="16" Margin="0,0,0,10"/>
+        </StackPanel>
+
+        <StackPanel Orientation="Vertical" Grid.Row="1" Margin="0,0,0,5" VerticalAlignment="Top">
+            <Button x:Name="BtnSelectBoundary" Content="Select Boundary" Margin="0,5"/>
+            <Button x:Name="BtnAddPiers" Content="Add Piers" Margin="0,5"/>
+            <Button x:Name="BtnAddGradeBeams" Content="Add Grade Beams" Margin="0,5"/>
+            <Button x:Name="BtnAddRebar" Content="Add Rebar Bars" Margin="0,5"/>
+            <Button x:Name="BtnAddStrands" Content="Add Strands" Margin="0,5"/>
+            <Button x:Name="BtnPreview" Content="Preview" Margin="0,2"/>
+            <Button x:Name="BtnClearPreview" Content="Clear Preview" Margin="0,2"/>
+            <Button x:Name="BtnCommit" Content="Commit to DWG" Margin="0,2"/>
+        </StackPanel>
+
+        <StackPanel Orientation="Horizontal" Grid.Row="2" HorizontalAlignment="Center" Margin="0,10,0,0">
+            
+            <Button x:Name="BtnSave" Content="Save" Width="80" Margin="5"/>
+            <Button x:Name="BtnLoad" Content="Load" Width="80" Margin="5"/>
+
+            <TextBlock Text="Status:" Margin="0,10,0,2"/>
+            <TextBlock x:Name="TxtStatus" Text="Ready" FontStyle="Italic"/>
+        </StackPanel>
+    </Grid>
+</UserControl>
