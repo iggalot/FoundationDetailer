@@ -95,4 +95,7 @@
     <None Include="packages.config" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <PropertyGroup>
+    <PostBuildEvent>if "$(Configuration)"=="Debug" "C:\Program Files\Autodesk\AutoCAD 2025\acad.exe" /nologo</PostBuildEvent>
+  </PropertyGroup>
 </Project>
