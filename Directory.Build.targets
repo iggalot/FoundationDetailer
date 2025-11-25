@@ -1,0 +1,42 @@
+<Project>
+	<Target Name="RunAfterSolutionBuild" AfterTargets="Build" Condition="'$(RunAfterSolutionBuildExecuted)' != 'true'">
+
+		<!-- Mark this so it doesn’t run again for other projects -->
+		<PropertyGroup>
+			<RunAfterSolutionBuildExecuted>true</RunAfterSolutionBuildExecuted>
+		</PropertyGroup>
+
+		<!-- Copy DLLs -->
+
+		<!-- Ensure the AutoCAD bundle folder exists -->
+		<MakeDir Directories="$(AppData)\Autodesk\ApplicationPlugins\EE_Analyzer.bundle\Contents\Win64" />
+
+
+		<ItemGroup>
+			<AllDlls Include="$(SolutionDir)**\bin\$(Configuration)\*.dll" />
+			<!--<AllDlls Include="$(SolutionDir)**\bin\$(Configuration)\*.pdb" />-->
+		</ItemGroup>
+
+		<Copy
+			SourceFiles="@(AllDlls)"
+			DestinationFolder="$(AppData)\Autodesk\ApplicationPlugins\EE_Foundation.bundle\Contents\Win64"
+			SkipUnchangedFiles="true" />
+
+
+		<!-- Copy optional files -->
+		<!--<ItemGroup>
+			<OtherFiles Include="$(SolutionDir)**\*.json" />
+			<OtherFiles Include="$(SolutionDir)**\bin\$(Configuration)\*.json" />
+
+
+		</ItemGroup>
+		<Copy
+			SourceFiles="@(OtherFiles)"
+			DestinationFolder="$(AppData)\Autodesk\ApplicationPlugins\EE_Analyzer.bundle\Contents\Win64"
+			SkipUnchangedFiles="true" />-->
+
+
+
+
+	</Target>
+</Project>
