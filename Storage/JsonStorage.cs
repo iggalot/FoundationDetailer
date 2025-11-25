@@ -1,46 +1,47 @@
-﻿using FoundationDetailer.Model;
-using Newtonsoft.Json;
-using System;
+﻿using System;
 using System.IO;
+using Newtonsoft.Json;
 
 namespace FoundationDetailer.Storage
 {
     public static class JsonStorage
     {
-        // Default save location
-        private static readonly string _filePath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-            "FoundationDetailer_Model.json"
-        );
-
         /// <summary>
-        /// Save model to default path
+        /// Saves the model to a JSON file.
         /// </summary>
-        public static void SaveModel(FoundationModel model)
+        public static void Save<T>(string filePath, T model)
         {
-            string json = JsonConvert.SerializeObject(model, Formatting.Indented);
-            File.WriteAllText(_filePath, json);
+            if (model == null)
+                throw new ArgumentNullException(nameof(model), "Cannot save a null model.");
+
+            try
+            {
+                string json = JsonConvert.SerializeObject(model, Formatting.Indented);
+                File.WriteAllText(filePath, json);
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Error saving model to JSON: {ex.Message}", ex);
+            }
         }
 
         /// <summary>
-        /// Load model from default path
+        /// Loads a model from a JSON file.
         /// </summary>
-        public static FoundationModel LoadModel()
+        public static T Load<T>(string filePath) where T : class
         {
-            if (!File.Exists(_filePath))
+            if (!File.Exists(filePath))
                 return null;
 
-            string json = File.ReadAllText(_filePath);
-            return JsonConvert.DeserializeObject<FoundationModel>(json);
-        }
-
-        /// <summary>
-        /// Optional: clear saved model
-        /// </summary>
-        public static void ClearSavedModel()
-        {
-            if (File.Exists(_filePath))
-                File.Delete(_filePath);
+            try
+            {
+                string json = File.ReadAllText(filePath);
+                return JsonConvert.DeserializeObject<T>(json);
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Error loading model from JSON: {ex.Message}", ex);
+            }
         }
     }
 }

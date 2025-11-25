@@ -1,144 +1,116 @@
 ﻿using Autodesk.AutoCAD.Geometry;
+using System;
 using System.Collections.Generic;
 
 namespace FoundationDetailer.Model
 {
-    /// <summary>
-    /// Main foundation model containing all elements of the foundation.
-    /// </summary>
     public class FoundationModel
     {
-        // --- Global settings ---
+        public FoundationModel()
+        {
+            Id = Guid.NewGuid();
+            Metadata = new ModelMetadata { SchemaVersion = ModelMetadata.CurrentSchemaVersion };
+        }
+
+        public Guid Id { get; set; }
+        public ModelMetadata Metadata { get; set; }
+
         public FoundationSettings Settings { get; set; } = new FoundationSettings();
 
-        // --- Geometry ---
         public List<Boundary> Boundaries { get; set; } = new List<Boundary>();
         public List<Pier> Piers { get; set; } = new List<Pier>();
         public List<GradeBeam> GradeBeams { get; set; } = new List<GradeBeam>();
-
-        // --- Reinforcement ---
         public List<RebarBar> Rebars { get; set; } = new List<RebarBar>();
         public List<Strand> Strands { get; set; } = new List<Strand>();
 
-        // --- Special regions ---
         public List<SlopeRegion> Slopes { get; set; } = new List<SlopeRegion>();
         public List<DropRegion> Drops { get; set; } = new List<DropRegion>();
         public List<CurbRegion> Curbs { get; set; } = new List<CurbRegion>();
     }
 
-    /// <summary>
-    /// Outer boundary of a foundation slab.
-    /// </summary>
+    public class ModelMetadata
+    {
+        public const int CurrentSchemaVersion = 1;
+        public int SchemaVersion { get; set; }
+        public DateTime CreatedUtc { get; set; } = DateTime.UtcNow;
+        public DateTime LastSavedUtc { get; set; } = DateTime.UtcNow;
+    }
+
+    public class FoundationSettings
+    {
+        public bool IsReinforced { get; set; } = true;
+        public bool HasPrestress { get; set; } = false;
+        public double SlabThicknessIn { get; set; } = 8.0;
+        public double GradeBeamDepthIn { get; set; } = 12.0;
+        public double DefaultCurbHeightIn { get; set; } = 6.0;
+        public bool AddCurbs { get; set; } = true;
+        public string DefaultRebarSize { get; set; } = "#5";
+        public double DefaultBarSpacingIn { get; set; } = 12.0;
+    }
+
     public class Boundary
     {
         public List<Point3d> Points { get; set; } = new List<Point3d>();
         public double Elevation { get; set; } = 0.0;
+        public string Name { get; set; }
     }
 
-    /// <summary>
-    /// Pier: circular or square vertical element.
-    /// </summary>
     public class Pier
     {
+        public Guid Id { get; set; } = Guid.NewGuid();
         public Point3d Location { get; set; } = new Point3d();
         public bool IsCircular { get; set; } = true;
-        public double Diameter { get; set; } = 12.0; // for circular
-        public double Width { get; set; } = 12.0;    // for square
-        public double Depth { get; set; } = 12.0;
+        public double DiameterIn { get; set; } = 12.0;
+        public double WidthIn { get; set; } = 12.0; // for square
+        public double DepthIn { get; set; } = 12.0;
+        public string Layer { get; set; } = "FOUNDATION-PIER";
     }
 
-    /// <summary>
-    /// Grade beam: horizontal beam connecting piers or foundations.
-    /// </summary>
     public class GradeBeam
     {
+        public Guid Id { get; set; } = Guid.NewGuid();
         public Point3d Start { get; set; } = new Point3d();
         public Point3d End { get; set; } = new Point3d();
-        public double Width { get; set; } = 12.0;
-        public double Depth { get; set; } = 12.0;
+        public double WidthIn { get; set; } = 12.0;
+        public double DepthIn { get; set; } = 12.0;
+        public string Layer { get; set; } = "FOUNDATION-GRADEBEAM";
     }
 
-    /// <summary>
-    /// Reinforcing bar in slab or beam.
-    /// </summary>
     public class RebarBar
     {
+        public Guid Id { get; set; } = Guid.NewGuid();
         public Point3d Start { get; set; } = new Point3d();
         public Point3d End { get; set; } = new Point3d();
         public string BarSize { get; set; } = "#5";
-        public double Spacing { get; set; } = 12.0;
-        public string Layer { get; set; } = "REBAR";
+        public double SpacingIn { get; set; } = 12.0;
+        public string Layer { get; set; } = "FOUNDATION-REBAR";
     }
 
-    /// <summary>
-    /// Prestress or strand reinforcement.
-    /// </summary>
     public class Strand
     {
+        public Guid Id { get; set; } = Guid.NewGuid();
         public Point3d Start { get; set; } = new Point3d();
         public Point3d End { get; set; } = new Point3d();
         public string StrandSize { get; set; } = "0.6in";
-        public string Layer { get; set; } = "STRAND";
+        public string Layer { get; set; } = "FOUNDATION-STRAND";
     }
 
-    /// <summary>
-    /// Sloped region of slab.
-    /// </summary>
     public class SlopeRegion
     {
         public List<Point3d> Boundary { get; set; } = new List<Point3d>();
-        public double Slope { get; set; } = 0.0; // slope ratio, e.g., 1/8
+        public double SlopeRatio { get; set; } = 1.0 / 8.0;
     }
 
-    /// <summary>
-    /// Dropped slab region.
-    /// </summary>
     public class DropRegion
     {
         public List<Point3d> Boundary { get; set; } = new List<Point3d>();
-        public double Depth { get; set; } = 0.0; // positive down
+        public double DepthIn { get; set; } = 0.0;
     }
 
-    /// <summary>
-    /// Curb or brick ledge region.
-    /// </summary>
     public class CurbRegion
     {
         public List<Point3d> Boundary { get; set; } = new List<Point3d>();
-        public double Height { get; set; } = 6.0;
-        public double Width { get; set; } = 6.0;
-    }
-
-    /// <summary>
-    /// Global foundation defaults and settings.
-    /// </summary>
-    public class FoundationSettings
-    {
-        // Concrete & structural
-        public bool IsReinforced { get; set; } = true;
-        public bool HasPrestress { get; set; } = false;
-        public double SlabThickness { get; set; } = 8.0;
-        public double GradeBeamDepth { get; set; } = 12.0;
-        public double PierDiameter { get; set; } = 12.0;
-        public double PierWidth { get; set; } = 12.0;
-
-        // Bar & strand defaults
-        public string DefaultRebarSize { get; set; } = "#5";
-        public double DefaultBarSpacing { get; set; } = 12.0;
-        public string DefaultStrandSize { get; set; } = "0.6in";
-
-        // Curb / brick ledge
-        public bool AddCurbs { get; set; } = true;
-        public double CurbHeight { get; set; } = 6.0;
-        public double CurbWidth { get; set; } = 6.0;
-        public bool AddBrickLedge { get; set; } = false;
-
-        // Slopes / drops
-        public double DefaultSlope { get; set; } = 1.0 / 8.0;
-        public double DefaultDrop { get; set; } = 0.0;
-
-        // Misc
-        public string ConcreteStrength { get; set; } = "4000 psi";
-        public string ProjectNotes { get; set; } = "";
+        public double HeightIn { get; set; } = 6.0;
+        public double WidthIn { get; set; } = 6.0;
     }
 }

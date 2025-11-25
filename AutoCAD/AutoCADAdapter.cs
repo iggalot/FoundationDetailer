@@ -1,133 +1,90 @@
 ﻿using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
-using Autodesk.AutoCAD.Runtime;
 using FoundationDetailer.Model;
-using System.Collections.Generic;
+using System;
 
 namespace FoundationDetailer.AutoCAD
 {
     public static class AutoCADAdapter
     {
-        /// <summary>
-        /// Commit the foundation model permanently to the AutoCAD drawing.
-        /// </summary>
         public static void CommitModelToDrawing(FoundationModel model)
         {
+            if (model == null) throw new ArgumentNullException(nameof(model));
             Document doc = Application.DocumentManager.MdiActiveDocument;
             Database db = doc.Database;
 
-            using (Transaction tr = db.TransactionManager.StartTransaction())
+            using (var tr = db.TransactionManager.StartTransaction())
             {
-                BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-                BlockTableRecord btr = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
+                var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
-                // --- Boundaries ---
+                // Boundaries
                 foreach (var b in model.Boundaries)
                 {
-                    Polyline pline = CreatePolyline(b.Points, b.Elevation);
-                    pline.Layer = "BOUNDARY";
-                    btr.AppendEntity(pline);
-                    tr.AddNewlyCreatedDBObject(pline, true);
+                    var pl = CreatePolyline(b.Points, b.Elevation);
+                    pl.Layer = "FOUNDATION-BOUNDARY";
+                    ms.AppendEntity(pl);
+                    tr.AddNewlyCreatedDBObject(pl, true);
+                    WriteExtensionXRecord(pl, "Boundary", b.Name ?? model.Id.ToString(), tr);
                 }
 
-                // --- Piers ---
-                foreach (var pier in model.Piers)
+                // Piers
+                foreach (var p in model.Piers)
                 {
-                    Entity ent;
-                    if (pier.IsCircular)
-                    {
-                        ent = new Circle(pier.Location, Vector3d.ZAxis, pier.Diameter / 2);
-                    }
-                    else
-                    {
-                        ent = CreateRectangle(pier.Location, pier.Width, pier.Depth);
-                    }
-                    ent.Layer = "PIER";
-                    btr.AppendEntity(ent);
+                    Entity ent = p.IsCircular
+                        ? (Entity)new Circle(p.Location, Vector3d.ZAxis, p.DiameterIn / 2.0)
+                        : (Entity)CreateRectangle(p.Location, p.WidthIn, p.DepthIn);
+                    ent.Layer = p.Layer ?? "FOUNDATION-PIER";
+                    ms.AppendEntity(ent);
                     tr.AddNewlyCreatedDBObject(ent, true);
+                    WriteExtensionXRecord(ent, "Pier", p.Id.ToString(), tr);
                 }
 
-                // --- Grade Beams ---
+                // Grade beams
                 foreach (var gb in model.GradeBeams)
                 {
-                    Line line = new Line(gb.Start, gb.End) { Layer = "GRADEBEAM" };
-                    btr.AppendEntity(line);
-                    tr.AddNewlyCreatedDBObject(line, true);
+                    Line ln = new Line(gb.Start, gb.End) { Layer = gb.Layer ?? "FOUNDATION-GRADEBEAM" };
+                    ms.AppendEntity(ln);
+                    tr.AddNewlyCreatedDBObject(ln, true);
+                    WriteExtensionXRecord(ln, "GradeBeam", gb.Id.ToString(), tr);
                 }
 
-                // --- Rebar Bars ---
+                // Rebars & strands
                 foreach (var r in model.Rebars)
                 {
-                    Line line = new Line(r.Start, r.End)
-                    {
-                        Layer = r.Layer ?? "REBAR"
-                    };
-                    btr.AppendEntity(line);
-                    tr.AddNewlyCreatedDBObject(line, true);
+                    Line ln = new Line(r.Start, r.End) { Layer = r.Layer ?? "FOUNDATION-REBAR" };
+                    ms.AppendEntity(ln);
+                    tr.AddNewlyCreatedDBObject(ln, true);
+                    WriteExtensionXRecord(ln, "Rebar", r.Id.ToString(), tr);
                 }
-
-                // --- Strands ---
                 foreach (var s in model.Strands)
                 {
-                    Line line = new Line(s.Start, s.End)
-                    {
-                        Layer = s.Layer ?? "STRAND"
-                    };
-                    btr.AppendEntity(line);
-                    tr.AddNewlyCreatedDBObject(line, true);
-                }
-
-                // --- Slopes ---
-                foreach (var slope in model.Slopes)
-                {
-                    Polyline pl = CreatePolyline(slope.Boundary, 0);
-                    pl.Layer = "SLOPE";
-                    btr.AppendEntity(pl);
-                    tr.AddNewlyCreatedDBObject(pl, true);
-                }
-
-                // --- Drops ---
-                foreach (var drop in model.Drops)
-                {
-                    Polyline pl = CreatePolyline(drop.Boundary, -drop.Depth);
-                    pl.Layer = "DROP";
-                    btr.AppendEntity(pl);
-                    tr.AddNewlyCreatedDBObject(pl, true);
-                }
-
-                // --- Curbs ---
-                foreach (var curb in model.Curbs)
-                {
-                    Polyline pl = CreatePolyline(curb.Boundary, 0);
-                    pl.Layer = "CURB";
-                    btr.AppendEntity(pl);
-                    tr.AddNewlyCreatedDBObject(pl, true);
+                    Line ln = new Line(s.Start, s.End) { Layer = s.Layer ?? "FOUNDATION-STRAND" };
+                    ms.AppendEntity(ln);
+                    tr.AddNewlyCreatedDBObject(ln, true);
+                    WriteExtensionXRecord(ln, "Strand", s.Id.ToString(), tr);
                 }
 
                 tr.Commit();
             }
         }
 
-        #region --- Helper Methods ---
-
-        private static Polyline CreatePolyline(List<Point3d> points, double elevation)
+        private static Polyline CreatePolyline(System.Collections.Generic.List<Point3d> pts, double elevation)
         {
             Polyline pl = new Polyline();
-            for (int i = 0; i < points.Count; i++)
-            {
-                pl.AddVertexAt(i, new Autodesk.AutoCAD.Geometry.Point2d(points[i].X, points[i].Y), 0, 0, 0);
-            }
+            for (int i = 0; i < pts.Count; i++)
+                pl.AddVertexAt(i, new Autodesk.AutoCAD.Geometry.Point2d(pts[i].X, pts[i].Y), 0, 0, 0);
             pl.Closed = true;
             pl.Elevation = elevation;
             return pl;
         }
 
-        private static Polyline CreateRectangle(Point3d center, double width, double depth)
+        private static Polyline CreateRectangle(Point3d center, double widthIn, double depthIn)
         {
-            double hx = width / 2.0;
-            double hy = depth / 2.0;
-            List<Point3d> pts = new List<Point3d>
+            double hx = widthIn / 2.0;
+            double hy = depthIn / 2.0;
+            var pts = new System.Collections.Generic.List<Point3d>
             {
                 new Point3d(center.X - hx, center.Y - hy, center.Z),
                 new Point3d(center.X + hx, center.Y - hy, center.Z),
@@ -137,6 +94,23 @@ namespace FoundationDetailer.AutoCAD
             return CreatePolyline(pts, center.Z);
         }
 
-        #endregion
+        private static void WriteExtensionXRecord(Entity ent, string type, string id, Transaction tr)
+        {
+            if (!ent.ExtensionDictionary.IsValid) ent.CreateExtensionDictionary();
+            DBDictionary ext = (DBDictionary)tr.GetObject(ent.ExtensionDictionary, OpenMode.ForWrite);
+            if (ext == null) return;
+
+            Xrecord xr = new Xrecord();
+            xr.Data = new ResultBuffer(
+                new TypedValue((int)DxfCode.Text, type),
+                new TypedValue((int)DxfCode.Text, id)
+            );
+
+            if (ext.Contains("FoundationObj"))
+                ext.Remove("FoundationObj");
+
+            ext.SetAt("FoundationObj", xr);
+            tr.AddNewlyCreatedDBObject(xr, true);
+        }
     }
 }

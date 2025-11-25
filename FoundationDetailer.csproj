@@ -64,6 +64,7 @@
   <ItemGroup>
     <Compile Include="AutoCAD\AutoCADAdapter.cs" />
     <Compile Include="Commands\FoundationCommands.cs" />
+    <Compile Include="UI\Converters\PierConverter.cs" />
     <Compile Include="Data\CompanyStandards.cs" />
     <Compile Include="Data\FoundationModel.cs" />
     <Compile Include="Data\GradeBeam.cs" />
@@ -72,11 +73,18 @@
     <Compile Include="Preview\PreviewManager.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Storage\JsonStorage.cs" />
+    <Compile Include="UI\Controls\PierControl.xaml.cs">
+      <DependentUpon>PierControl.xaml</DependentUpon>
+    </Compile>
     <Compile Include="UI\PaletteMain.xaml.cs">
       <DependentUpon>PaletteMain.xaml</DependentUpon>
     </Compile>
   </ItemGroup>
   <ItemGroup>
+    <Page Include="UI\Controls\PierControl.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
     <Page Include="UI\PaletteMain.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
@@ -85,5 +93,6 @@
   <ItemGroup>
     <None Include="packages.config" />
   </ItemGroup>
+  <ItemGroup />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

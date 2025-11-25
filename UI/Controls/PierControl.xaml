@@ -1,0 +1,55 @@
+﻿<UserControl x:Class="FoundationDetailer.UI.Controls.PierControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Height="Auto" Width="Auto">
+    <Border BorderBrush="Gray" BorderThickness="1" Padding="6" CornerRadius="4">
+        <StackPanel Orientation="Vertical" Margin="4">
+
+            <TextBlock Text="Pier Configuration"
+                       FontWeight="Bold"
+                       Margin="0,0,0,8"
+                       FontSize="14"/>
+
+            <!-- Diameter -->
+            <StackPanel Orientation="Horizontal" Margin="0,2">
+                <TextBlock Text="Diameter (in):" Width="110" VerticalAlignment="Center"/>
+                <TextBox x:Name="TxtDiameter" Width="80"/>
+            </StackPanel>
+
+            <!-- Depth -->
+            <StackPanel Orientation="Horizontal" Margin="0,2">
+                <TextBlock Text="Depth (in):" Width="110" VerticalAlignment="Center"/>
+                <TextBox x:Name="TxtDepth" Width="80"/>
+            </StackPanel>
+
+            <!-- Concrete Strength -->
+            <StackPanel Orientation="Horizontal" Margin="0,2">
+                <TextBlock Text="f'c (psi):" Width="110" VerticalAlignment="Center"/>
+                <TextBox x:Name="TxtConcreteStrength" Width="80"/>
+            </StackPanel>
+
+            <!-- Rebar Count -->
+            <StackPanel Orientation="Horizontal" Margin="0,2">
+                <TextBlock Text="Rebar Qty:" Width="110" VerticalAlignment="Center"/>
+                <TextBox x:Name="TxtRebarQty" Width="80"/>
+            </StackPanel>
+
+            <!-- Rebar Size -->
+            <StackPanel Orientation="Horizontal" Margin="0,2">
+                <TextBlock Text="Rebar Size (#):" Width="110" VerticalAlignment="Center"/>
+                <TextBox x:Name="TxtRebarSize" Width="80"/>
+            </StackPanel>
+
+            <!-- Location Button -->
+            <Button x:Name="BtnPickLocation"
+                    Content="Pick Pier Location"
+                    Margin="0,8,0,2"/>
+
+            <!-- Add Pier Button -->
+            <Button x:Name="BtnAddPier"
+                    Content="Add Pier"
+                    Margin="0,4,0,0"
+                    Background="#FFEEEEEE"/>
+        </StackPanel>
+    </Border>
+</UserControl>

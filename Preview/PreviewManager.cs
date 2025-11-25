@@ -1,132 +1,122 @@
-﻿using Autodesk.AutoCAD.DatabaseServices;
+﻿using Autodesk.AutoCAD.GraphicsInterface;
 using Autodesk.AutoCAD.Geometry;
-using Autodesk.AutoCAD.GraphicsInterface;
+using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.ApplicationServices;
 using FoundationDetailer.Model;
 using System.Collections.Generic;
-
-using DB = Autodesk.AutoCAD.DatabaseServices;
 
 namespace FoundationDetailer.AutoCAD
 {
     public static class PreviewManager
     {
-        // Store all transient DB entities
-        private static List<Entity> _transients = new List<Entity>();
+        private static readonly List<Entity> _transients = new List<Entity>();
 
-        /// <summary>
-        /// Show a transient preview of the foundation model.
-        /// </summary>
         public static void ShowPreview(FoundationModel model)
         {
             ClearPreview();
+            if (model == null) return;
 
             // Boundaries
             foreach (var b in model.Boundaries)
             {
-                DB.Polyline pl = CreatePolyline(b.Points, b.Elevation);
-                AddTransient(pl);
+                var pl = CreateDbPolyline(b.Points, b.Elevation);
+                pl.ColorIndex = 7; // white
+                _AddTransient(pl);
             }
 
             // Piers
-            foreach (var pier in model.Piers)
+            foreach (var p in model.Piers)
             {
-                Entity ent = pier.IsCircular
-                    ? (Entity)new Circle(pier.Location, Vector3d.ZAxis, pier.Diameter / 2)
-                    : (Entity)CreateRectangle(pier.Location, pier.Width, pier.Depth);
-                AddTransient(ent);
+                Entity ent = p.IsCircular
+                    ? (Entity)new Circle(p.Location, Vector3d.ZAxis, p.DiameterIn / 2.0)
+                    : (Entity)CreateDbRectangle(p.Location, p.WidthIn, p.DepthIn);
+                ent.ColorIndex = 3;
+                _AddTransient(ent);
             }
 
-            // Grade Beams
+            // Grade beams
             foreach (var gb in model.GradeBeams)
             {
-                Line line = new Line(gb.Start, gb.End);
-                AddTransient(line);
+                var ln = new Line(gb.Start, gb.End) { ColorIndex = 5 };
+                _AddTransient(ln);
             }
 
             // Rebars
             foreach (var r in model.Rebars)
             {
-                Line line = new Line(r.Start, r.End);
-                AddTransient(line);
+                var ln = new Line(r.Start, r.End) { ColorIndex = 1 };
+                _AddTransient(ln);
             }
 
             // Strands
             foreach (var s in model.Strands)
             {
-                Line line = new Line(s.Start, s.End);
-                AddTransient(line);
+                var ln = new Line(s.Start, s.End) { ColorIndex = 6 };
+                _AddTransient(ln);
             }
 
-            // Slopes
+            // Slopes / drops / curbs as polylines
             foreach (var slope in model.Slopes)
             {
-                DB.Polyline pl = CreatePolyline(slope.Boundary, 0);
-                AddTransient(pl);
+                var pl = CreateDbPolyline(slope.Boundary, 0);
+                pl.ColorIndex = 2;
+                _AddTransient(pl);
             }
 
-            // Drops
             foreach (var drop in model.Drops)
             {
-                DB.Polyline pl = CreatePolyline(drop.Boundary, -drop.Depth);
-                AddTransient(pl);
+                var pl = CreateDbPolyline(drop.Boundary, -drop.DepthIn);
+                pl.ColorIndex = 4;
+                _AddTransient(pl);
             }
 
-            // Curbs
             foreach (var curb in model.Curbs)
             {
-                DB.Polyline pl = CreatePolyline(curb.Boundary, 0);
-                AddTransient(pl);
+                var pl = CreateDbPolyline(curb.Boundary, 0);
+                pl.ColorIndex = 8;
+                _AddTransient(pl);
             }
         }
 
-        /// <summary>
-        /// Clear all transient preview graphics.
-        /// </summary>
         public static void ClearPreview()
         {
+            var tm = TransientManager.CurrentTransientManager;
+            var ints = new IntegerCollection();
             foreach (var ent in _transients)
             {
-                TransientManager.CurrentTransientManager.EraseTransient(
-                    ent,
-                    new IntegerCollection()
-                );
+                tm.EraseTransient(ent, ints);
                 ent.Dispose();
             }
             _transients.Clear();
         }
 
-        #region --- Helper Methods ---
-
-        private static DB.Polyline CreatePolyline(List<Point3d> points, double elevation)
+        #region helpers
+        private static Autodesk.AutoCAD.DatabaseServices.Polyline CreateDbPolyline(List<Point3d> pts, double elevation)
         {
-            DB.Polyline pl = new DB.Polyline();
-            for (int i = 0; i < points.Count; i++)
-            {
-                var pt = points[i];
-                pl.AddVertexAt(i, new Autodesk.AutoCAD.Geometry.Point2d(pt.X, pt.Y), 0, 0, 0);
-            }
+            var pl = new Autodesk.AutoCAD.DatabaseServices.Polyline();
+            for (int i = 0; i < pts.Count; i++)
+                pl.AddVertexAt(i, new Autodesk.AutoCAD.Geometry.Point2d(pts[i].X, pts[i].Y), 0, 0, 0);
             pl.Closed = true;
             pl.Elevation = elevation;
             return pl;
         }
 
-        private static DB.Polyline CreateRectangle(Point3d center, double width, double depth)
+        private static Autodesk.AutoCAD.DatabaseServices.Polyline CreateDbRectangle(Point3d center, double widthIn, double depthIn)
         {
-            double hx = width / 2.0;
-            double hy = depth / 2.0;
-            List<Point3d> pts = new List<Point3d>
+            double hx = widthIn / 2.0;
+            double hy = depthIn / 2.0;
+            var pts = new List<Point3d>
             {
                 new Point3d(center.X - hx, center.Y - hy, center.Z),
                 new Point3d(center.X + hx, center.Y - hy, center.Z),
                 new Point3d(center.X + hx, center.Y + hy, center.Z),
                 new Point3d(center.X - hx, center.Y + hy, center.Z)
             };
-            return CreatePolyline(pts, center.Z);
+            return CreateDbPolyline(pts, center.Z);
         }
 
-        private static void AddTransient(Entity ent)
+        private static void _AddTransient(Entity ent)
         {
-            // Optionally assign color/layer for preview
             TransientManager.CurrentTransientManager.AddTransient(
                 ent,
                 TransientDrawingMode.DirectShortTerm,
@@ -135,7 +125,6 @@ namespace FoundationDetailer.AutoCAD
             );
             _transients.Add(ent);
         }
-
         #endregion
     }
 }
