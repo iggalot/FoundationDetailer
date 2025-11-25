@@ -5,11 +5,11 @@ using System.Runtime.InteropServices;
 // General Information about an assembly is controlled through the following
 // set of attributes. Change these attribute values to modify the information
 // associated with an assembly.
-[assembly: AssemblyTitle("FoundationDetailer")]
+[assembly: AssemblyTitle("FoundationDetailsLibraryAutoCAD")]
 [assembly: AssemblyDescription("")]
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyCompany("")]
-[assembly: AssemblyProduct("FoundationDetailer")]
+[assembly: AssemblyProduct("FoundationDetailsLibraryAutoCAD")]
 [assembly: AssemblyCopyright("Copyright ©  2025")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
@@ -20,7 +20,7 @@ using System.Runtime.InteropServices;
 [assembly: ComVisible(false)]
 
 // The following GUID is for the ID of the typelib if this project is exposed to COM
-[assembly: Guid("302e916c-1943-43c8-bd35-c9cd3fc5f440")]
+[assembly: Guid("a5c11154-466a-4fda-932e-fe9745d312c2")]
 
 // Version information for an assembly consists of the following four values:
 //
