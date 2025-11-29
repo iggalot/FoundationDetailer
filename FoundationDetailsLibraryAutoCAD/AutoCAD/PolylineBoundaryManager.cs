@@ -23,9 +23,17 @@ namespace FoundationDetailer.Utilities
         /// </summary>
         public static bool TrySetBoundary(Polyline pl)
         {
+            if (pl == null) return false;
+
+            var doc = Application.DocumentManager.MdiActiveDocument;
+
             try
             {
-                return SetBoundaryInternal(pl);
+                using (doc.LockDocument())
+                using (var tr = doc.TransactionManager.StartTransaction())
+                {
+                    return SetBoundaryInternal(pl, tr, doc.Database);
+                }
             }
             catch
             {
@@ -42,9 +50,10 @@ namespace FoundationDetailer.Utilities
             error = "";
             var doc = Application.DocumentManager.MdiActiveDocument;
 
-            using (var tr = doc.TransactionManager.StartTransaction())
+            try
             {
-                try
+                using (doc.LockDocument())
+                using (var tr = doc.TransactionManager.StartTransaction())
                 {
                     var pl = tr.GetObject(id, OpenMode.ForRead) as Polyline;
                     if (pl == null)
@@ -53,20 +62,29 @@ namespace FoundationDetailer.Utilities
                         return false;
                     }
 
-                    if (!TrySetBoundary(pl))
+                    if (!pl.Closed)
                     {
-                        error = "Polyline must be closed and wound counter-clockwise (CCW).";
+                        error = "Polyline must be closed.";
+                        return false;
+                    }
+
+                    if (!IsCounterClockwise(pl))
+                        pl.ReverseCurve();
+
+                    if (!SetBoundaryInternal(pl, tr, doc.Database))
+                    {
+                        error = "Failed to store boundary.";
                         return false;
                     }
 
                     tr.Commit();
                     return true;
                 }
-                catch (Exception ex)
-                {
-                    error = ex.Message;
-                    return false;
-                }
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
             }
         }
 
@@ -79,14 +97,22 @@ namespace FoundationDetailer.Utilities
             var doc = Application.DocumentManager.MdiActiveDocument;
             var db = doc.Database;
 
-            using (var tr = db.TransactionManager.StartTransaction())
+            try
             {
-                ObjectId plId = GetStoredPolylineId(tr, db);
-                if (plId == ObjectId.Null || plId.IsErased)
-                    return false;
+                using (doc.LockDocument())
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    ObjectId plId = GetStoredPolylineId(tr, db);
+                    if (plId == ObjectId.Null || plId.IsErased)
+                        return false;
 
-                pl = tr.GetObject(plId, OpenMode.ForRead) as Polyline;
-                return pl != null;
+                    pl = tr.GetObject(plId, OpenMode.ForRead) as Polyline;
+                    return pl != null;
+                }
+            }
+            catch
+            {
+                return false;
             }
         }
 
@@ -107,43 +133,38 @@ namespace FoundationDetailer.Utilities
 
         #region --- Internal Helpers ---
 
-        private static bool SetBoundaryInternal(Polyline pl)
+        /// <summary>
+        /// Core boundary storage logic.
+        /// Must be called inside a transaction.
+        /// </summary>
+        private static bool SetBoundaryInternal(Polyline pl, Transaction tr, Database db)
         {
-            if (pl == null) return false;
-            if (!pl.Closed) return false;
+            if (pl == null || !pl.Closed) return false;
 
-            if (!IsCounterClockwise(pl))
+            var ms = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
+
+            // Remove previous boundary safely
+            ObjectId oldId = GetStoredPolylineId(tr, db);
+            if (oldId != ObjectId.Null && !oldId.IsErased)
             {
-                pl.ReverseCurve();
+                var oldPl = tr.GetObject(oldId, OpenMode.ForWrite) as Polyline;
+                oldPl?.Erase();
             }
 
-            var doc = Application.DocumentManager.MdiActiveDocument;
-            using (var tr = doc.TransactionManager.StartTransaction())
-            {
-                var db = doc.Database;
-                var ms = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
+            // Clone into current space
+            var plClone = (Polyline)pl.Clone();
+            ms.AppendEntity(plClone);
+            tr.AddNewlyCreatedDBObject(plClone, true);
 
-                // Remove previous boundary if exists
-                if (TryGetBoundary(out Polyline oldPl))
-                {
-                    oldPl.UpgradeOpen();
-                    oldPl.Erase();
-                }
-
-                // Clone polyline into current space
-                var plClone = (Polyline)pl.Clone();
-                ms.AppendEntity(plClone);
-                tr.AddNewlyCreatedDBObject(plClone, true);
-
-                // Store its ObjectId in XRecord for persistence
-                StorePolylineId(plClone.ObjectId, tr, db);
-
-                tr.Commit();
-            }
+            // Store ObjectId in XRecord
+            StorePolylineId(plClone.ObjectId, tr, db);
 
             return true;
         }
 
+        /// <summary>
+        /// Saves the polyline ObjectId in the Named Objects Dictionary.
+        /// </summary>
         private static void StorePolylineId(ObjectId id, Transaction tr, Database db)
         {
             var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
@@ -162,6 +183,9 @@ namespace FoundationDetailer.Utilities
             xr.Data = new ResultBuffer(new TypedValue((int)DxfCode.Handle, id.Handle.Value));
         }
 
+        /// <summary>
+        /// Retrieves the stored polyline ObjectId.
+        /// </summary>
         private static ObjectId GetStoredPolylineId(Transaction tr, Database db)
         {
             var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
@@ -173,11 +197,13 @@ namespace FoundationDetailer.Utilities
             var tv = xr.Data.AsArray()[0];
             if (tv.TypeCode != (int)DxfCode.Handle) return ObjectId.Null;
 
-            Handle h = new Handle((long)tv.Value);
-            ObjectId id = db.GetObjectId(false, h, 0);
-            return id;
+            Handle h = new Handle(Convert.ToInt64(tv.Value));
+            return db.GetObjectId(false, h, 0);
         }
 
+        /// <summary>
+        /// Returns true if polyline vertices are counter-clockwise.
+        /// </summary>
         private static bool IsCounterClockwise(Polyline pl)
         {
             double sum = 0;

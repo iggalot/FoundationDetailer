@@ -1,4 +1,5 @@
 ﻿using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using FoundationDetailer.AutoCAD;
 using FoundationDetailer.Model;
@@ -17,6 +18,9 @@ namespace FoundationDetailer.UI
     {
         private FoundationModel _currentModel = new FoundationModel();
         private PierControl PierUI;
+
+        private int _boundaryPollAttempts = 0;
+        private const int MaxPollAttempts = 25;
 
         public FoundationModel CurrentModel
         {
@@ -60,94 +64,179 @@ namespace FoundationDetailer.UI
 
         private void SelectBoundary()
         {
-            Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument.SendStringToExecute(
-                "FD_SELECTBOUNDARY ", true, false, false);
+            // Reset attempts counter
+            _boundaryPollAttempts = 0;
 
-            // Poll every 200ms for up to 5 seconds
-            DispatcherTimer timer = new DispatcherTimer();
-            timer.Interval = TimeSpan.FromMilliseconds(200);
-            int attempts = 0;
-            timer.Tick += (s, e) =>
+            // Fire AutoCAD selection command
+            Autodesk.AutoCAD.ApplicationServices.Application
+                .DocumentManager.MdiActiveDocument
+                .SendStringToExecute("FD_SELECTBOUNDARY ", true, false, false);
+
+            // Start polling with DispatcherTimer
+            DispatcherTimer timer = new DispatcherTimer
             {
-                attempts++;
-                if (PolylineBoundaryManager.TryGetBoundary(out _))
-                {
-                    RefreshBoundaryInfo();
-                    timer.Stop();
-                }
-                else if (attempts > 25) // timeout ~5 seconds
-                {
-                    timer.Stop();
-                    TxtBoundaryStatus.Text = "No boundary selected.";
-                }
+                Interval = TimeSpan.FromMilliseconds(200)
             };
+
+            timer.Tick += new EventHandler(BoundaryPoll_Tick);
             timer.Start();
         }
 
-        private void RefreshBoundaryInfo()
+        private void BoundaryPoll_Tick(object sender, EventArgs e)
         {
-            if (!PolylineBoundaryManager.TryGetBoundary(out Polyline pl))
-            {
-                TxtBoundaryStatus.Text = "No valid boundary.";
-                TxtBoundaryVertices.Text = "-";
-                TxtBoundaryPerimeter.Text = "-";
-                return;
-            }
+            _boundaryPollAttempts++;
+            var timer = (DispatcherTimer)sender;
 
-            TxtBoundaryStatus.Text = "Boundary loaded.";
-            TxtBoundaryVertices.Text = pl.NumberOfVertices.ToString();
-
-            double perimeter = 0;
-            for (int i = 0; i < pl.NumberOfVertices; i++)
+            try
             {
-                Point2d a = pl.GetPoint2dAt(i);
-                Point2d b = pl.GetPoint2dAt((i + 1) % pl.NumberOfVertices);
-                perimeter += a.GetDistanceTo(b);
+                var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+
+                using (doc.LockDocument())
+                {
+                    if (PolylineBoundaryManager.TryGetBoundary(out Polyline pl))
+                    {
+                        int vertexCount = pl.NumberOfVertices;
+                        double perimeter = 0;
+                        for (int i = 0; i < vertexCount; i++)
+                            perimeter += pl.GetPoint2dAt(i).GetDistanceTo(pl.GetPoint2dAt((i + 1) % vertexCount));
+
+                        Dispatcher.BeginInvoke(new Action(() =>
+                        {
+                            TxtBoundaryStatus.Text = "Boundary selected.";
+                            TxtBoundaryVertices.Text = vertexCount.ToString();
+                            TxtBoundaryPerimeter.Text = perimeter.ToString("F2");
+                        }));
+
+                        HighlightAndZoom(pl);
+
+                        timer.Stop();
+                        return;
+                    }
+
+                    if (_boundaryPollAttempts > MaxPollAttempts)
+                    {
+                        Dispatcher.BeginInvoke(new Action(() =>
+                            TxtBoundaryStatus.Text = "No boundary selected."));
+                        timer.Stop();
+                    }
+                }
             }
-            TxtBoundaryPerimeter.Text = $"{perimeter:F2}";
+            catch (Exception ex)
+            {
+                Dispatcher.BeginInvoke(new Action(() =>
+                    TxtBoundaryStatus.Text = $"Error: {ex.Message}"));
+                timer.Stop();
+            }
         }
 
-        private void ZoomToBoundary()
+        private void HighlightAndZoom(Polyline pl)
         {
-            if (!PolylineBoundaryManager.TryGetBoundary(out Polyline pl)) return;
-
-            ZoomToExtents(pl);
-        }
-
-        /// <summary>
-        /// Zooms the AutoCAD editor to the extents of the given polyline.
-        /// </summary>
-        private void ZoomToExtents(Polyline pl)
-        {
-            if (pl == null || pl.IsErased || pl.NumberOfVertices == 0)
-                return;
-
             var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
             var ed = doc.Editor;
 
             try
             {
-                Extents3d ext = pl.GeometricExtents;
+                using (doc.LockDocument())
+                {
+                    ed.SetImpliedSelection(new ObjectId[] { pl.ObjectId });
 
-                // Compute center in 2D (X, Y)
-                Point2d center2d = new Point2d(
-                    (ext.MinPoint.X + ext.MaxPoint.X) / 2.0,
-                    (ext.MinPoint.Y + ext.MaxPoint.Y) / 2.0);
+                    Extents3d ext = pl.GeometricExtents;
+                    ZoomToExtents(ed, ext);
+                }
+            }
+            catch (Exception ex)
+            {
+                Dispatcher.BeginInvoke(new Action(() =>
+                    TxtBoundaryStatus.Text = $"Zoom/Highlight error: {ex.Message}"));
+            }
+        }
 
-                // Get current view
+        private void ZoomToExtents(Editor ed, Extents3d ext)
+        {
+            try
+            {
+                if (ext.MinPoint.DistanceTo(ext.MaxPoint) < 1e-6)
+                    return;
+
                 var view = ed.GetCurrentView();
 
-                // Set center and size
-                view.CenterPoint = center2d;
-                double margin = 1.1;
-                view.Height = (ext.MaxPoint.Y - ext.MinPoint.Y) * margin;
-                view.Width = (ext.MaxPoint.X - ext.MinPoint.X) * margin;
+                // Convert center to Point2d
+                Point2d center = new Point2d(
+                    (ext.MinPoint.X + ext.MaxPoint.X) / 2.0,
+                    (ext.MinPoint.Y + ext.MaxPoint.Y) / 2.0
+                );
+
+                double width = ext.MaxPoint.X - ext.MinPoint.X;
+                double height = ext.MaxPoint.Y - ext.MinPoint.Y;
+
+                if (width < 1e-6) width = 1.0;
+                if (height < 1e-6) height = 1.0;
+
+                view.CenterPoint = center;
+                view.Width = width * 1.1;
+                view.Height = height * 1.1;
 
                 ed.SetCurrentView(view);
             }
-            catch (Autodesk.AutoCAD.Runtime.Exception ex)
+            catch (Exception ex)
             {
-                TxtStatus.Text = $"Zoom error: {ex.Message}";
+                Dispatcher.BeginInvoke(new Action(() =>
+                    TxtBoundaryStatus.Text = $"Zoom error: {ex.Message}"));
+            }
+        }
+
+        private void RefreshBoundaryInfo(Polyline pl)
+        {
+            if (pl == null)
+            {
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    TxtBoundaryStatus.Text = "No boundary selected.";
+                    TxtBoundaryVertices.Text = "-";
+                    TxtBoundaryPerimeter.Text = "-";
+                }));
+                return;
+            }
+
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                TxtBoundaryStatus.Text = pl.Closed ? "Boundary valid" : "Boundary not closed";
+                TxtBoundaryVertices.Text = pl.NumberOfVertices.ToString();
+
+                double perimeter = 0;
+                for (int i = 0; i < pl.NumberOfVertices; i++)
+                    perimeter += pl.GetPoint2dAt(i).GetDistanceTo(pl.GetPoint2dAt((i + 1) % pl.NumberOfVertices));
+
+                TxtBoundaryPerimeter.Text = perimeter.ToString("F2");
+            }));
+        }
+
+        private void ZoomToBoundary()
+        {
+            try
+            {
+                if (!PolylineBoundaryManager.TryGetBoundary(out Polyline pl))
+                {
+                    Dispatcher.BeginInvoke(new Action(() =>
+                        TxtBoundaryStatus.Text = "No boundary to zoom."));
+                    return;
+                }
+
+                var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+                var ed = doc.Editor;
+
+                using (doc.LockDocument())
+                using (var tr = doc.TransactionManager.StartTransaction())
+                {
+                    Extents3d ext = pl.GeometricExtents;
+                    ZoomToExtents(ed, ext);
+                    tr.Commit();
+                }
+            }
+            catch (Exception ex)
+            {
+                Dispatcher.BeginInvoke(new Action(() =>
+                    TxtBoundaryStatus.Text = $"Zoom error: {ex.Message}"));
             }
         }
 
@@ -159,7 +248,8 @@ namespace FoundationDetailer.UI
         {
             Pier pier = PierConverter.ToModelPier(data);
             CurrentModel.Piers.Add(pier);
-            TxtStatus.Text = $"Pier added at ({pier.Location.X:F2}, {pier.Location.Y:F2})";
+            Dispatcher.BeginInvoke(new Action(() =>
+                TxtStatus.Text = $"Pier added at ({pier.Location.X:F2}, {pier.Location.Y:F2})"));
         }
 
         private void PickPierLocation()
@@ -181,18 +271,18 @@ namespace FoundationDetailer.UI
             try
             {
                 PreviewManager.ShowPreview(_currentModel);
-                TxtStatus.Text = "Preview shown.";
+                Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = "Preview shown."));
             }
             catch (Exception ex)
             {
-                TxtStatus.Text = $"Preview error: {ex.Message}";
+                Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = $"Preview error: {ex.Message}"));
             }
         }
 
         private void ClearPreview()
         {
             PreviewManager.ClearPreview();
-            TxtStatus.Text = "Preview cleared.";
+            Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = "Preview cleared."));
         }
 
         private void CommitModel()
@@ -200,11 +290,11 @@ namespace FoundationDetailer.UI
             try
             {
                 AutoCADAdapter.CommitModelToDrawing(_currentModel);
-                TxtStatus.Text = "Model committed to DWG.";
+                Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = "Model committed to DWG."));
             }
             catch (Exception ex)
             {
-                TxtStatus.Text = $"Commit error: {ex.Message}";
+                Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = $"Commit error: {ex.Message}"));
             }
         }
 
@@ -214,11 +304,11 @@ namespace FoundationDetailer.UI
             try
             {
                 JsonStorage.Save(filePath, _currentModel);
-                TxtStatus.Text = $"Model saved to {filePath}";
+                Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = $"Model saved to {filePath}"));
             }
             catch (Exception ex)
             {
-                TxtStatus.Text = $"Save error: {ex.Message}";
+                Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = $"Save error: {ex.Message}"));
             }
         }
 
@@ -231,16 +321,16 @@ namespace FoundationDetailer.UI
                 if (model != null)
                 {
                     _currentModel = model;
-                    TxtStatus.Text = "Model loaded.";
+                    Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = "Model loaded."));
                 }
                 else
                 {
-                    TxtStatus.Text = "No saved model found.";
+                    Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = "No saved model found."));
                 }
             }
             catch (Exception ex)
             {
-                TxtStatus.Text = $"Load error: {ex.Message}";
+                Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = $"Load error: {ex.Message}"));
             }
         }
 
