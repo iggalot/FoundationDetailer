@@ -1,19 +1,21 @@
-﻿using FoundationDetailer.AutoCAD;
+﻿using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.Geometry;
+using FoundationDetailer.AutoCAD;
 using FoundationDetailer.Model;
 using FoundationDetailer.Storage;
 using FoundationDetailer.UI.Controls;
 using FoundationDetailer.UI.Converters;
+using FoundationDetailer.Utilities;
 using System;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Markup;
+using System.Windows.Threading;
 
 namespace FoundationDetailer.UI
 {
     public partial class PaletteMain : UserControl
     {
         private FoundationModel _currentModel = new FoundationModel();
-
         private PierControl PierUI;
 
         public FoundationModel CurrentModel
@@ -26,12 +28,11 @@ namespace FoundationDetailer.UI
         {
             InitializeComponent();
 
-            // Initialize the PierControl
+            // Initialize PierControl
             PierUI = new PierControl();
             PierUI.PierAdded += OnPierAdded;
             PierUI.RequestPierLocationPick += PickPierLocation;
 
-            // Add it to a container in your XAML (e.g., a StackPanel named PierContainer)
             PierContainer.Children.Clear();
             PierContainer.Children.Add(PierUI);
 
@@ -50,34 +51,130 @@ namespace FoundationDetailer.UI
             BtnCommit.Click += (s, e) => CommitModel();
             BtnSave.Click += (s, e) => SaveModel();
             BtnLoad.Click += (s, e) => LoadModel();
+
+            BtnShowBoundary.Click += (s, e) => PolylineBoundaryManager.HighlightBoundary();
+            BtnZoomBoundary.Click += (s, e) => ZoomToBoundary();
         }
 
-        #region --- Button Handlers ---
+        #region --- Boundary Selection ---
 
         private void SelectBoundary()
         {
-            MessageBox.Show("Select boundary in AutoCAD.");
+            Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument.SendStringToExecute(
+                "FD_SELECTBOUNDARY ", true, false, false);
+
+            // Poll every 200ms for up to 5 seconds
+            DispatcherTimer timer = new DispatcherTimer();
+            timer.Interval = TimeSpan.FromMilliseconds(200);
+            int attempts = 0;
+            timer.Tick += (s, e) =>
+            {
+                attempts++;
+                if (PolylineBoundaryManager.TryGetBoundary(out _))
+                {
+                    RefreshBoundaryInfo();
+                    timer.Stop();
+                }
+                else if (attempts > 25) // timeout ~5 seconds
+                {
+                    timer.Stop();
+                    TxtBoundaryStatus.Text = "No boundary selected.";
+                }
+            };
+            timer.Start();
         }
 
-        private void AddPiers()
+        private void RefreshBoundaryInfo()
         {
-            MessageBox.Show("Add piers to model.");
+            if (!PolylineBoundaryManager.TryGetBoundary(out Polyline pl))
+            {
+                TxtBoundaryStatus.Text = "No valid boundary.";
+                TxtBoundaryVertices.Text = "-";
+                TxtBoundaryPerimeter.Text = "-";
+                return;
+            }
+
+            TxtBoundaryStatus.Text = "Boundary loaded.";
+            TxtBoundaryVertices.Text = pl.NumberOfVertices.ToString();
+
+            double perimeter = 0;
+            for (int i = 0; i < pl.NumberOfVertices; i++)
+            {
+                Point2d a = pl.GetPoint2dAt(i);
+                Point2d b = pl.GetPoint2dAt((i + 1) % pl.NumberOfVertices);
+                perimeter += a.GetDistanceTo(b);
+            }
+            TxtBoundaryPerimeter.Text = $"{perimeter:F2}";
         }
 
-        private void AddGradeBeams()
+        private void ZoomToBoundary()
         {
-            MessageBox.Show("Add grade beams to model.");
+            if (!PolylineBoundaryManager.TryGetBoundary(out Polyline pl)) return;
+
+            ZoomToExtents(pl);
         }
 
-        private void AddRebarBars()
+        /// <summary>
+        /// Zooms the AutoCAD editor to the extents of the given polyline.
+        /// </summary>
+        private void ZoomToExtents(Polyline pl)
         {
-            MessageBox.Show("Add rebar bars to model.");
+            if (pl == null || pl.IsErased || pl.NumberOfVertices == 0)
+                return;
+
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            var ed = doc.Editor;
+
+            try
+            {
+                Extents3d ext = pl.GeometricExtents;
+
+                // Compute center in 2D (X, Y)
+                Point2d center2d = new Point2d(
+                    (ext.MinPoint.X + ext.MaxPoint.X) / 2.0,
+                    (ext.MinPoint.Y + ext.MaxPoint.Y) / 2.0);
+
+                // Get current view
+                var view = ed.GetCurrentView();
+
+                // Set center and size
+                view.CenterPoint = center2d;
+                double margin = 1.1;
+                view.Height = (ext.MaxPoint.Y - ext.MinPoint.Y) * margin;
+                view.Width = (ext.MaxPoint.X - ext.MinPoint.X) * margin;
+
+                ed.SetCurrentView(view);
+            }
+            catch (Autodesk.AutoCAD.Runtime.Exception ex)
+            {
+                TxtStatus.Text = $"Zoom error: {ex.Message}";
+            }
         }
 
-        private void AddStrands()
+        #endregion
+
+        #region --- PierControl Handlers ---
+
+        private void OnPierAdded(PierData data)
         {
-            MessageBox.Show("Add strands to model.");
+            Pier pier = PierConverter.ToModelPier(data);
+            CurrentModel.Piers.Add(pier);
+            TxtStatus.Text = $"Pier added at ({pier.Location.X:F2}, {pier.Location.Y:F2})";
         }
+
+        private void PickPierLocation()
+        {
+            MessageBox.Show("Pick pier location in AutoCAD.");
+        }
+
+        #endregion
+
+        #region --- Model Operations ---
+
+        private void AddPiers() => MessageBox.Show("Add piers to model.");
+        private void AddGradeBeams() => MessageBox.Show("Add grade beams to model.");
+        private void AddRebarBars() => MessageBox.Show("Add rebar bars to model.");
+        private void AddStrands() => MessageBox.Show("Add strands to model.");
 
         private void ShowPreview()
         {
@@ -113,7 +210,7 @@ namespace FoundationDetailer.UI
 
         private void SaveModel()
         {
-            string filePath = "FoundationProject.json"; // can use SaveFileDialog
+            string filePath = "FoundationProject.json";
             try
             {
                 JsonStorage.Save(filePath, _currentModel);
@@ -127,7 +224,7 @@ namespace FoundationDetailer.UI
 
         private void LoadModel()
         {
-            string filePath = "FoundationProject.json"; // can use OpenFileDialog
+            string filePath = "FoundationProject.json";
             try
             {
                 var model = JsonStorage.Load<FoundationModel>(filePath);
@@ -146,40 +243,6 @@ namespace FoundationDetailer.UI
                 TxtStatus.Text = $"Load error: {ex.Message}";
             }
         }
-
-        #endregion
-
-        #region --- PierControl Handlers ---
-
-        private void OnPierAdded(PierData data)
-        {
-            Pier pier = PierConverter.ToModelPier(data);
-            CurrentModel.Piers.Add(pier);
-            TxtStatus.Text = $"Pier added at ({pier.Location.X:F2}, {pier.Location.Y:F2})";
-        }
-
-        private void PickPierLocation()
-        {
-            MessageBox.Show("Pick pier location in AutoCAD.");
-            // Implement AutoCAD picking logic here
-        }
-
-        private void InitPierControl()
-        {
-            PierControl pierUI = new PierControl();
-            pierUI.PierAdded += data =>
-            {
-                // Convert to model Pier and add
-                Pier pier = PierConverter.ToModelPier(data);
-                CurrentModel.Piers.Add(pier);
-                TxtStatus.Text = $"Pier added at X={pier.Location.X:F2}, Y={pier.Location.Y:F2}";
-            };
-
-            // Add pierUI to a container in your PaletteMain if needed
-            PierContainer.Children.Clear();
-            PierContainer.Children.Add(pierUI);
-        }
-
 
         #endregion
     }

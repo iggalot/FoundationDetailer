@@ -30,9 +30,28 @@
                 <Button x:Name="BtnClearPreview" Content="Clear Preview" Margin="0,2"/>
                 <Button x:Name="BtnCommit" Content="Commit to DWG" Margin="0,2"/>
 
-                <!-- Add this container for PierControl -->
+                <!-- Pier Control container -->
                 <StackPanel x:Name="PierContainer" Orientation="Vertical" Margin="0,10,0,0"/>
-                
+
+                <!-- Boundary Information GroupBox -->
+                <GroupBox Header="Boundary Information" Margin="0,10,0,0">
+                    <StackPanel>
+                        <TextBlock Text="Boundary Status:" FontWeight="Bold"/>
+                        <TextBlock x:Name="TxtBoundaryStatus" Text="No boundary selected" Margin="0,2,0,10"/>
+
+                        <TextBlock Text="Vertices:" FontWeight="Bold"/>
+                        <TextBlock x:Name="TxtBoundaryVertices" Text="-" Margin="0,2,0,10"/>
+
+                        <TextBlock Text="Perimeter:" FontWeight="Bold"/>
+                        <TextBlock x:Name="TxtBoundaryPerimeter" Text="-" Margin="0,2,0,10"/>
+
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                            <Button x:Name="BtnShowBoundary" Content="Show Boundary" Width="120" Margin="0,5,5,5"/>
+                            <Button x:Name="BtnZoomBoundary" Content="Zoom To" Width="80" Margin="0,5"/>
+                        </StackPanel>
+                    </StackPanel>
+                </GroupBox>
+
             </StackPanel>
         </ScrollViewer>
 
@@ -40,13 +59,12 @@
         <StackPanel Orientation="Horizontal" Grid.Row="2" HorizontalAlignment="Center" Margin="0,10,0,0">
             <Button x:Name="BtnSave" Content="Save" Width="80" Margin="5"/>
             <Button x:Name="BtnLoad" Content="Load" Width="80" Margin="5"/>
-                   </StackPanel>
-        
+        </StackPanel>
+
         <!-- Status Bar -->
         <StackPanel Orientation="Horizontal"  Grid.Row="3" HorizontalAlignment="Center" Margin="0,10,0,0">
             <TextBlock Text="Status:" Margin="10,0,2,0" VerticalAlignment="Center"/>
             <TextBlock x:Name="TxtStatus" Text="Ready" FontStyle="Italic" VerticalAlignment="Center"/>
-
         </StackPanel>
     </Grid>
 </UserControl>

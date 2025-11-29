@@ -1,6 +1,8 @@
-﻿using Autodesk.AutoCAD.Runtime;
+﻿using Autodesk.AutoCAD.EditorInput;
+using Autodesk.AutoCAD.Runtime;
 using Autodesk.AutoCAD.Windows;
 using FoundationDetailer.UI;
+using FoundationDetailer.Utilities;
 using System.Windows.Forms;
 using System.Windows.Forms.Integration;
 
@@ -50,5 +52,37 @@ namespace FoundationDetailer.Commands
                 _paletteSet.Visible = true;
             }
         }
+
+        [CommandMethod("FD_SELECTBOUNDARY")]
+        public void FD_SELECTBOUNDARY()
+        {
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            var ed = doc.Editor;
+
+            PromptEntityResult res = ed.GetEntity("\nSelect boundary polyline: ");
+            if (res.Status != PromptStatus.OK)
+            {
+                ed.WriteMessage("\nBoundary selection canceled.");
+                return;
+            }
+
+            if (PolylineBoundaryManager.TrySetBoundary(res.ObjectId, out string error))
+            {
+                ed.WriteMessage("\nBoundary accepted, validated, and saved.");
+            }
+            else
+            {
+                ed.WriteMessage($"\nBoundary error: {error}");
+            }
+        }
+
+
+        [CommandMethod("FD_SHOWBOUNDARY")]
+        public void ShowBoundaryCommand()
+        {
+            PolylineBoundaryManager.HighlightBoundary();
+        }
+
+
     }
 }
