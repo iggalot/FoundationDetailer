@@ -74,7 +74,7 @@ namespace FoundationDetailer.UI
 
             try
             {
-                using (doc.LockDocument())
+                //using (doc.LockDocument())
                 using (var tr = doc.TransactionManager.StartTransaction())
                 {
                     // Immediately update boundary display for the active document
@@ -185,28 +185,6 @@ namespace FoundationDetailer.UI
 
         #region --- Highlight and Zoom ---
 
-        private void HighlightAndZoom(Polyline pl)
-        {
-            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            var ed = doc.Editor;
-
-            try
-            {
-                using (doc.LockDocument())
-                {
-                    ed.SetImpliedSelection(new ObjectId[] { pl.ObjectId });
-
-                    Extents3d ext = pl.GeometricExtents;
-                    ZoomToExtents(ed, ext);
-                }
-            }
-            catch (Exception ex)
-            {
-                Dispatcher.BeginInvoke(new Action(() =>
-                    TxtBoundaryStatus.Text = $"Zoom/Highlight error: {ex.Message}"));
-            }
-        }
-
         private void ZoomToExtents(Editor ed, Extents3d ext)
         {
             try
@@ -261,8 +239,63 @@ namespace FoundationDetailer.UI
 
         #region --- Model Operations ---
 
+private void AddGradeBeams()
+{
+    // Get stored boundary
+    if (!PolylineBoundaryManager.TryGetBoundary(out Polyline boundaryRecord))
+    {
+        MessageBox.Show("No boundary selected.");
+        return;
+    }
+
+    var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+    var db = doc.Database;
+
+    // Palette already runs inside AutoCAD's main document context
+    using (Transaction tr = db.TransactionManager.StartTransaction())
+    {
+        // Open boundary for read
+        Polyline pl = tr.GetObject(boundaryRecord.ObjectId, OpenMode.ForRead) as Polyline;
+        if (pl == null)
+        {
+            MessageBox.Show("Boundary polyline was not found.");
+            return;
+        }
+
+        // Clone (safe, optional)
+        Polyline workPl = (Polyline)pl.Clone();
+
+        // Build grid
+        double maxSpacing = 10.0;
+        GridLineManager grid = new GridLineManager(workPl, maxSpacing, 5);
+
+        var verticalLines = grid.GetVerticalPolylines();
+        var horizontalLines = grid.GetHorizontalPolylines();
+
+        BlockTableRecord btr = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
+
+        foreach (var ln in verticalLines)
+        {
+            btr.AppendEntity(ln);
+            tr.AddNewlyCreatedDBObject(ln, true);
+        }
+
+        foreach (var ln in horizontalLines)
+        {
+            btr.AppendEntity(ln);
+            tr.AddNewlyCreatedDBObject(ln, true);
+        }
+
+        tr.Commit();
+    }
+}
+
+
+
+
+
         private void AddPiers() => MessageBox.Show("Add piers to model.");
-        private void AddGradeBeams() => MessageBox.Show("Add grade beams to model.");
+
         private void AddRebarBars() => MessageBox.Show("Add rebar bars to model.");
         private void AddStrands() => MessageBox.Show("Add strands to model.");
 

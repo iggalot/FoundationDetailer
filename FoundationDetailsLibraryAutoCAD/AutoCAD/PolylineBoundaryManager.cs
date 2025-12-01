@@ -1,18 +1,22 @@
 ﻿using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
+using Autodesk.AutoCAD.EditorInput;
+using Autodesk.AutoCAD.Runtime;
 using System;
 using System.Collections.Generic;
 
 namespace FoundationDetailer.Utilities
 {
+    /// <summary>
+    /// Manages a single closed polyline boundary per document, including palette-safe storage and Xrecord persistence.
+    /// </summary>
     public static class PolylineBoundaryManager
     {
         private static readonly Dictionary<Document, ObjectId> _storedBoundaries = new Dictionary<Document, ObjectId>();
-        private const string XrecordKey = "FD_BOUNDARY";
-
-        // Single boundary per active document
         private static ObjectId _storedBoundaryId = ObjectId.Null;
+
+        public const string XrecordKey = "FD_BOUNDARY";
 
         private static readonly string[] MonitoredCommands =
         {
@@ -21,129 +25,11 @@ namespace FoundationDetailer.Utilities
 
         public static event EventHandler BoundaryChanged;
 
-        #region --- Initialization ---
+        #region --- Palette-safe API ---
 
-        static PolylineBoundaryManager()
-        {
-            Initialize();
-        }
-
-        public static void Initialize()
-        {
-            // Attach to all open documents
-            foreach (Document doc in Application.DocumentManager)
-                AttachDocumentEvents(doc);
-
-            // Hook document creation
-            Application.DocumentManager.DocumentCreated -= DocManager_DocumentCreated;
-            Application.DocumentManager.DocumentCreated += DocManager_DocumentCreated;
-
-            // Hook active document change
-            // Hook active document change
-            Application.DocumentManager.DocumentActivated -= DocManager_ActiveDocumentChanged;
-            Application.DocumentManager.DocumentActivated += DocManager_ActiveDocumentChanged;
-
-
-            // Load boundary for active document at startup
-            LoadBoundaryForActiveDocument();
-        }
-
-        private static void DocManager_DocumentCreated(object sender, DocumentCollectionEventArgs e)
-        {
-            AttachDocumentEvents(e.Document);
-        }
-
-        private static void DocManager_ActiveDocumentChanged(object sender, EventArgs e)
-        {
-            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            if (doc == null) return;
-
-            // Load boundary for the active document
-            LoadBoundary(doc);
-
-            // Highlight and zoom if boundary exists
-            if (_storedBoundaries.ContainsKey(doc))
-            {
-                ObjectId id = _storedBoundaries[doc];
-                if (!id.IsNull)
-                {
-                    try
-                    {
-                        using (doc.LockDocument())
-                        using (var tr = doc.TransactionManager.StartTransaction())
-                        {
-                            var pl = tr.GetObject(id, OpenMode.ForRead) as Polyline;
-                            if (pl != null)
-                            {
-                                HighlightBoundary();
-                                ZoomToBoundary();
-                            }
-                            tr.Commit();
-                        }
-                    }
-                    catch
-                    {
-                        // Fail silently
-                    }
-                }
-            }
-
-            // Notify subscribers
-            BoundaryChanged?.Invoke(null, EventArgs.Empty);
-        }
-
-
-        private static void AttachDocumentEvents(Document doc)
-        {
-            if (doc == null) return;
-            var db = doc.Database;
-
-            db.ObjectErased -= Db_ObjectErased;
-            db.ObjectErased += Db_ObjectErased;
-
-            db.ObjectModified -= Db_ObjectModified;
-            db.ObjectModified += Db_ObjectModified;
-
-            doc.CommandEnded -= Doc_CommandEnded;
-            doc.CommandEnded += Doc_CommandEnded;
-
-            // Load boundary for this document
-            if (doc == Application.DocumentManager.MdiActiveDocument)
-                LoadBoundary(doc);
-        }
-
-        private static void LoadBoundaryForActiveDocument()
-        {
-            var doc = Application.DocumentManager.MdiActiveDocument;
-            if (doc != null)
-                LoadBoundary(doc);
-        }
-
-        #endregion
-
-        #region --- Dispose ---
-
-        public static void Dispose()
-        {
-            foreach (Document doc in Application.DocumentManager)
-            {
-                var db = doc.Database;
-                db.ObjectErased -= Db_ObjectErased;
-                db.ObjectModified -= Db_ObjectModified;
-                doc.CommandEnded -= Doc_CommandEnded;
-            }
-
-            Application.DocumentManager.DocumentCreated -= DocManager_DocumentCreated;
-            Application.DocumentManager.DocumentActivated -= DocManager_ActiveDocumentChanged;
-
-            _storedBoundaryId = ObjectId.Null;
-            BoundaryChanged = null;
-        }
-
-        #endregion
-
-        #region --- Public API ---
-
+        /// <summary>
+        /// Sets the active boundary (palette-safe). Queues Xrecord write to persist.
+        /// </summary>
         public static bool TrySetBoundary(ObjectId id, out string error)
         {
             error = "";
@@ -152,8 +38,8 @@ namespace FoundationDetailer.Utilities
 
             try
             {
-                using (doc.LockDocument())
-                using (var tr = doc.TransactionManager.StartTransaction())
+                var db = doc.Database;
+                using (var tr = db.TransactionManager.StartTransaction())
                 {
                     var pl = tr.GetObject(id, OpenMode.ForRead) as Polyline;
                     if (pl == null) { error = "Selected object is not a polyline."; return false; }
@@ -161,16 +47,19 @@ namespace FoundationDetailer.Utilities
 
                     Polyline cleaned = FixBoundary(pl);
 
-                    // Update stored ID
+                    // Update in-memory storage
                     _storedBoundaryId = cleaned.ObjectId;
-
-                    // Persist in XRecord
-                    StorePolylineId(doc, _storedBoundaryId, tr);
+                    _storedBoundaries[doc] = _storedBoundaryId;
 
                     tr.Commit();
                 }
 
+                // Notify palette UI
                 BoundaryChanged?.Invoke(null, EventArgs.Empty);
+
+                // Queue persistent Xrecord write
+                QueueStoreXrecord(_storedBoundaryId);
+
                 return true;
             }
             catch (Autodesk.AutoCAD.Runtime.Exception ex)
@@ -180,27 +69,63 @@ namespace FoundationDetailer.Utilities
             }
         }
 
+        /// <summary>
+        /// Gets the currently stored boundary polyline.
+        /// </summary>
         public static bool TryGetBoundary(out Polyline pl)
         {
             pl = null;
             var doc = Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return false;
+
+            if (!TryGetBoundaryId(out ObjectId id) || id.IsNull) return false;
+
             var db = doc.Database;
-
-            if (_storedBoundaryId == ObjectId.Null) return false;
-
             try
             {
-                using (doc.LockDocument())
                 using (var tr = db.TransactionManager.StartTransaction())
                 {
-                    pl = tr.GetObject(_storedBoundaryId, OpenMode.ForRead) as Polyline;
+                    pl = tr.GetObject(id, OpenMode.ForRead) as Polyline;
                     return pl != null;
                 }
             }
             catch { return false; }
         }
 
+
+        /// <summary>
+        /// Gets stored ObjectId for the active document.
+        /// </summary>
+        public static bool TryGetBoundaryId(out ObjectId id)
+        {
+            id = ObjectId.Null;
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return false;
+
+            // Try in-memory first
+            if (_storedBoundaries.TryGetValue(doc, out ObjectId stored) && !stored.IsNull && !stored.IsErased)
+            {
+                id = stored;
+                return true;
+            }
+
+            // Palette-safe read from Xrecord
+            ObjectId xId = ReadStoredBoundaryFromXrecord();
+            if (!xId.IsNull && !xId.IsErased)
+            {
+                _storedBoundaries[doc] = xId;  // cache in memory
+                _storedBoundaryId = xId;
+                id = xId;
+                return true;
+            }
+
+            return false;
+        }
+
+
+        /// <summary>
+        /// Highlights the stored boundary in AutoCAD.
+        /// </summary>
         public static void HighlightBoundary()
         {
             if (!TryGetBoundary(out Polyline pl)) return;
@@ -208,6 +133,9 @@ namespace FoundationDetailer.Utilities
             doc.Editor.SetImpliedSelection(new ObjectId[] { pl.ObjectId });
         }
 
+        /// <summary>
+        /// Zooms the current view to the stored boundary.
+        /// </summary>
         public static void ZoomToBoundary()
         {
             if (!TryGetBoundary(out Polyline pl)) return;
@@ -216,115 +144,85 @@ namespace FoundationDetailer.Utilities
 
             try
             {
-                using (doc.LockDocument())
-                {
-                    ed.SetImpliedSelection(new ObjectId[] { pl.ObjectId });
-                    Extents3d ext = pl.GeometricExtents;
-                    if (ext.MinPoint.DistanceTo(ext.MaxPoint) < 1e-6) return;
+                Extents3d ext = pl.GeometricExtents;
+                if (ext.MinPoint.DistanceTo(ext.MaxPoint) < 1e-6) return;
 
-                    var view = ed.GetCurrentView();
-                    Point2d center = new Point2d(
-                        (ext.MinPoint.X + ext.MaxPoint.X) / 2.0,
-                        (ext.MinPoint.Y + ext.MaxPoint.Y) / 2.0
-                    );
+                var view = ed.GetCurrentView();
+                Point2d center = new Point2d(
+                    (ext.MinPoint.X + ext.MaxPoint.X) / 2.0,
+                    (ext.MinPoint.Y + ext.MaxPoint.Y) / 2.0
+                );
 
-                    double width = ext.MaxPoint.X - ext.MinPoint.X;
-                    double height = ext.MaxPoint.Y - ext.MinPoint.Y;
-                    if (width < 1e-6) width = 1.0;
-                    if (height < 1e-6) height = 1.0;
+                double width = ext.MaxPoint.X - ext.MinPoint.X;
+                double height = ext.MaxPoint.Y - ext.MinPoint.Y;
+                if (width < 1e-6) width = 1.0;
+                if (height < 1e-6) height = 1.0;
 
-                    view.CenterPoint = center;
-                    view.Width = width * 1.1;
-                    view.Height = height * 1.1;
+                view.CenterPoint = center;
+                view.Width = width * 1.1;
+                view.Height = height * 1.1;
 
-                    ed.SetCurrentView(view);
-                }
+                ed.SetCurrentView(view);
             }
             catch { }
         }
 
         #endregion
 
-        #region --- Event Handlers ---
+        #region --- Palette-safe Xrecord persistence ---
 
-        private static void Db_ObjectErased(object sender, ObjectErasedEventArgs e)
+        /// <summary>
+        /// Stores ObjectId to a temporary variable and queues a command to persist Xrecord safely.
+        /// </summary>
+        private static void QueueStoreXrecord(ObjectId id)
         {
-            if (e.DBObject == null) return;
-            if (e.DBObject.ObjectId == _storedBoundaryId)
-            {
-                _storedBoundaryId = ObjectId.Null;
-                BoundaryChanged?.Invoke(null, EventArgs.Empty);
-            }
+            if (id.IsNull) return;
+            TempIdStore.IdToSave = id;
+
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+
+            // FD_SaveBoundary is a command that runs outside the palette lock
+            doc.SendStringToExecute("_.FD_SaveBoundary ", true, false, true);
         }
 
-        private static void Db_ObjectModified(object sender, ObjectEventArgs e)
+        /// <summary>
+        /// Command method that runs in AutoCAD command context to write the Xrecord safely.
+        /// </summary>
+        [CommandMethod("FD_SaveBoundary")]
+        public static void FD_SaveBoundary()
         {
-            if (e.DBObject == null) return;
-            if (e.DBObject.ObjectId == _storedBoundaryId)
-            {
-                BoundaryChanged?.Invoke(null, EventArgs.Empty);
-            }
-        }
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
 
-        private static void Doc_CommandEnded(object sender, CommandEventArgs e)
-        {
-            string cmd = e.GlobalCommandName.ToUpperInvariant();
-            foreach (var monitored in MonitoredCommands)
+            var db = doc.Database;
+            ObjectId id = TempIdStore.IdToSave;
+            if (id.IsNull) return;
+
+            using (var tr = db.TransactionManager.StartTransaction())
             {
-                if (cmd == monitored)
+                var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+
+                Xrecord xr;
+                if (nod.Contains(XrecordKey))
                 {
-                    BoundaryChanged?.Invoke(null, EventArgs.Empty);
-                    break;
+                    xr = (Xrecord)tr.GetObject(nod.GetAt(XrecordKey), OpenMode.ForWrite);
                 }
+                else
+                {
+                    xr = new Xrecord();
+                    nod.SetAt(XrecordKey, xr);
+                    tr.AddNewlyCreatedDBObject(xr, true);
+                }
+
+                xr.Data = new ResultBuffer(new TypedValue((int)DxfCode.Handle, id.Handle.Value));
+                tr.Commit();
             }
         }
 
         #endregion
 
         #region --- Internal Helpers ---
-
-        private static void StorePolylineId(Document doc, ObjectId id, Transaction tr)
-        {
-            var db = doc.Database;
-            var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
-            Xrecord xr;
-            if (nod.Contains(XrecordKey))
-            {
-                xr = (Xrecord)tr.GetObject(nod.GetAt(XrecordKey), OpenMode.ForWrite);
-            }
-            else
-            {
-                xr = new Xrecord();
-                nod.SetAt(XrecordKey, xr);
-                tr.AddNewlyCreatedDBObject(xr, true);
-            }
-
-            xr.Data = new ResultBuffer(new TypedValue((int)DxfCode.Handle, id.Handle.Value));
-        }
-
-        private static void LoadBoundary(Document doc)
-        {
-            var db = doc.Database;
-            using (var tr = db.TransactionManager.StartTransaction())
-            {
-                var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-                if (!nod.Contains(XrecordKey)) { _storedBoundaryId = ObjectId.Null; tr.Commit(); return; }
-
-                var xr = (Xrecord)tr.GetObject(nod.GetAt(XrecordKey), OpenMode.ForRead);
-                if (xr.Data == null) { _storedBoundaryId = ObjectId.Null; tr.Commit(); return; }
-
-                var arr = xr.Data.AsArray();
-                if (arr.Length == 0) { _storedBoundaryId = ObjectId.Null; tr.Commit(); return; }
-
-                var tv = arr[0];
-                if (tv.TypeCode != (int)DxfCode.Handle) { _storedBoundaryId = ObjectId.Null; tr.Commit(); return; }
-
-                Handle h = new Handle(Convert.ToInt64(tv.Value));
-                _storedBoundaryId = db.GetObjectId(false, h, 0);
-
-                tr.Commit();
-            }
-        }
 
         private static Polyline FixBoundary(Polyline pl)
         {
@@ -350,5 +248,56 @@ namespace FoundationDetailer.Utilities
         }
 
         #endregion
+
+    /// <summary>
+    /// Temporary static store to pass ObjectId to command thread.
+    /// </summary>
+    public static class TempIdStore
+    {
+        public static ObjectId IdToSave = ObjectId.Null;
+    }
+
+    /// <summary>
+/// Reads the stored polyline ObjectId from the Named Objects Dictionary (Xrecord).
+/// Palette-safe: only reads (no UpgradeOpen, no LockDocument)
+/// </summary>
+private static ObjectId ReadStoredBoundaryFromXrecord()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return ObjectId.Null;
+
+            var db = doc.Database;
+            ObjectId id = ObjectId.Null;
+
+            try
+            {
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+                    if (!nod.Contains(XrecordKey)) { tr.Commit(); return ObjectId.Null; }
+
+                    var xr = (Xrecord)tr.GetObject(nod.GetAt(XrecordKey), OpenMode.ForRead);
+                    if (xr.Data == null) { tr.Commit(); return ObjectId.Null; }
+
+                    var arr = xr.Data.AsArray();
+                    if (arr.Length == 0) { tr.Commit(); return ObjectId.Null; }
+
+                    var tv = arr[0];
+                    if (tv.TypeCode != (int)DxfCode.Handle) { tr.Commit(); return ObjectId.Null; }
+
+                    Handle h = new Handle(Convert.ToInt64(tv.Value));
+                    id = db.GetObjectId(false, h, 0);
+
+                    tr.Commit();
+                }
+            }
+            catch
+            {
+                id = ObjectId.Null;
+            }
+
+            return id;
+        }
+
     }
 }
