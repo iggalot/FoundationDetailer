@@ -50,6 +50,7 @@ namespace FoundationDetailer.UI
 
         private void WireEvents()
         {
+
             BtnSelectBoundary.Click += (s, e) => SelectBoundary();
             //BtnAddPiers.Click += (s, e) => AddPiers();
             BtnAddGradeBeams.Click += (s, e) => AddGradeBeams();
