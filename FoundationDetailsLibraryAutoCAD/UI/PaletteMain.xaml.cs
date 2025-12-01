@@ -31,6 +31,8 @@ namespace FoundationDetailer.UI
         public PaletteMain()
         {
             InitializeComponent();
+            PolylineBoundaryManager.BoundaryChanged += OnBoundaryChanged;  // subscribe for the boundary changed event
+
 
             // Initialize PierControl
             PierUI = new PierControl();
@@ -238,6 +240,33 @@ namespace FoundationDetailer.UI
                 Dispatcher.BeginInvoke(new Action(() =>
                     TxtBoundaryStatus.Text = $"Zoom error: {ex.Message}"));
             }
+        }
+
+
+        private void OnBoundaryChanged(object sender, EventArgs e)
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                // Try get current boundary, if erased it will be null
+                if (!PolylineBoundaryManager.TryGetBoundary(out Polyline pl))
+                {
+                    TxtBoundaryStatus.Text = "No boundary selected";
+                    TxtBoundaryVertices.Text = "-";
+                    TxtBoundaryPerimeter.Text = "-";
+                }
+                else
+                {
+                    // Recalculate info
+                    int vertexCount = pl.NumberOfVertices;
+                    double perimeter = 0;
+                    for (int i = 0; i < vertexCount; i++)
+                        perimeter += pl.GetPoint2dAt(i).GetDistanceTo(pl.GetPoint2dAt((i + 1) % vertexCount));
+
+                    TxtBoundaryStatus.Text = "Boundary selected";
+                    TxtBoundaryVertices.Text = vertexCount.ToString();
+                    TxtBoundaryPerimeter.Text = perimeter.ToString("F2");
+                }
+            }));
         }
 
         #endregion

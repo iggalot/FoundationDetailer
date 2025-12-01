@@ -2,53 +2,89 @@
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
+using Autodesk.AutoCAD.Runtime;
 using System;
 
 namespace FoundationDetailer.Utilities
 {
-    /// <summary>
-    /// Manages the foundation boundary polyline.
-    /// Only one polyline per drawing is allowed.
-    /// Persists via DWG XRecord.
-    /// </summary>
     public static class PolylineBoundaryManager
     {
         private const string XrecordKey = "FD_BOUNDARY";
 
-        #region --- Public API ---
+        private static ObjectId _storedBoundaryId = ObjectId.Null;
 
-        /// <summary>
-        /// Safely sets the boundary from a Polyline object.
-        /// Returns true if successfully stored; false otherwise.
-        /// </summary>
-        public static bool TrySetBoundary(Polyline pl)
+        private static readonly string[] MonitoredCommands =
         {
-            if (pl == null) return false;
+            "MOVE", "STRETCH", "GRIP_STRETCH", "PEDIT", "EXPLODE", "GRIPS", "GRIP_MOVE"
+        };
 
-            var doc = Application.DocumentManager.MdiActiveDocument;
+        public static event EventHandler BoundaryChanged;
 
-            try
-            {
-                using (doc.LockDocument())
-                using (var tr = doc.TransactionManager.StartTransaction())
-                {
-                    return SetBoundaryInternal(pl, tr, doc.Database);
-                }
-            }
-            catch
-            {
-                return false;
-            }
+        #region --- Initialization ---
+        static PolylineBoundaryManager()
+        {
+            // This runs automatically when the class is first accessed
+            Initialize();
         }
 
-        /// <summary>
-        /// Safely sets the boundary from an ObjectId.
-        /// Returns true if valid and saved, false otherwise.
-        /// </summary>
+        public static void Initialize()
+        {
+            foreach (Document doc in Application.DocumentManager)
+                AttachDocumentEvents(doc);
+
+            Application.DocumentManager.DocumentCreated -= DocManager_DocumentCreated;
+            Application.DocumentManager.DocumentCreated += DocManager_DocumentCreated;
+        }
+
+        private static void DocManager_DocumentCreated(object sender, DocumentCollectionEventArgs e)
+        {
+            AttachDocumentEvents(e.Document);
+        }
+
+        private static void AttachDocumentEvents(Document doc)
+        {
+            if (doc == null) return;
+            var db = doc.Database;
+
+            db.ObjectErased -= Db_ObjectErased;
+            db.ObjectErased += Db_ObjectErased;
+
+            db.ObjectModified -= Db_ObjectModified;
+            db.ObjectModified += Db_ObjectModified;
+
+            doc.CommandEnded -= Doc_CommandEnded;
+            doc.CommandEnded += Doc_CommandEnded;
+        }
+
+        #endregion
+
+        #region --- Dispose ---
+
+        public static void Dispose()
+        {
+            foreach (Document doc in Application.DocumentManager)
+            {
+                var db = doc.Database;
+                db.ObjectErased -= Db_ObjectErased;
+                db.ObjectModified -= Db_ObjectModified;
+                doc.CommandEnded -= Doc_CommandEnded;
+            }
+
+            Application.DocumentManager.DocumentCreated -= DocManager_DocumentCreated;
+
+            _storedBoundaryId = ObjectId.Null;
+            BoundaryChanged = null;
+        }
+
+        #endregion
+
+        #region --- Public API ---
+
         public static bool TrySetBoundary(ObjectId id, out string error)
         {
             error = "";
             var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) { error = "No active document."; return false; }
 
             try
             {
@@ -56,45 +92,35 @@ namespace FoundationDetailer.Utilities
                 using (var tr = doc.TransactionManager.StartTransaction())
                 {
                     var pl = tr.GetObject(id, OpenMode.ForRead) as Polyline;
-                    if (pl == null)
-                    {
-                        error = "Selected object is not a polyline.";
-                        return false;
-                    }
+                    if (pl == null) { error = "Selected object is not a polyline."; return false; }
+                    if (!pl.Closed) { error = "Polyline must be closed."; return false; }
 
-                    if (!pl.Closed)
-                    {
-                        error = "Polyline must be closed.";
-                        return false;
-                    }
+                    Polyline cleaned = FixBoundary(pl);
 
-                    if (!IsCounterClockwise(pl))
-                        pl.ReverseCurve();
+                    // Update stored ID immediately
+                    _storedBoundaryId = cleaned.ObjectId;
 
-                    if (!SetBoundaryInternal(pl, tr, doc.Database))
-                    {
-                        error = "Failed to store boundary.";
-                        return false;
-                    }
+                    // Persist in XRecord
+                    StorePolylineId(_storedBoundaryId, tr, doc.Database);
 
                     tr.Commit();
-                    return true;
                 }
+
+                BoundaryChanged?.Invoke(null, EventArgs.Empty);
+                return true;
             }
-            catch (Exception ex)
+            catch (Autodesk.AutoCAD.Runtime.Exception ex)
             {
                 error = ex.Message;
                 return false;
             }
         }
 
-        /// <summary>
-        /// Returns the stored boundary polyline if it exists.
-        /// </summary>
         public static bool TryGetBoundary(out Polyline pl)
         {
             pl = null;
             var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return false;
             var db = doc.Database;
 
             try
@@ -102,69 +128,115 @@ namespace FoundationDetailer.Utilities
                 using (doc.LockDocument())
                 using (var tr = db.TransactionManager.StartTransaction())
                 {
-                    ObjectId plId = GetStoredPolylineId(tr, db);
-                    if (plId == ObjectId.Null || plId.IsErased)
+                    if (_storedBoundaryId == ObjectId.Null || _storedBoundaryId.IsErased)
                         return false;
 
-                    pl = tr.GetObject(plId, OpenMode.ForRead) as Polyline;
+                    pl = tr.GetObject(_storedBoundaryId, OpenMode.ForRead) as Polyline;
                     return pl != null;
                 }
             }
-            catch
-            {
-                return false;
-            }
+            catch { return false; }
         }
 
-        /// <summary>
-        /// Highlights the boundary in AutoCAD.
-        /// </summary>
         public static void HighlightBoundary()
+        {
+            if (!TryGetBoundary(out Polyline pl)) return;
+
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            doc.Editor.SetImpliedSelection(new ObjectId[] { pl.ObjectId });
+        }
+
+        public static void ZoomToBoundary()
         {
             if (!TryGetBoundary(out Polyline pl)) return;
 
             var doc = Application.DocumentManager.MdiActiveDocument;
             var ed = doc.Editor;
 
-            ed.SetImpliedSelection(new ObjectId[] { pl.ObjectId });
+            try
+            {
+                using (doc.LockDocument())
+                {
+                    ed.SetImpliedSelection(new ObjectId[] { pl.ObjectId });
+                    Extents3d ext = pl.GeometricExtents;
+                    if (ext.MinPoint.DistanceTo(ext.MaxPoint) < 1e-6) return;
+
+                    var view = ed.GetCurrentView();
+                    Point2d center = new Point2d(
+                        (ext.MinPoint.X + ext.MaxPoint.X) / 2.0,
+                        (ext.MinPoint.Y + ext.MaxPoint.Y) / 2.0
+                    );
+
+                    double width = ext.MaxPoint.X - ext.MinPoint.X;
+                    double height = ext.MaxPoint.Y - ext.MinPoint.Y;
+                    if (width < 1e-6) width = 1.0;
+                    if (height < 1e-6) height = 1.0;
+
+                    view.CenterPoint = center;
+                    view.Width = width * 1.1;
+                    view.Height = height * 1.1;
+
+                    ed.SetCurrentView(view);
+                }
+            }
+            catch { }
         }
+
+        #endregion
+
+        #region --- Event Handlers ---
+
+        private static void Db_ObjectErased(object sender, ObjectErasedEventArgs e)
+        {
+            if (e.DBObject != null && e.DBObject.ObjectId == _storedBoundaryId)
+            {
+                _storedBoundaryId = ObjectId.Null;
+                BoundaryChanged?.Invoke(null, EventArgs.Empty);
+            }
+        }
+
+        private static void Db_ObjectModified(object sender, ObjectEventArgs e)
+        {
+            if (e.DBObject != null && e.DBObject.ObjectId == _storedBoundaryId)
+            {
+                BoundaryChanged?.Invoke(null, EventArgs.Empty);
+            }
+        }
+
+        private static void Doc_CommandEnded(object sender, CommandEventArgs e)
+        {
+            string cmd = e.GlobalCommandName.ToUpperInvariant();
+
+            foreach (var monitored in MonitoredCommands)
+            {
+                if (cmd == monitored)
+                {
+                    var doc = sender as Document;
+                    if (doc != null)
+                    {
+                        using (doc.LockDocument())
+                        using (var tr = doc.TransactionManager.StartTransaction())
+                        {
+                            bool exists = _storedBoundaryId != ObjectId.Null && !_storedBoundaryId.IsErased;
+                            if (!exists)
+                            {
+                                _storedBoundaryId = ObjectId.Null;
+                            }
+
+                            BoundaryChanged?.Invoke(null, EventArgs.Empty);
+                            tr.Commit();
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
 
         #endregion
 
         #region --- Internal Helpers ---
 
-        /// <summary>
-        /// Core boundary storage logic.
-        /// Must be called inside a transaction.
-        /// </summary>
-        private static bool SetBoundaryInternal(Polyline pl, Transaction tr, Database db)
-        {
-            if (pl == null || !pl.Closed) return false;
-
-            var ms = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
-
-            // Remove previous boundary safely
-            ObjectId oldId = GetStoredPolylineId(tr, db);
-            if (oldId != ObjectId.Null && !oldId.IsErased)
-            {
-                var oldPl = tr.GetObject(oldId, OpenMode.ForWrite) as Polyline;
-                oldPl?.Erase();
-            }
-
-            // Clone into current space
-            var plClone = (Polyline)pl.Clone();
-            ms.AppendEntity(plClone);
-            tr.AddNewlyCreatedDBObject(plClone, true);
-
-            // Store ObjectId in XRecord
-            StorePolylineId(plClone.ObjectId, tr, db);
-
-            return true;
-        }
-
-        /// <summary>
-        /// Saves the polyline ObjectId in the Named Objects Dictionary.
-        /// </summary>
         private static void StorePolylineId(ObjectId id, Transaction tr, Database db)
         {
             var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
@@ -183,27 +255,35 @@ namespace FoundationDetailer.Utilities
             xr.Data = new ResultBuffer(new TypedValue((int)DxfCode.Handle, id.Handle.Value));
         }
 
-        /// <summary>
-        /// Retrieves the stored polyline ObjectId.
-        /// </summary>
         private static ObjectId GetStoredPolylineId(Transaction tr, Database db)
         {
             var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
             if (!nod.Contains(XrecordKey)) return ObjectId.Null;
 
             var xr = (Xrecord)tr.GetObject(nod.GetAt(XrecordKey), OpenMode.ForRead);
-            if (xr.Data == null || xr.Data.AsArray().Length == 0) return ObjectId.Null;
+            if (xr.Data == null) return ObjectId.Null;
 
-            var tv = xr.Data.AsArray()[0];
+            var arr = xr.Data.AsArray();
+            if (arr.Length == 0) return ObjectId.Null;
+
+            var tv = arr[0];
             if (tv.TypeCode != (int)DxfCode.Handle) return ObjectId.Null;
 
             Handle h = new Handle(Convert.ToInt64(tv.Value));
             return db.GetObjectId(false, h, 0);
         }
 
-        /// <summary>
-        /// Returns true if polyline vertices are counter-clockwise.
-        /// </summary>
+        private static Polyline FixBoundary(Polyline pl)
+        {
+            if (pl == null) return null;
+            if (!IsCounterClockwise(pl))
+            {
+                pl.UpgradeOpen();
+                pl.ReverseCurve();
+            }
+            return pl;
+        }
+
         private static bool IsCounterClockwise(Polyline pl)
         {
             double sum = 0;
@@ -213,7 +293,7 @@ namespace FoundationDetailer.Utilities
                 Point2d b = pl.GetPoint2dAt((i + 1) % pl.NumberOfVertices);
                 sum += (b.X - a.X) * (b.Y + a.Y);
             }
-            return sum < 0; // negative = CCW
+            return sum < 0;
         }
 
         #endregion
