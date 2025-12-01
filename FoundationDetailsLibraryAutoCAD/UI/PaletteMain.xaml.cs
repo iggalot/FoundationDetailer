@@ -10,6 +10,7 @@ using FoundationDetailer.Utilities;
 using System;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using System.Windows.Threading;
 
 namespace FoundationDetailer.UI
@@ -33,20 +34,38 @@ namespace FoundationDetailer.UI
             InitializeComponent();
             PolylineBoundaryManager.BoundaryChanged += OnBoundaryChanged;  // subscribe for the boundary changed event
 
-
             // Initialize PierControl
-            PierUI = new PierControl();
-            PierUI.PierAdded += OnPierAdded;
-            PierUI.RequestPierLocationPick += PickPierLocation;
+            //PierUI = new PierControl();
+            //PierUI.PierAdded += OnPierAdded;
+            //PierUI.RequestPierLocationPick += PickPierLocation;
 
-            PierContainer.Children.Clear();
-            PierContainer.Children.Add(PierUI);
+            //PierContainer.Children.Clear();
+            //PierContainer.Children.Add(PierUI);
 
             WireEvents();
 
             // Initialize boundary display immediately
             LoadBoundaryForActiveDocument();
         }
+
+        private void WireEvents()
+        {
+            BtnSelectBoundary.Click += (s, e) => SelectBoundary();
+            //BtnAddPiers.Click += (s, e) => AddPiers();
+            BtnAddGradeBeams.Click += (s, e) => AddGradeBeams();
+            BtnAddRebar.Click += (s, e) => AddRebarBars();
+            BtnAddStrands.Click += (s, e) => AddStrands();
+            //BtnPreview.Click += (s, e) => ShowPreview();
+            //BtnClearPreview.Click += (s, e) => ClearPreview();
+            //BtnCommit.Click += (s, e) => CommitModel();
+            //BtnSave.Click += (s, e) => SaveModel();
+            //BtnLoad.Click += (s, e) => LoadModel();
+
+            BtnShowBoundary.Click += (s, e) => PolylineBoundaryManager.HighlightBoundary();
+            BtnZoomBoundary.Click += (s, e) => PolylineBoundaryManager.ZoomToBoundary();
+        }
+
+        #region --- Boundary Selection and UI Updates ---
 
         private void LoadBoundaryForActiveDocument()
         {
@@ -58,15 +77,8 @@ namespace FoundationDetailer.UI
                 using (doc.LockDocument())
                 using (var tr = doc.TransactionManager.StartTransaction())
                 {
-                    // Attempt to load the stored boundary from XRecord
-                    var db = doc.Database;
-
                     // Immediately update boundary display for the active document
-                    if (PolylineBoundaryManager.TryGetBoundary(out Polyline pl))
-                    {
-                        UpdateBoundaryDisplay();
-                    }
-
+                    UpdateBoundaryDisplay();
                     tr.Commit();
                 }
             }
@@ -75,30 +87,73 @@ namespace FoundationDetailer.UI
                 Dispatcher.BeginInvoke(new Action(() =>
                     TxtStatus.Text = $"Error loading boundary: {ex.Message}"));
             }
-
-            // Update the palette UI
-            UpdateBoundaryDisplay();
         }
 
-
-        private void WireEvents()
+        private void OnBoundaryChanged(object sender, EventArgs e)
         {
-            BtnSelectBoundary.Click += (s, e) => SelectBoundary();
-            BtnAddPiers.Click += (s, e) => AddPiers();
-            BtnAddGradeBeams.Click += (s, e) => AddGradeBeams();
-            BtnAddRebar.Click += (s, e) => AddRebarBars();
-            BtnAddStrands.Click += (s, e) => AddStrands();
-            BtnPreview.Click += (s, e) => ShowPreview();
-            BtnClearPreview.Click += (s, e) => ClearPreview();
-            BtnCommit.Click += (s, e) => CommitModel();
-            //BtnSave.Click += (s, e) => SaveModel();
-            //BtnLoad.Click += (s, e) => LoadModel();
-
-            BtnShowBoundary.Click += (s, e) => PolylineBoundaryManager.HighlightBoundary();
-            BtnZoomBoundary.Click += (s, e) => PolylineBoundaryManager.ZoomToBoundary();
+            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
 
-        #region --- Boundary Selection ---
+        private void UpdateBoundaryDisplay()
+        {
+            bool isValid = false;
+
+            if (PolylineBoundaryManager.TryGetBoundary(out Polyline pl) && pl.Closed)
+            {
+                isValid = true;
+                TxtBoundaryStatus.Text = "Boundary valid - "+ pl.ObjectId.Handle.ToString();
+                TxtBoundaryVertices.Text = pl.NumberOfVertices.ToString();
+
+                double perimeter = 0;
+                for (int i = 0; i < pl.NumberOfVertices; i++)
+                    perimeter += pl.GetPoint2dAt(i).GetDistanceTo(pl.GetPoint2dAt((i + 1) % pl.NumberOfVertices));
+                TxtBoundaryPerimeter.Text = perimeter.ToString("F2");
+
+                double area = ComputePolylineArea(pl);
+                TxtBoundaryArea.Text = area.ToString("F2");
+
+                BtnZoomBoundary.IsEnabled = true;
+                BtnShowBoundary.IsEnabled = true;
+            }
+            else
+            {
+                TxtBoundaryStatus.Text = "No boundary selected";
+                TxtBoundaryVertices.Text = "-";
+                TxtBoundaryPerimeter.Text = "-";
+
+                BtnZoomBoundary.IsEnabled = false;
+                BtnShowBoundary.IsEnabled = false;
+            }
+
+            // Update status circle
+            StatusCircle.Fill = isValid ? Brushes.Green : Brushes.Red;
+
+            // Show/hide action buttons
+            ActionButtonsPanel.Visibility = isValid ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
+
+            // Optionally, change background color of action buttons
+            foreach (Button btn in ActionButtonsPanel.Children)
+            {
+                btn.Background = isValid ? Brushes.LightGreen : Brushes.LightCoral;
+            }
+        }
+
+        public static double ComputePolylineArea(Polyline pl)
+        {
+            if (pl == null || pl.NumberOfVertices < 3)
+                return 0.0;
+
+            double area = 0.0;
+
+            for (int i = 0; i < pl.NumberOfVertices; i++)
+            {
+                Point2d p1 = pl.GetPoint2dAt(i);
+                Point2d p2 = pl.GetPoint2dAt((i + 1) % pl.NumberOfVertices);
+                area += (p1.X * p2.Y) - (p2.X * p1.Y);
+            }
+
+            return Math.Abs(area / 2.0);
+        }
 
         private void SelectBoundary()
         {
@@ -126,52 +181,9 @@ namespace FoundationDetailer.UI
             }
         }
 
-        private void BoundaryPoll_Tick(object sender, EventArgs e)
-        {
-            _boundaryPollAttempts++;
-            var timer = (DispatcherTimer)sender;
+        #endregion
 
-            try
-            {
-                var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-
-                using (doc.LockDocument())
-                {
-                    if (PolylineBoundaryManager.TryGetBoundary(out Polyline pl))
-                    {
-                        int vertexCount = pl.NumberOfVertices;
-                        double perimeter = 0;
-                        for (int i = 0; i < vertexCount; i++)
-                            perimeter += pl.GetPoint2dAt(i).GetDistanceTo(pl.GetPoint2dAt((i + 1) % vertexCount));
-
-                        Dispatcher.BeginInvoke(new Action(() =>
-                        {
-                            TxtBoundaryStatus.Text = "Boundary selected.";
-                            TxtBoundaryVertices.Text = vertexCount.ToString();
-                            TxtBoundaryPerimeter.Text = perimeter.ToString("F2");
-                        }));
-
-                        HighlightAndZoom(pl);
-
-                        timer.Stop();
-                        return;
-                    }
-
-                    if (_boundaryPollAttempts > MaxPollAttempts)
-                    {
-                        Dispatcher.BeginInvoke(new Action(() =>
-                            TxtBoundaryStatus.Text = "No boundary selected."));
-                        timer.Stop();
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Dispatcher.BeginInvoke(new Action(() =>
-                    TxtBoundaryStatus.Text = $"Error: {ex.Message}"));
-                timer.Stop();
-            }
-        }
+        #region --- Highlight and Zoom ---
 
         private void HighlightAndZoom(Polyline pl)
         {
@@ -204,7 +216,6 @@ namespace FoundationDetailer.UI
 
                 var view = ed.GetCurrentView();
 
-                // Convert center to Point2d
                 Point2d center = new Point2d(
                     (ext.MinPoint.X + ext.MaxPoint.X) / 2.0,
                     (ext.MinPoint.Y + ext.MaxPoint.Y) / 2.0
@@ -227,93 +238,6 @@ namespace FoundationDetailer.UI
                 Dispatcher.BeginInvoke(new Action(() =>
                     TxtBoundaryStatus.Text = $"Zoom error: {ex.Message}"));
             }
-        }
-
-        private void RefreshBoundaryInfo(Polyline pl)
-        {
-            if (pl == null)
-            {
-                Dispatcher.BeginInvoke(new Action(() =>
-                {
-                    TxtBoundaryStatus.Text = "No boundary selected.";
-                    TxtBoundaryVertices.Text = "-";
-                    TxtBoundaryPerimeter.Text = "-";
-                }));
-                return;
-            }
-
-            Dispatcher.BeginInvoke(new Action(() =>
-            {
-                TxtBoundaryStatus.Text = pl.Closed ? "Boundary valid" : "Boundary not closed";
-                TxtBoundaryVertices.Text = pl.NumberOfVertices.ToString();
-
-                double perimeter = 0;
-                for (int i = 0; i < pl.NumberOfVertices; i++)
-                    perimeter += pl.GetPoint2dAt(i).GetDistanceTo(pl.GetPoint2dAt((i + 1) % pl.NumberOfVertices));
-
-                TxtBoundaryPerimeter.Text = perimeter.ToString("F2");
-            }));
-        }
-
-        private void ZoomToBoundary()
-        {
-            try
-            {
-                if (!PolylineBoundaryManager.TryGetBoundary(out Polyline pl))
-                {
-                    Dispatcher.BeginInvoke(new Action(() =>
-                        TxtBoundaryStatus.Text = "No boundary to zoom."));
-                    return;
-                }
-
-                var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-                var ed = doc.Editor;
-
-                using (doc.LockDocument())
-                using (var tr = doc.TransactionManager.StartTransaction())
-                {
-                    Extents3d ext = pl.GeometricExtents;
-                    ZoomToExtents(ed, ext);
-                    tr.Commit();
-                }
-            }
-            catch (Exception ex)
-            {
-                Dispatcher.BeginInvoke(new Action(() =>
-                    TxtBoundaryStatus.Text = $"Zoom error: {ex.Message}"));
-            }
-        }
-
-
-        private void OnBoundaryChanged(object sender, EventArgs e)
-        {
-            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
-        }
-
-        private void UpdateBoundaryDisplay()
-        {
-            if (!PolylineBoundaryManager.TryGetBoundary(out Polyline pl))
-            {
-                TxtBoundaryStatus.Text = "No boundary selected";
-                TxtBoundaryVertices.Text = "-";
-                TxtBoundaryPerimeter.Text = "-";
-                BtnZoomBoundary.IsEnabled = false;
-                BtnShowBoundary.IsEnabled = false;
-                return;
-            }
-
-            TxtBoundaryStatus.Text = pl.Closed ? "Boundary valid" : "Boundary not closed";
-            TxtBoundaryVertices.Text = pl.NumberOfVertices.ToString();
-
-            double perimeter = 0;
-            for (int i = 0; i < pl.NumberOfVertices; i++)
-            {
-                perimeter += pl.GetPoint2dAt(i).GetDistanceTo(pl.GetPoint2dAt((i + 1) % pl.NumberOfVertices));
-            }
-            TxtBoundaryPerimeter.Text = perimeter.ToString("F2");
-
-            BtnZoomBoundary.IsEnabled = true;
-            BtnShowBoundary.IsEnabled = true;
         }
 
         #endregion
