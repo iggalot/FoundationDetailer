@@ -91,8 +91,8 @@ namespace FoundationDetailer.UI
             BtnPreview.Click += (s, e) => ShowPreview();
             BtnClearPreview.Click += (s, e) => ClearPreview();
             BtnCommit.Click += (s, e) => CommitModel();
-            BtnSave.Click += (s, e) => SaveModel();
-            BtnLoad.Click += (s, e) => LoadModel();
+            //BtnSave.Click += (s, e) => SaveModel();
+            //BtnLoad.Click += (s, e) => LoadModel();
 
             BtnShowBoundary.Click += (s, e) => PolylineBoundaryManager.HighlightBoundary();
             BtnZoomBoundary.Click += (s, e) => PolylineBoundaryManager.ZoomToBoundary();

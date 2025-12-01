@@ -22,10 +22,33 @@
         <ScrollViewer Grid.Row="1">
             <StackPanel Orientation="Vertical" Margin="0,0,0,5" VerticalAlignment="Top">
                 <Button x:Name="BtnSelectBoundary" Content="Select Boundary" Margin="0,5"/>
-                <Button x:Name="BtnAddPiers" Content="Add Piers" Margin="0,5"/>
+
+                <!-- Boundary Information GroupBox -->
+                <GroupBox>
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal" >
+                            <TextBlock Text="Boundary Status:" FontWeight="Bold"/>
+                            <TextBlock x:Name="TxtBoundaryStatus" Text="No boundary selected" VerticalAlignment="Center" Margin="5"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" >
+                            <TextBlock Text="Vertices:" FontWeight="Bold"/>
+                            <TextBlock x:Name="TxtBoundaryVertices" Text="-" Margin="5"/>
+                            <TextBlock Text="Perimeter:" FontWeight="Bold"/>
+                            <TextBlock x:Name="TxtBoundaryPerimeter" Text="-" Margin="5"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                            <Button x:Name="BtnShowBoundary" Content="Show" Width="50" Margin="0,5,5,5"/>
+                            <Button x:Name="BtnZoomBoundary" Content="Zoom" Width="50
+                                    " Margin="0,5"/>
+                        </StackPanel>
+                    </StackPanel>
+                </GroupBox>
+                
+
                 <Button x:Name="BtnAddGradeBeams" Content="Add Grade Beams" Margin="0,5"/>
                 <Button x:Name="BtnAddRebar" Content="Add Rebar Bars" Margin="0,5"/>
                 <Button x:Name="BtnAddStrands" Content="Add Strands" Margin="0,5"/>
+                <Button x:Name="BtnAddPiers" Content="Add Piers" Margin="0,5"/>
                 <Button x:Name="BtnPreview" Content="Preview" Margin="0,2"/>
                 <Button x:Name="BtnClearPreview" Content="Clear Preview" Margin="0,2"/>
                 <Button x:Name="BtnCommit" Content="Commit to DWG" Margin="0,2"/>
@@ -33,32 +56,15 @@
                 <!-- Pier Control container -->
                 <StackPanel x:Name="PierContainer" Orientation="Vertical" Margin="0,10,0,0"/>
 
-                <!-- Boundary Information GroupBox -->
-                <GroupBox Header="Boundary Information" Margin="0,10,0,0">
-                    <StackPanel>
-                        <TextBlock Text="Boundary Status:" FontWeight="Bold"/>
-                        <TextBlock x:Name="TxtBoundaryStatus" Text="No boundary selected" Margin="0,2,0,10"/>
 
-                        <TextBlock Text="Vertices:" FontWeight="Bold"/>
-                        <TextBlock x:Name="TxtBoundaryVertices" Text="-" Margin="0,2,0,10"/>
-
-                        <TextBlock Text="Perimeter:" FontWeight="Bold"/>
-                        <TextBlock x:Name="TxtBoundaryPerimeter" Text="-" Margin="0,2,0,10"/>
-
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
-                            <Button x:Name="BtnShowBoundary" Content="Show Boundary" Width="120" Margin="0,5,5,5"/>
-                            <Button x:Name="BtnZoomBoundary" Content="Zoom To" Width="80" Margin="0,5"/>
-                        </StackPanel>
-                    </StackPanel>
-                </GroupBox>
 
             </StackPanel>
         </ScrollViewer>
 
         <!-- Footer -->
         <StackPanel Orientation="Horizontal" Grid.Row="2" HorizontalAlignment="Center" Margin="0,10,0,0">
-            <Button x:Name="BtnSave" Content="Save" Width="80" Margin="5"/>
-            <Button x:Name="BtnLoad" Content="Load" Width="80" Margin="5"/>
+            <!--<Button x:Name="BtnSave" Content="Save" Width="80" Margin="5"/>
+            <Button x:Name="BtnLoad" Content="Load" Width="80" Margin="5"/>-->
         </StackPanel>
 
         <!-- Status Bar -->
