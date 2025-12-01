@@ -3,7 +3,7 @@ using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Windows;
 
-namespace YourNamespace
+namespace FoundationDetailer
 {
     public static class PaletteManager
     {

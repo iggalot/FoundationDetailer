@@ -63,9 +63,10 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="AutoCAD\AutoCADAdapter.cs" />
-    <Compile Include="AutoCAD\GridlineManager.cs" />
+    <Compile Include="AutoCAD\FoundationGradeBeamManager.cs" />
+    <Compile Include="Managers\GridlineManager.cs" />
     <Compile Include="AutoCAD\PaletteManager.cs" />
-    <Compile Include="AutoCAD\PolylineBoundaryManager.cs" />
+    <Compile Include="AutoCAD\FoundationBoundaryManager.cs" />
     <Compile Include="Class1.cs" />
     <Compile Include="Commands\FoundationCommands.cs" />
     <Compile Include="Data\CompanyStandards.cs" />

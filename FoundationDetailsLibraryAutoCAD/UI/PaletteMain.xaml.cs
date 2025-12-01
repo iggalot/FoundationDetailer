@@ -2,11 +2,11 @@
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using FoundationDetailer.AutoCAD;
+using FoundationDetailer.Managers;
 using FoundationDetailer.Model;
 using FoundationDetailer.Storage;
 using FoundationDetailer.UI.Controls;
 using FoundationDetailer.UI.Converters;
-using FoundationDetailer.Utilities;
 using System;
 using System.Windows;
 using System.Windows.Controls;
@@ -32,7 +32,7 @@ namespace FoundationDetailer.UI
         public PaletteMain()
         {
             InitializeComponent();
-            PolylineBoundaryManager.BoundaryChanged += OnBoundaryChanged;  // subscribe for the boundary changed event
+            FoundationBoundaryManager.BoundaryChanged += OnBoundaryChanged;  // subscribe for the boundary changed event
 
             // Initialize PierControl
             //PierUI = new PierControl();
@@ -62,8 +62,8 @@ namespace FoundationDetailer.UI
             //BtnSave.Click += (s, e) => SaveModel();
             //BtnLoad.Click += (s, e) => LoadModel();
 
-            BtnShowBoundary.Click += (s, e) => PolylineBoundaryManager.HighlightBoundary();
-            BtnZoomBoundary.Click += (s, e) => PolylineBoundaryManager.ZoomToBoundary();
+            BtnShowBoundary.Click += (s, e) => FoundationBoundaryManager.HighlightBoundary();
+            BtnZoomBoundary.Click += (s, e) => FoundationBoundaryManager.ZoomToBoundary();
         }
 
         #region --- Boundary Selection and UI Updates ---
@@ -99,7 +99,7 @@ namespace FoundationDetailer.UI
         {
             bool isValid = false;
 
-            if (PolylineBoundaryManager.TryGetBoundary(out Polyline pl) && pl.Closed)
+            if (FoundationBoundaryManager.TryGetBoundary(out Polyline pl) && pl.Closed)
             {
                 isValid = true;
                 TxtBoundaryStatus.Text = "Boundary valid - "+ pl.ObjectId.Handle.ToString();
@@ -172,7 +172,7 @@ namespace FoundationDetailer.UI
             if (result.Status != PromptStatus.OK) return;
 
             // Try set the boundary
-            if (!PolylineBoundaryManager.TrySetBoundary(result.ObjectId, out string error))
+            if (!FoundationBoundaryManager.TrySetBoundary(result.ObjectId, out string error))
             {
                 ed.WriteMessage($"\nError setting boundary: {error}");
             }
@@ -243,7 +243,7 @@ namespace FoundationDetailer.UI
 private void AddGradeBeams()
 {
     // Get stored boundary
-    if (!PolylineBoundaryManager.TryGetBoundary(out Polyline boundaryRecord))
+    if (!FoundationBoundaryManager.TryGetBoundary(out Polyline boundaryRecord))
     {
         MessageBox.Show("No boundary selected.");
         return;
@@ -264,28 +264,28 @@ private void AddGradeBeams()
         }
 
         // Clone (safe, optional)
-        Polyline workPl = (Polyline)pl.Clone();
+        //Polyline workPl = (Polyline)pl.Clone();
 
         // Build grid
         double maxSpacing = 10.0;
-        GridLineManager grid = new GridLineManager(workPl, maxSpacing, 5);
+        GridLineManager grid = new GridLineManager(pl, maxSpacing, 5);
 
         var verticalLines = grid.GetVerticalPolylines();
         var horizontalLines = grid.GetHorizontalPolylines();
 
-        BlockTableRecord btr = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
+        //BlockTableRecord btr = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
 
-        foreach (var ln in verticalLines)
-        {
-            btr.AppendEntity(ln);
-            tr.AddNewlyCreatedDBObject(ln, true);
-        }
+        //foreach (var ln in verticalLines)
+        //{
+        //    btr.AppendEntity(ln);
+        //    tr.AddNewlyCreatedDBObject(ln, true);
+        //}
 
-        foreach (var ln in horizontalLines)
-        {
-            btr.AppendEntity(ln);
-            tr.AddNewlyCreatedDBObject(ln, true);
-        }
+        //foreach (var ln in horizontalLines)
+        //{
+        //    btr.AppendEntity(ln);
+        //    tr.AddNewlyCreatedDBObject(ln, true);
+        //}
 
         tr.Commit();
     }

@@ -2,7 +2,6 @@
 using Autodesk.AutoCAD.Runtime;
 using Autodesk.AutoCAD.Windows;
 using FoundationDetailer.UI;
-using FoundationDetailer.Utilities;
 using System.Windows.Forms;
 using System.Windows.Forms.Integration;
 
@@ -66,7 +65,7 @@ namespace FoundationDetailer.Commands
                 return;
             }
 
-            if (PolylineBoundaryManager.TrySetBoundary(res.ObjectId, out string error))
+            if (FoundationBoundaryManager.TrySetBoundary(res.ObjectId, out string error))
             {
                 ed.WriteMessage("\nBoundary accepted, validated, and saved.");
             }
@@ -80,7 +79,7 @@ namespace FoundationDetailer.Commands
         [CommandMethod("FD_SHOWBOUNDARY")]
         public void ShowBoundaryCommand()
         {
-            PolylineBoundaryManager.HighlightBoundary();
+            FoundationBoundaryManager.HighlightBoundary();
         }
 
 

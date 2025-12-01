@@ -1,17 +1,16 @@
 ﻿using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
-using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Runtime;
 using System;
 using System.Collections.Generic;
 
-namespace FoundationDetailer.Utilities
+namespace FoundationDetailer
 {
     /// <summary>
     /// Manages a single closed polyline boundary per document, including palette-safe storage and Xrecord persistence.
     /// </summary>
-    public static class PolylineBoundaryManager
+    public static class FoundationBoundaryManager
     {
         private static readonly Dictionary<Document, ObjectId> _storedBoundaries = new Dictionary<Document, ObjectId>();
         private static ObjectId _storedBoundaryId = ObjectId.Null;
@@ -249,19 +248,19 @@ namespace FoundationDetailer.Utilities
 
         #endregion
 
-    /// <summary>
-    /// Temporary static store to pass ObjectId to command thread.
-    /// </summary>
-    public static class TempIdStore
-    {
-        public static ObjectId IdToSave = ObjectId.Null;
-    }
+        /// <summary>
+        /// Temporary static store to pass ObjectId to command thread.
+        /// </summary>
+        public static class TempIdStore
+        {
+            public static ObjectId IdToSave = ObjectId.Null;
+        }
 
-    /// <summary>
-/// Reads the stored polyline ObjectId from the Named Objects Dictionary (Xrecord).
-/// Palette-safe: only reads (no UpgradeOpen, no LockDocument)
-/// </summary>
-private static ObjectId ReadStoredBoundaryFromXrecord()
+        /// <summary>
+        /// Reads the stored polyline ObjectId from the Named Objects Dictionary (Xrecord).
+        /// Palette-safe: only reads (no UpgradeOpen, no LockDocument)
+        /// </summary>
+        private static ObjectId ReadStoredBoundaryFromXrecord()
         {
             var doc = Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return ObjectId.Null;
@@ -298,6 +297,5 @@ private static ObjectId ReadStoredBoundaryFromXrecord()
 
             return id;
         }
-
     }
 }
