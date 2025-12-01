@@ -43,7 +43,43 @@ namespace FoundationDetailer.UI
             PierContainer.Children.Add(PierUI);
 
             WireEvents();
+
+            // Initialize boundary display immediately
+            LoadBoundaryForActiveDocument();
         }
+
+        private void LoadBoundaryForActiveDocument()
+        {
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+
+            try
+            {
+                using (doc.LockDocument())
+                using (var tr = doc.TransactionManager.StartTransaction())
+                {
+                    // Attempt to load the stored boundary from XRecord
+                    var db = doc.Database;
+
+                    // Immediately update boundary display for the active document
+                    if (PolylineBoundaryManager.TryGetBoundary(out Polyline pl))
+                    {
+                        UpdateBoundaryDisplay();
+                    }
+
+                    tr.Commit();
+                }
+            }
+            catch (Exception ex)
+            {
+                Dispatcher.BeginInvoke(new Action(() =>
+                    TxtStatus.Text = $"Error loading boundary: {ex.Message}"));
+            }
+
+            // Update the palette UI
+            UpdateBoundaryDisplay();
+        }
+
 
         private void WireEvents()
         {
@@ -59,29 +95,35 @@ namespace FoundationDetailer.UI
             BtnLoad.Click += (s, e) => LoadModel();
 
             BtnShowBoundary.Click += (s, e) => PolylineBoundaryManager.HighlightBoundary();
-            BtnZoomBoundary.Click += (s, e) => ZoomToBoundary();
+            BtnZoomBoundary.Click += (s, e) => PolylineBoundaryManager.ZoomToBoundary();
         }
 
         #region --- Boundary Selection ---
 
         private void SelectBoundary()
         {
-            // Reset attempts counter
-            _boundaryPollAttempts = 0;
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
 
-            // Fire AutoCAD selection command
-            Autodesk.AutoCAD.ApplicationServices.Application
-                .DocumentManager.MdiActiveDocument
-                .SendStringToExecute("FD_SELECTBOUNDARY ", true, false, false);
+            var ed = doc.Editor;
 
-            // Start polling with DispatcherTimer
-            DispatcherTimer timer = new DispatcherTimer
+            // Prompt for a closed polyline
+            PromptEntityOptions options = new PromptEntityOptions("\nSelect a closed polyline: ");
+            options.SetRejectMessage("\nMust be a closed polyline.");
+            options.AddAllowedClass(typeof(Polyline), false);
+
+            var result = ed.GetEntity(options);
+            if (result.Status != PromptStatus.OK) return;
+
+            // Try set the boundary
+            if (!PolylineBoundaryManager.TrySetBoundary(result.ObjectId, out string error))
             {
-                Interval = TimeSpan.FromMilliseconds(200)
-            };
-
-            timer.Tick += new EventHandler(BoundaryPoll_Tick);
-            timer.Start();
+                ed.WriteMessage($"\nError setting boundary: {error}");
+            }
+            else
+            {
+                ed.WriteMessage($"\nBoundary selected: {result.ObjectId.Handle}");
+            }
         }
 
         private void BoundaryPoll_Tick(object sender, EventArgs e)
@@ -245,28 +287,33 @@ namespace FoundationDetailer.UI
 
         private void OnBoundaryChanged(object sender, EventArgs e)
         {
-            Dispatcher.BeginInvoke(new Action(() =>
-            {
-                // Try get current boundary, if erased it will be null
-                if (!PolylineBoundaryManager.TryGetBoundary(out Polyline pl))
-                {
-                    TxtBoundaryStatus.Text = "No boundary selected";
-                    TxtBoundaryVertices.Text = "-";
-                    TxtBoundaryPerimeter.Text = "-";
-                }
-                else
-                {
-                    // Recalculate info
-                    int vertexCount = pl.NumberOfVertices;
-                    double perimeter = 0;
-                    for (int i = 0; i < vertexCount; i++)
-                        perimeter += pl.GetPoint2dAt(i).GetDistanceTo(pl.GetPoint2dAt((i + 1) % vertexCount));
+            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+        }
 
-                    TxtBoundaryStatus.Text = "Boundary selected";
-                    TxtBoundaryVertices.Text = vertexCount.ToString();
-                    TxtBoundaryPerimeter.Text = perimeter.ToString("F2");
-                }
-            }));
+        private void UpdateBoundaryDisplay()
+        {
+            if (!PolylineBoundaryManager.TryGetBoundary(out Polyline pl))
+            {
+                TxtBoundaryStatus.Text = "No boundary selected";
+                TxtBoundaryVertices.Text = "-";
+                TxtBoundaryPerimeter.Text = "-";
+                BtnZoomBoundary.IsEnabled = false;
+                BtnShowBoundary.IsEnabled = false;
+                return;
+            }
+
+            TxtBoundaryStatus.Text = pl.Closed ? "Boundary valid" : "Boundary not closed";
+            TxtBoundaryVertices.Text = pl.NumberOfVertices.ToString();
+
+            double perimeter = 0;
+            for (int i = 0; i < pl.NumberOfVertices; i++)
+            {
+                perimeter += pl.GetPoint2dAt(i).GetDistanceTo(pl.GetPoint2dAt((i + 1) % pl.NumberOfVertices));
+            }
+            TxtBoundaryPerimeter.Text = perimeter.ToString("F2");
+
+            BtnZoomBoundary.IsEnabled = true;
+            BtnShowBoundary.IsEnabled = true;
         }
 
         #endregion
