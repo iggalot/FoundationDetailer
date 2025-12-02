@@ -71,6 +71,8 @@ namespace FoundationDetailer.UI
                 var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
                 GradeBeamManager.HighlightGradeBeams(doc);
             };
+            BtnClearGradeBeams.Click += BtnClearGradeBeams_Click;
+
         }
 
         private void QueryXData()
@@ -147,11 +149,25 @@ namespace FoundationDetailer.UI
             ActionButtonsPanel.Visibility = isValid ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
 
             // Optionally, change background color of action buttons
-            foreach (Button btn in ActionButtonsPanel.Children)
+            SetActionButtonBackgrounds(ActionButtonsPanel, isValid ? Brushes.LightGreen : Brushes.LightCoral);
+        }
+
+        private void SetActionButtonBackgrounds(Panel parent, Brush background)
+        {
+            foreach (var child in parent.Children)
             {
-                btn.Background = isValid ? Brushes.LightGreen : Brushes.LightCoral;
+                if (child is Button btn)
+                {
+                    btn.Background = background;
+                }
+                else if (child is Panel panel)
+                {
+                    // Recursive call for nested panels
+                    SetActionButtonBackgrounds(panel, background);
+                }
             }
         }
+
 
         public static double ComputePolylineArea(Polyline pl)
         {
@@ -195,6 +211,22 @@ namespace FoundationDetailer.UI
                 ed.WriteMessage($"\nBoundary selected: {result.ObjectId.Handle}");
             }
         }
+
+        private void BtnClearGradeBeams_Click(object sender, RoutedEventArgs e)
+        {
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+
+            using (doc.LockDocument())
+            using (var tr = doc.Database.TransactionManager.StartTransaction())
+            {
+                GradeBeamManager.ClearGradeBeams(doc, tr);
+                tr.Commit();
+            }
+
+            TxtStatus.Text = "All grade beams cleared.";
+        }
+
 
         #endregion
 
