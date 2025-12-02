@@ -1,7 +1,6 @@
 ﻿using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
-using FoundationDetailsLibraryAutoCAD.Managers;
 using System;
 using System.Collections.Generic;
 
@@ -24,24 +23,18 @@ namespace FoundationDetailer.AutoCAD
             int horiz_count = 0;
             int vert_count = 0;
 
-            RegisterGradeBeamRegApp(doc);
-
             try
             {
                 using (doc.LockDocument())
-
-
                 using (Transaction tr = db.TransactionManager.StartTransaction())
                 {
-                    // Compute gridlines
-                    var (horizontalLines, verticalLines) = GridlineManager.ComputeBothGridlines(boundary, maxSpacing, vertexCount);
+                    RegisterGradeBeamRegApp(doc, tr);
 
-                    // Flatten both sets for DB creation
-                    var allLines = new List<List<Point3d>>();
-                    allLines.AddRange(horizontalLines);
-                    allLines.AddRange(verticalLines);
+                    // Compute gridlines points
+                    var (horizontalLines, verticalLines) = FoundationDetailsLibraryAutoCAD.Managers.GridlineManager
+                        .ComputeBothGridlines(boundary, maxSpacing, vertexCount);
 
-                    // Ensure storage
+                    // Prepare storage
                     if (!_gradeBeams.ContainsKey(doc))
                         _gradeBeams[doc] = new List<ObjectId>();
                     else
@@ -50,13 +43,13 @@ namespace FoundationDetailer.AutoCAD
                     // Create DB polylines with XData
                     foreach (var pts in horizontalLines)
                     {
-                        CreateDbLines(doc, pts, XrecordKey, tr);
+                        CreateDbLines(doc, pts, tr);
                         horiz_count++;
                     }
 
                     foreach (var pts in verticalLines)
                     {
-                        CreateDbLines(doc, pts, XrecordKey, tr);
+                        CreateDbLines(doc, pts, tr);
                         vert_count++;
                     }
 
@@ -107,40 +100,36 @@ namespace FoundationDetailer.AutoCAD
         // Internal Helpers
         // -------------------------
 
-        private static void RegisterGradeBeamRegApp(Document doc)
+        private static void RegisterGradeBeamRegApp(Document doc, Transaction tr)
         {
-            Database db = doc.Database;
-            using (Transaction tr = db.TransactionManager.StartTransaction())
+            var db = doc.Database;
+            var nod = (DBDictionary)tr.GetObject(db.RegAppTableId, OpenMode.ForWrite);
+
+            if (!nod.Contains(XrecordKey))
             {
-                RegAppTable rat = (RegAppTable)tr.GetObject(db.RegAppTableId, OpenMode.ForWrite);
-                if (!rat.Has(XrecordKey))
-                {
-                    RegAppTableRecord ratr = new RegAppTableRecord { Name = XrecordKey };
-                    rat.Add(ratr);
-                    tr.AddNewlyCreatedDBObject(ratr, true);
-                }
-                tr.Commit();
+                var ratr = new RegAppTableRecord { Name = XrecordKey };
+                nod.SetAt(XrecordKey, ratr);
+                tr.AddNewlyCreatedDBObject(ratr, true);
             }
         }
 
-
         /// <summary>
-        /// Creates AutoCAD DB lines from a list of Point3d vertices and stores them in the drawing with Xrecord.
+        /// Creates AutoCAD DB lines from a list of Point3d vertices and stores them with XData.
         /// </summary>
-        public static void CreateDbLines(Document doc, List<Point3d> points, string xrecordKey, Transaction tr)
+        private static void CreateDbLines(Document doc, List<Point3d> points, Transaction tr)
         {
             if (points == null || points.Count < 2) return;
 
             for (int i = 0; i < points.Count - 1; i++)
             {
-                AddPolylineToDb(doc, new List<Point3d> { points[i], points[i + 1] }, xrecordKey, tr);
+                AddPolylineToDb(doc, new List<Point3d> { points[i], points[i + 1] }, tr);
             }
         }
 
         /// <summary>
-        /// Adds a polyline to the drawing and attaches Xrecord for persistence.
+        /// Adds a polyline to the drawing and attaches XData for persistence.
         /// </summary>
-        private static void AddPolylineToDb(Document doc, List<Point3d> vertices, string xrecordKey, Transaction tr)
+        private static void AddPolylineToDb(Document doc, List<Point3d> vertices, Transaction tr)
         {
             if (vertices == null || vertices.Count < 2) return;
 
@@ -148,34 +137,24 @@ namespace FoundationDetailer.AutoCAD
             var pl = new Polyline();
 
             for (int i = 0; i < vertices.Count; i++)
-            {
                 pl.AddVertexAt(i, new Point2d(vertices[i].X, vertices[i].Y), 0, 0, 0);
-            }
 
             pl.Closed = false;
 
             var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
             var btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
-
             btr.AppendEntity(pl);
             tr.AddNewlyCreatedDBObject(pl, true);
 
-            // Attach Xrecord for identification
-            var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
-            Xrecord xr;
-            if (nod.Contains(xrecordKey))
-            {
-                xr = (Xrecord)tr.GetObject(nod.GetAt(xrecordKey), OpenMode.ForWrite);
-            }
-            else
-            {
-                xr = new Xrecord();
-                nod.SetAt(xrecordKey, xr);
-                tr.AddNewlyCreatedDBObject(xr, true);
-            }
+            // Attach XData to mark as grade beam
+            SetGradeBeamXData(pl.ObjectId, tr);
 
-            xr.Data = new ResultBuffer(new TypedValue((int)DxfCode.Handle, pl.Handle.Value));
+            // Store reference
+            if (!_gradeBeams.ContainsKey(doc))
+                _gradeBeams[doc] = new List<ObjectId>();
+            _gradeBeams[doc].Add(pl.ObjectId);
         }
+
         /// <summary>
         /// Add XData to a polyline to mark it as a grade beam.
         /// </summary>

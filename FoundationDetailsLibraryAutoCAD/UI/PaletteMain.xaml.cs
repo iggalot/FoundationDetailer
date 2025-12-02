@@ -127,6 +127,8 @@ namespace FoundationDetailer.UI
                 TxtBoundaryStatus.Text = "No boundary selected";
                 TxtBoundaryVertices.Text = "-";
                 TxtBoundaryPerimeter.Text = "-";
+                TxtBoundaryArea.Text = "-";
+
 
                 BtnZoomBoundary.IsEnabled = false;
                 BtnShowBoundary.IsEnabled = false;
