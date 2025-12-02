@@ -37,13 +37,16 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
             double minY = ext.MinPoint.Y, maxY = ext.MaxPoint.Y;
 
             double length = horizontal ? (maxY - minY) : (maxX - minX);
-            int count = (int)Math.Floor(length / maxSpacing);
-            if (count < 1) return new List<List<Point3d>>();
+            if (length <= 0) return new List<List<Point3d>>();
 
-            double spacing = length / (count + 1);
-            var result = new List<List<Point3d>>(count);
+            // Compute number of intervals: largest spacing <= maxSpacing
+            int intervals = (int)Math.Ceiling(length / maxSpacing); // minimal number of spaces
+            double spacing = length / intervals; // actual spacing ≤ maxSpacing
 
-            for (int i = 0; i <= count + 1; i++)
+            var result = new List<List<Point3d>>(intervals + 1); // +1 for end line
+
+            // Loop from 0 to intervals inclusive to include both ends
+            for (int i = 0; i <= intervals; i++)
             {
                 double c = (horizontal ? minY : minX) + i * spacing;
                 Point3d start = horizontal ? new Point3d(minX, c, 0) : new Point3d(c, minY, 0);

@@ -157,7 +157,6 @@ namespace FoundationDetailer.Managers
                 {
                     var pl = tr.GetObject(id, OpenMode.ForRead) as Polyline;
                     if (pl == null) { error = "Selected object is not a polyline."; return false; }
-                    if (!pl.Closed) { error = "Polyline must be closed."; return false; }
 
                     Polyline cleaned = FixBoundary(pl);
 
@@ -330,13 +329,20 @@ namespace FoundationDetailer.Managers
         private static Polyline FixBoundary(Polyline pl)
         {
             if (pl == null) return null;
+
+            pl.UpgradeOpen(); // allow modifications
+
+            // Make sure polyline is CCW
             if (!IsCounterClockwise(pl))
-            {
-                pl.UpgradeOpen();
                 pl.ReverseCurve();
-            }
+
+            // Ensure polyline is closed
+            if (!pl.Closed)
+                pl.Closed = true;
+
             return pl;
         }
+
 
         private static bool IsCounterClockwise(Polyline pl)
         {

@@ -22,7 +22,7 @@ namespace FoundationDetailer.AutoCAD
         /// </summary>
         public static void CreateBothGridlines(Polyline boundary, double maxSpacing, int vertexCount)
         {
-            if (boundary == null || !boundary.Closed) return;
+            if (boundary == null) return;
 
             var doc = Application.DocumentManager.MdiActiveDocument;
             var db = doc.Database;
@@ -41,11 +41,11 @@ namespace FoundationDetailer.AutoCAD
                     var (horizontalLines, verticalLines) = FoundationDetailsLibraryAutoCAD.Managers.GridlineManager
                         .ComputeBothGridlines(boundary, maxSpacing, vertexCount);
 
-                    // Prepare storage
-                    if (!_gradeBeams.ContainsKey(doc))
-                        _gradeBeams[doc] = new List<ObjectId>();
-                    else
-                        ClearGradeBeams(doc, tr);
+                    //// Prepare storage
+                    //if (!_gradeBeams.ContainsKey(doc))
+                    //    _gradeBeams[doc] = new List<ObjectId>();
+                    //else
+                    //    ClearGradeBeams(doc, tr);
 
                     // Create DB polylines with XData
                     foreach (var pts in horizontalLines)

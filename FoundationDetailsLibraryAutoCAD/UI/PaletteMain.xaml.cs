@@ -288,30 +288,17 @@ namespace FoundationDetailer.UI
                 return;
             }
 
-            // Example parameters: max spacing 48 units, 10 vertices per line
             double maxSpacing = 144.0;
             int vertexCount = 5;
 
             try
             {
                 using (doc.LockDocument())
-                using (var tr = doc.Database.TransactionManager.StartTransaction())
                 {
-                    GradeBeamManager.RegisterGradeBeamRegApp(doc, tr); // register first
+                    // Let GradeBeamManager handle everything internally
+                    GradeBeamManager.CreateBothGridlines(boundary, maxSpacing, vertexCount);
 
-                    // Compute horizontal and vertical gridlines
-                    var (horizontalLines, verticalLines) = GridlineManager.ComputeBothGridlines(boundary, maxSpacing, vertexCount);
-
-                    // Create DB lines for each gridline, attaching the FD_GRADEBEAM Xrecord key
-                    foreach (var pts in horizontalLines)
-                        GradeBeamManager.CreateDbLine(doc, pts, tr);
-
-                    foreach (var pts in verticalLines)
-                        GradeBeamManager.CreateDbLine(doc, pts, tr);
-
-                    tr.Commit();
-
-                    doc.Editor.WriteMessage($"\nGrade beams created: horizontal={horizontalLines.Count}, vertical={verticalLines.Count}");
+                    doc.Editor.WriteMessage("\nGrade beams created successfully.");
                 }
             }
             catch (Autodesk.AutoCAD.Runtime.Exception ex)
