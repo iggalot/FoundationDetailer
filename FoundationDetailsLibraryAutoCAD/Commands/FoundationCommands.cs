@@ -10,6 +10,7 @@ using System.Windows.Forms.Integration;
 
 namespace FoundationDetailer.Commands
 {
+    //
     public class FoundationCommands : IExtensionApplication
     {
         private static PaletteSet _paletteSet;
