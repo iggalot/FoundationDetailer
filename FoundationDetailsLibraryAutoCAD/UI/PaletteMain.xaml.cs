@@ -2,11 +2,12 @@
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using FoundationDetailer.AutoCAD;
+using FoundationDetailer.Managers;
 using FoundationDetailer.Model;
 using FoundationDetailer.Storage;
 using FoundationDetailer.UI.Controls;
 using FoundationDetailer.UI.Converters;
-using FoundationDetailer.Utilities;
+using FoundationDetailsLibraryAutoCAD.Managers;
 using System;
 using System.Windows;
 using System.Windows.Controls;
@@ -63,6 +64,12 @@ namespace FoundationDetailer.UI
 
             BtnShowBoundary.Click += (s, e) => PolylineBoundaryManager.HighlightBoundary();
             BtnZoomBoundary.Click += (s, e) => PolylineBoundaryManager.ZoomToBoundary();
+
+            BtnHighlightGradeBeams.Click += (s, e) =>
+            {
+                var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+                GradeBeamManager.HighlightGradeBeams(doc);
+            };
         }
 
         #region --- Boundary Selection and UI Updates ---
@@ -262,7 +269,47 @@ namespace FoundationDetailer.UI
         #region --- Model Operations ---
 
         private void AddPiers() => MessageBox.Show("Add piers to model.");
-        private void AddGradeBeams() => MessageBox.Show("Add grade beams to model.");
+        private void AddGradeBeams()
+        {
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+
+            if (!PolylineBoundaryManager.TryGetBoundary(out Polyline boundary))
+            {
+                doc.Editor.WriteMessage("\nNo boundary selected.");
+                return;
+            }
+
+            // Example parameters: max spacing 48 units, 10 vertices per line
+            double maxSpacing = 48.0;
+            int vertexCount = 10;
+
+            try
+            {
+                using (doc.LockDocument())
+                using (var tr = doc.Database.TransactionManager.StartTransaction())
+                {
+                    // Compute horizontal and vertical gridlines
+                    var (horizontalLines, verticalLines) = GridlineManager.ComputeBothGridlines(boundary, maxSpacing, vertexCount);
+
+                    // Create DB lines for each gridline, attaching the FD_GRADEBEAM Xrecord key
+                    foreach (var pts in horizontalLines)
+                        GradeBeamManager.CreateDbLines(doc, pts, "FD_GRADEBEAM", tr);
+
+                    foreach (var pts in verticalLines)
+                        GradeBeamManager.CreateDbLines(doc, pts, "FD_GRADEBEAM", tr);
+
+                    tr.Commit();
+
+                    doc.Editor.WriteMessage($"\nGrade beams created: horizontal={horizontalLines.Count}, vertical={verticalLines.Count}");
+                }
+            }
+            catch (Autodesk.AutoCAD.Runtime.Exception ex)
+            {
+                doc.Editor.WriteMessage($"\nError creating grade beams: {ex.Message}");
+            }
+        }
+
         private void AddRebarBars() => MessageBox.Show("Add rebar bars to model.");
         private void AddStrands() => MessageBox.Show("Add strands to model.");
 

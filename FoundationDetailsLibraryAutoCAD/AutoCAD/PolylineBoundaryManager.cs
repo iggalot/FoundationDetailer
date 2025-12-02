@@ -4,7 +4,7 @@ using Autodesk.AutoCAD.Geometry;
 using System;
 using System.Collections.Generic;
 
-namespace FoundationDetailer.Utilities
+namespace FoundationDetailer.Managers
 {
     public static class PolylineBoundaryManager
     {
