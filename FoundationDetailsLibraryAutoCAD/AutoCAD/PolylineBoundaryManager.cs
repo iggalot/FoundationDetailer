@@ -302,6 +302,7 @@ namespace FoundationDetailer.Managers
             xr.Data = new ResultBuffer(new TypedValue((int)DxfCode.Handle, id.Handle.Value));
         }
 
+
         private static void LoadBoundary(Document doc)
         {
             var db = doc.Database;

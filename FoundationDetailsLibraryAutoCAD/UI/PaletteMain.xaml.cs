@@ -51,6 +51,7 @@ namespace FoundationDetailer.UI
 
         private void WireEvents()
         {
+            BtnQuery.Click += (s, e) => QueryXData();
             BtnSelectBoundary.Click += (s, e) => SelectBoundary();
             //BtnAddPiers.Click += (s, e) => AddPiers();
             BtnAddGradeBeams.Click += (s, e) => AddGradeBeams();
@@ -70,6 +71,11 @@ namespace FoundationDetailer.UI
                 var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
                 GradeBeamManager.HighlightGradeBeams(doc);
             };
+        }
+
+        private void QueryXData()
+        {
+            NodXDataViewer.ShowNodXData();
         }
 
         #region --- Boundary Selection and UI Updates ---
@@ -291,15 +297,17 @@ namespace FoundationDetailer.UI
                 using (doc.LockDocument())
                 using (var tr = doc.Database.TransactionManager.StartTransaction())
                 {
+                    GradeBeamManager.RegisterGradeBeamRegApp(doc, tr); // register first
+
                     // Compute horizontal and vertical gridlines
                     var (horizontalLines, verticalLines) = GridlineManager.ComputeBothGridlines(boundary, maxSpacing, vertexCount);
 
                     // Create DB lines for each gridline, attaching the FD_GRADEBEAM Xrecord key
                     foreach (var pts in horizontalLines)
-                        GradeBeamManager.CreateDbLines(doc, pts, "FD_GRADEBEAM", tr);
+                        GradeBeamManager.CreateDbLines(doc, pts, tr);
 
                     foreach (var pts in verticalLines)
-                        GradeBeamManager.CreateDbLines(doc, pts, "FD_GRADEBEAM", tr);
+                        GradeBeamManager.CreateDbLines(doc, pts, tr);
 
                     tr.Commit();
 

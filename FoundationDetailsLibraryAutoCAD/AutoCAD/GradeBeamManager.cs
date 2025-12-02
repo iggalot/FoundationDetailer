@@ -9,7 +9,12 @@ namespace FoundationDetailer.AutoCAD
     public static class GradeBeamManager
     {
         private const string XrecordKey = "FD_GRADEBEAM";
+
+        // Track grade beams per document
         private static readonly Dictionary<Document, List<ObjectId>> _gradeBeams = new Dictionary<Document, List<ObjectId>>();
+
+        // Track which documents have already registered the RegApp
+        private static readonly HashSet<Document> _regAppRegistered = new HashSet<Document>();
 
         /// <summary>
         /// Creates horizontal and vertical grade beams for a closed boundary polyline.
@@ -28,9 +33,10 @@ namespace FoundationDetailer.AutoCAD
                 using (doc.LockDocument())
                 using (Transaction tr = db.TransactionManager.StartTransaction())
                 {
+                    // Register RegApp once per document
                     RegisterGradeBeamRegApp(doc, tr);
 
-                    // Compute gridlines points
+                    // Compute gridline points
                     var (horizontalLines, verticalLines) = FoundationDetailsLibraryAutoCAD.Managers.GridlineManager
                         .ComputeBothGridlines(boundary, maxSpacing, vertexCount);
 
@@ -100,23 +106,26 @@ namespace FoundationDetailer.AutoCAD
         // Internal Helpers
         // -------------------------
 
-        private static void RegisterGradeBeamRegApp(Document doc, Transaction tr)
+        /// <summary>
+        /// Registers the FD_GRADEBEAM RegApp if not already registered for this document.
+        /// </summary>
+        public static void RegisterGradeBeamRegApp(Document doc, Transaction tr)
         {
-            var db = doc.Database;
-            var nod = (DBDictionary)tr.GetObject(db.RegAppTableId, OpenMode.ForWrite);
+            if (_regAppRegistered.Contains(doc)) return;
 
-            if (!nod.Contains(XrecordKey))
+            var db = doc.Database;
+            var rat = (RegAppTable)tr.GetObject(db.RegAppTableId, OpenMode.ForWrite);
+            if (!rat.Has(XrecordKey))
             {
                 var ratr = new RegAppTableRecord { Name = XrecordKey };
-                nod.SetAt(XrecordKey, ratr);
+                rat.Add(ratr);
                 tr.AddNewlyCreatedDBObject(ratr, true);
             }
+
+            _regAppRegistered.Add(doc);
         }
 
-        /// <summary>
-        /// Creates AutoCAD DB lines from a list of Point3d vertices and stores them with XData.
-        /// </summary>
-        private static void CreateDbLines(Document doc, List<Point3d> points, Transaction tr)
+        public static void CreateDbLines(Document doc, List<Point3d> points, Transaction tr)
         {
             if (points == null || points.Count < 2) return;
 
@@ -126,9 +135,6 @@ namespace FoundationDetailer.AutoCAD
             }
         }
 
-        /// <summary>
-        /// Adds a polyline to the drawing and attaches XData for persistence.
-        /// </summary>
         private static void AddPolylineToDb(Document doc, List<Point3d> vertices, Transaction tr)
         {
             if (vertices == null || vertices.Count < 2) return;
@@ -155,9 +161,6 @@ namespace FoundationDetailer.AutoCAD
             _gradeBeams[doc].Add(pl.ObjectId);
         }
 
-        /// <summary>
-        /// Add XData to a polyline to mark it as a grade beam.
-        /// </summary>
         private static void SetGradeBeamXData(ObjectId id, Transaction tr)
         {
             if (id.IsNull) return;
