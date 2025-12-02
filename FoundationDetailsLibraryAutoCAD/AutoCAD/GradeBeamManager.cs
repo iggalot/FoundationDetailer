@@ -50,13 +50,13 @@ namespace FoundationDetailer.AutoCAD
                     // Create DB polylines with XData
                     foreach (var pts in horizontalLines)
                     {
-                        CreateDbLines(doc, pts, tr);
+                        CreateDbLine(doc, pts, tr);
                         horiz_count++;
                     }
 
                     foreach (var pts in verticalLines)
                     {
-                        CreateDbLines(doc, pts, tr);
+                        CreateDbLine(doc, pts, tr);
                         vert_count++;
                     }
 
@@ -126,28 +126,19 @@ namespace FoundationDetailer.AutoCAD
             _regAppRegistered.Add(doc);
         }
 
-        public static void CreateDbLines(Document doc, List<Point3d> points, Transaction tr)
+        public static void CreateDbLine(Document doc, List<Point3d> points, Transaction tr)
         {
             if (points == null || points.Count < 2) return;
-
-            for (int i = 0; i < points.Count - 1; i++)
-            {
-                AddPolylineToDb(doc, new List<Point3d> { points[i], points[i + 1] }, tr);
-            }
-        }
-
-        private static void AddPolylineToDb(Document doc, List<Point3d> vertices, Transaction tr)
-        {
-            if (vertices == null || vertices.Count < 2) return;
 
             var db = doc.Database;
             var pl = new Polyline();
 
-            for (int i = 0; i < vertices.Count; i++)
-                pl.AddVertexAt(i, new Point2d(vertices[i].X, vertices[i].Y), 0, 0, 0);
+            for (int i = 0; i < points.Count; i++)
+                pl.AddVertexAt(i, new Point2d(points[i].X, points[i].Y), 0, 0, 0);
 
-            pl.Closed = false;
+            pl.Closed = false; // grade beams are open
 
+            // Add to model space
             var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
             var btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
             btr.AppendEntity(pl);
@@ -156,7 +147,7 @@ namespace FoundationDetailer.AutoCAD
             // Attach XData to mark as grade beam
             SetGradeBeamXData(pl.ObjectId, tr);
 
-            // Store reference
+            // Store reference in dictionary
             if (!_gradeBeams.ContainsKey(doc))
                 _gradeBeams[doc] = new List<ObjectId>();
             _gradeBeams[doc].Add(pl.ObjectId);
@@ -175,26 +166,40 @@ namespace FoundationDetailer.AutoCAD
 
         private static void StoreGradeBeamsInNod(Document doc, Transaction tr)
         {
-            if (!_gradeBeams.ContainsKey(doc)) return;
+            if (!_gradeBeams.ContainsKey(doc) || _gradeBeams[doc].Count == 0)
+                return;
 
-            var nod = (DBDictionary)tr.GetObject(doc.Database.NamedObjectsDictionaryId, OpenMode.ForWrite);
+            var db = doc.Database;
+
+            // Open the Named Objects Dictionary
+            DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
 
             Xrecord xr;
+
             if (nod.Contains(XrecordKey))
+            {
+                // Use existing Xrecord
                 xr = (Xrecord)tr.GetObject(nod.GetAt(XrecordKey), OpenMode.ForWrite);
+            }
             else
             {
+                // Create new Xrecord
                 xr = new Xrecord();
                 nod.SetAt(XrecordKey, xr);
                 tr.AddNewlyCreatedDBObject(xr, true);
             }
 
-            TypedValue[] handles = _gradeBeams[doc]
-                .Where(id => !id.IsNull)
-                .Select(id => new TypedValue((int)DxfCode.Handle, id.Handle.Value))
-                .ToArray();
+            // Store all grade beam ObjectId handles in the Xrecord
+            var data = new List<TypedValue>();
+            foreach (var id in _gradeBeams[doc])
+            {
+                if (!id.IsNull)
+                {
+                    data.Add(new TypedValue((int)DxfCode.Handle, id.Handle.Value));
+                }
+            }
 
-            xr.Data = new ResultBuffer(handles);
+            xr.Data = new ResultBuffer(data.ToArray());
         }
 
     }

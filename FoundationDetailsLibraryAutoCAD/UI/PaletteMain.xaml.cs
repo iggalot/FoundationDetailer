@@ -304,10 +304,10 @@ namespace FoundationDetailer.UI
 
                     // Create DB lines for each gridline, attaching the FD_GRADEBEAM Xrecord key
                     foreach (var pts in horizontalLines)
-                        GradeBeamManager.CreateDbLines(doc, pts, tr);
+                        GradeBeamManager.CreateDbLine(doc, pts, tr);
 
                     foreach (var pts in verticalLines)
-                        GradeBeamManager.CreateDbLines(doc, pts, tr);
+                        GradeBeamManager.CreateDbLine(doc, pts, tr);
 
                     tr.Commit();
 
