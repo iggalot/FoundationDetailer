@@ -32,7 +32,7 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
             double dy = height / (count + 1);
 
             var result = new List<List<Point3d>>(count);
-            for (int i = 1; i <= count; i++)
+            for (int i = 0; i <= count+1; i++)
             {
                 double y = minY + i * dy;
                 var pts = SubdivideLine(new Point3d(minX, y, 0), new Point3d(maxX, y, 0), vertexCount);
@@ -63,7 +63,7 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
             double dx = width / (count + 1);
 
             var result = new List<List<Point3d>>(count);
-            for (int j = 1; j <= count; j++)
+            for (int j = 0; j <= count+1; j++)
             {
                 double x = minX + j * dx;
                 var pts = SubdivideLine(new Point3d(x, minY, 0), new Point3d(x, maxY, 0), vertexCount);

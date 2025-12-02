@@ -281,8 +281,8 @@ namespace FoundationDetailer.UI
             }
 
             // Example parameters: max spacing 48 units, 10 vertices per line
-            double maxSpacing = 48.0;
-            int vertexCount = 10;
+            double maxSpacing = 144.0;
+            int vertexCount = 5;
 
             try
             {
