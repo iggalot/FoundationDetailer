@@ -2,6 +2,7 @@
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Runtime;
+using System;
 using System.Text;
 using System.Windows; // WPF MessageBox
 
@@ -84,56 +85,77 @@ namespace FoundationDetailer.AutoCAD
             }
         }
     }
-
     public class NodXDataViewer
     {
-        private const string XrecordKey = "FD_BOUNDARY"; // or FD_GRADEBEAM depending on what you want
+        // NOD keys to check for Xrecords
+        private static readonly string[] NodKeysToCheck = { "FD_BOUNDARY", "FD_GRADEBEAM" };
 
         [CommandMethod("ShowNodXData")]
         public static void ShowNodXData()
         {
             Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            Editor ed = doc.Editor;
+            if (doc == null)
+            {
+                MessageBox.Show("No active document.", "NOD XData Viewer", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
             Database db = doc.Database;
 
             try
             {
                 using (Transaction tr = db.TransactionManager.StartTransaction())
                 {
-                    // Open Named Objects Dictionary
                     DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
 
-                    if (!nod.Contains(XrecordKey))
-                    {
-                        MessageBox.Show($"No NOD Xrecord found with key '{XrecordKey}'.", "NOD XData Viewer", MessageBoxButton.OK, MessageBoxImage.Information);
-                        return;
-                    }
-
-                    Xrecord xr = (Xrecord)tr.GetObject(nod.GetAt(XrecordKey), OpenMode.ForRead);
-
-                    if (xr.Data == null)
-                    {
-                        MessageBox.Show("Xrecord has no data.", "NOD XData Viewer", MessageBoxButton.OK, MessageBoxImage.Information);
-                        return;
-                    }
-
-                    TypedValue[] arr = xr.Data.AsArray();
                     StringBuilder display = new StringBuilder();
 
-                    foreach (var tv in arr)
+                    foreach (string key in NodKeysToCheck)
                     {
-                        if (tv.TypeCode == (int)DxfCode.Handle)
+                        if (!nod.Contains(key))
                         {
-                            string handleStr = tv.Value?.ToString() ?? "";
-                            display.AppendLine($"Handle: {handleStr}");
+                            display.AppendLine($"No Xrecord found with key '{key}'.");
+                            display.AppendLine();
+                            continue;
                         }
-                        else
+
+                        Xrecord xr = (Xrecord)tr.GetObject(nod.GetAt(key), OpenMode.ForRead);
+
+                        TypedValue[] arr = xr.Data?.AsArray() ?? Array.Empty<TypedValue>();
+                        if (arr.Length == 0)
                         {
-                            display.AppendLine($"Type {tv.TypeCode}: {tv.Value}");
+                            display.AppendLine($"Xrecord '{key}' has no data.");
+                            display.AppendLine();
+                            continue;
                         }
+
+                        display.AppendLine($"--- {key} ---");
+
+                        foreach (TypedValue tv in arr)
+                        {
+                            if (tv.TypeCode == (int)DxfCode.Handle)
+                            {
+                                try
+                                {
+                                    Handle h = new Handle(Convert.ToInt64(tv.Value));
+                                    ObjectId id = db.GetObjectId(false, h, 0);
+                                    display.AppendLine($"Handle: {h}  ObjectId: {id}");
+                                }
+                                catch
+                                {
+                                    display.AppendLine($"Handle: {tv.Value} (unable to resolve ObjectId)");
+                                }
+                            }
+                            else
+                            {
+                                display.AppendLine($"Type {tv.TypeCode}: {tv.Value}");
+                            }
+                        }
+
+                        display.AppendLine();
                     }
 
-                    MessageBox.Show(display.ToString(), $"NOD XData Viewer - {XrecordKey}", MessageBoxButton.OK, MessageBoxImage.Information);
+                    MessageBox.Show(display.ToString(), "NOD XData Viewer", MessageBoxButton.OK, MessageBoxImage.Information);
 
                     tr.Commit();
                 }

@@ -3,6 +3,7 @@ using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace FoundationDetailer.AutoCAD
 {
@@ -159,6 +160,9 @@ namespace FoundationDetailer.AutoCAD
             if (!_gradeBeams.ContainsKey(doc))
                 _gradeBeams[doc] = new List<ObjectId>();
             _gradeBeams[doc].Add(pl.ObjectId);
+
+            // Store all grade beams in NOD
+            StoreGradeBeamsInNod(doc, tr);
         }
 
         private static void SetGradeBeamXData(ObjectId id, Transaction tr)
@@ -168,5 +172,30 @@ namespace FoundationDetailer.AutoCAD
             var ent = (Entity)tr.GetObject(id, OpenMode.ForWrite);
             ent.XData = new ResultBuffer(new TypedValue((int)DxfCode.ExtendedDataRegAppName, XrecordKey));
         }
+
+        private static void StoreGradeBeamsInNod(Document doc, Transaction tr)
+        {
+            if (!_gradeBeams.ContainsKey(doc)) return;
+
+            var nod = (DBDictionary)tr.GetObject(doc.Database.NamedObjectsDictionaryId, OpenMode.ForWrite);
+
+            Xrecord xr;
+            if (nod.Contains(XrecordKey))
+                xr = (Xrecord)tr.GetObject(nod.GetAt(XrecordKey), OpenMode.ForWrite);
+            else
+            {
+                xr = new Xrecord();
+                nod.SetAt(XrecordKey, xr);
+                tr.AddNewlyCreatedDBObject(xr, true);
+            }
+
+            TypedValue[] handles = _gradeBeams[doc]
+                .Where(id => !id.IsNull)
+                .Select(id => new TypedValue((int)DxfCode.Handle, id.Handle.Value))
+                .ToArray();
+
+            xr.Data = new ResultBuffer(handles);
+        }
+
     }
 }
