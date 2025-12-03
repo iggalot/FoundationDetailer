@@ -1,7 +1,8 @@
-﻿using Autodesk.AutoCAD.EditorInput;
+using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Runtime;
 using Autodesk.AutoCAD.Windows;
 using FoundationDetailer.UI;
+using FoundationDetailer.Managers;
 using System.Windows.Forms;
 using System.Windows.Forms.Integration;
 
@@ -9,6 +10,7 @@ using System.Windows.Forms.Integration;
 
 namespace FoundationDetailer.Commands
 {
+    //
     public class FoundationCommands : IExtensionApplication
     {
         private static PaletteSet _paletteSet;

@@ -1,100 +1,79 @@
-﻿using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
+using Autodesk.AutoCAD.DatabaseServices;
 using System;
 using System.Collections.Generic;
 
-namespace FoundationDetailer.Managers
+namespace FoundationDetailsLibraryAutoCAD.Managers
 {
-    public class GridLineManager
+    public static class GridlineManager
     {
-        private readonly Polyline _boundary;
-        private readonly double _maxSpacing;
-        private readonly int _minVerticesPerLine = 5;
-
-        public GridLineManager(Polyline boundary, double maxSpacing, int minVerticesPerLine = 5)
+        public static (List<List<Point3d>> Horizontal, List<List<Point3d>> Vertical)
+            ComputeBothGridlines(Polyline pl, double maxSpacing, int vertexCount)
         {
-            _boundary = boundary ?? throw new ArgumentNullException(nameof(boundary));
-            if (maxSpacing <= 0) throw new ArgumentException("Max spacing must be greater than zero");
+            ValidateInputs(pl, maxSpacing, vertexCount);
 
-            _maxSpacing = maxSpacing;
-            _minVerticesPerLine = minVerticesPerLine;
+            return (
+                ComputeGridlines(pl, maxSpacing, vertexCount, horizontal: true),
+                ComputeGridlines(pl, maxSpacing, vertexCount, horizontal: false)
+            );
         }
 
-        private Extents2d GetBoundingBox()
+        // -------------------------
+        // Internal Helpers
+        // -------------------------
+
+        private static void ValidateInputs(Polyline pl, double maxSpacing, int vertexCount)
         {
-            double minX = double.MaxValue;
-            double minY = double.MaxValue;
-            double maxX = double.MinValue;
-            double maxY = double.MinValue;
-
-            for (int i = 0; i < _boundary.NumberOfVertices; i++)
-            {
-                var pt = _boundary.GetPoint2dAt(i);
-                if (pt.X < minX) minX = pt.X;
-                if (pt.Y < minY) minY = pt.Y;
-                if (pt.X > maxX) maxX = pt.X;
-                if (pt.Y > maxY) maxY = pt.Y;
-            }
-
-            return new Extents2d(new Point2d(minX, minY), new Point2d(maxX, maxY));
+            if (pl == null) throw new ArgumentNullException(nameof(pl));
+            if (!pl.Closed) throw new ArgumentException("Polyline must be closed.", nameof(pl));
+            if (maxSpacing <= 0) throw new ArgumentException("Max spacing must be > 0.", nameof(maxSpacing));
+            if (vertexCount < 2) throw new ArgumentException("vertexCount must be >= 2.", nameof(vertexCount));
         }
 
-        /// <summary>
-        /// Generates vertical lines subdivided into points along the segment, using max spacing.
-        /// </summary>
-        public List<Polyline> GetVerticalPolylines()
+        private static List<List<Point3d>> ComputeGridlines(Polyline pl, double maxSpacing, int vertexCount, bool horizontal)
         {
-            var polylines = new List<Polyline>();
-            var ext = GetBoundingBox();
-            double width = ext.MaxPoint.X - ext.MinPoint.X;
-            int numLines = (int)Math.Floor(width / _maxSpacing);
+            var ext = pl.GeometricExtents;
+            double minX = ext.MinPoint.X, maxX = ext.MaxPoint.X;
+            double minY = ext.MinPoint.Y, maxY = ext.MaxPoint.Y;
 
-            if (numLines < 1) numLines = 1;
-            double spacing = width / (numLines + 1);
+            double length = horizontal ? (maxY - minY) : (maxX - minX);
+            if (length <= 0) return new List<List<Point3d>>();
 
-            for (int i = 1; i <= numLines; i++)
+            // Compute number of intervals: largest spacing <= maxSpacing
+            int intervals = (int)Math.Ceiling(length / maxSpacing); // minimal number of spaces
+            double spacing = length / intervals; // actual spacing ≤ maxSpacing
+
+            var result = new List<List<Point3d>>(intervals + 1); // +1 for end line
+
+            // Loop from 0 to intervals inclusive to include both ends
+            for (int i = 0; i <= intervals; i++)
             {
-                double x = ext.MinPoint.X + i * spacing;
-                var pl = new Polyline();
-                for (int j = 0; j < _minVerticesPerLine; j++)
-                {
-                    double y = ext.MinPoint.Y + j * (ext.MaxPoint.Y - ext.MinPoint.Y) / (_minVerticesPerLine - 1);
-                    pl.AddVertexAt(j, new Point2d(x, y), 0, 0, 0);
-                }
-                pl.Closed = false;
-                polylines.Add(pl);
+                double c = (horizontal ? minY : minX) + i * spacing;
+                Point3d start = horizontal ? new Point3d(minX, c, 0) : new Point3d(c, minY, 0);
+                Point3d end = horizontal ? new Point3d(maxX, c, 0) : new Point3d(c, maxY, 0);
+                result.Add(SubdivideLine(start, end, vertexCount));
             }
 
-            return polylines;
+            return result;
         }
 
-        /// <summary>
-        /// Generates horizontal lines subdivided into points along the segment, using max spacing.
-        /// </summary>
-        public List<Polyline> GetHorizontalPolylines()
+        private static List<Point3d> SubdivideLine(Point3d start, Point3d end, int vertexCount)
         {
-            var polylines = new List<Polyline>();
-            var ext = GetBoundingBox();
-            double height = ext.MaxPoint.Y - ext.MinPoint.Y;
-            int numLines = (int)Math.Floor(height / _maxSpacing);
+            var pts = new List<Point3d>(vertexCount);
+            double dx = (end.X - start.X) / (vertexCount - 1);
+            double dy = (end.Y - start.Y) / (vertexCount - 1);
+            double dz = (end.Z - start.Z) / (vertexCount - 1);
 
-            if (numLines < 1) numLines = 1;
-            double spacing = height / (numLines + 1);
-
-            for (int i = 1; i <= numLines; i++)
+            for (int i = 0; i < vertexCount; i++)
             {
-                double y = ext.MinPoint.Y + i * spacing;
-                var pl = new Polyline();
-                for (int j = 0; j < _minVerticesPerLine; j++)
-                {
-                    double x = ext.MinPoint.X + j * (ext.MaxPoint.X - ext.MinPoint.X) / (_minVerticesPerLine - 1);
-                    pl.AddVertexAt(j, new Point2d(x, y), 0, 0, 0);
-                }
-                pl.Closed = false;
-                polylines.Add(pl);
+                pts.Add(new Point3d(
+                    start.X + dx * i,
+                    start.Y + dy * i,
+                    start.Z + dz * i
+                ));
             }
 
-            return polylines;
+            return pts;
         }
     }
 }

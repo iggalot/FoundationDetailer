@@ -1,4 +1,4 @@
-﻿using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using FoundationDetailer.AutoCAD;
@@ -7,6 +7,7 @@ using FoundationDetailer.Model;
 using FoundationDetailer.Storage;
 using FoundationDetailer.UI.Controls;
 using FoundationDetailer.UI.Converters;
+using FoundationDetailsLibraryAutoCAD.Managers;
 using System;
 using System.Windows;
 using System.Windows.Controls;
@@ -50,7 +51,7 @@ namespace FoundationDetailer.UI
 
         private void WireEvents()
         {
-
+            BtnQuery.Click += (s, e) => QueryXData();
             BtnSelectBoundary.Click += (s, e) => SelectBoundary();
             //BtnAddPiers.Click += (s, e) => AddPiers();
             BtnAddGradeBeams.Click += (s, e) => AddGradeBeams();
@@ -62,8 +63,21 @@ namespace FoundationDetailer.UI
             //BtnSave.Click += (s, e) => SaveModel();
             //BtnLoad.Click += (s, e) => LoadModel();
 
-            BtnShowBoundary.Click += (s, e) => FoundationBoundaryManager.HighlightBoundary();
-            BtnZoomBoundary.Click += (s, e) => FoundationBoundaryManager.ZoomToBoundary();
+            BtnShowBoundary.Click += (s, e) => PolylineBoundaryManager.HighlightBoundary();
+            BtnZoomBoundary.Click += (s, e) => PolylineBoundaryManager.ZoomToBoundary();
+
+            BtnHighlightGradeBeams.Click += (s, e) =>
+            {
+                var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+                GradeBeamManager.HighlightGradeBeams(doc);
+            };
+            BtnClearGradeBeams.Click += BtnClearGradeBeams_Click;
+
+        }
+
+        private void QueryXData()
+        {
+            NodXDataViewer.ShowNodXData();
         }
 
         #region --- Boundary Selection and UI Updates ---
@@ -121,6 +135,8 @@ namespace FoundationDetailer.UI
                 TxtBoundaryStatus.Text = "No boundary selected";
                 TxtBoundaryVertices.Text = "-";
                 TxtBoundaryPerimeter.Text = "-";
+                TxtBoundaryArea.Text = "-";
+
 
                 BtnZoomBoundary.IsEnabled = false;
                 BtnShowBoundary.IsEnabled = false;
@@ -133,11 +149,25 @@ namespace FoundationDetailer.UI
             ActionButtonsPanel.Visibility = isValid ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
 
             // Optionally, change background color of action buttons
-            foreach (Button btn in ActionButtonsPanel.Children)
+            SetActionButtonBackgrounds(ActionButtonsPanel, isValid ? Brushes.LightGreen : Brushes.LightCoral);
+        }
+
+        private void SetActionButtonBackgrounds(Panel parent, Brush background)
+        {
+            foreach (var child in parent.Children)
             {
-                btn.Background = isValid ? Brushes.LightGreen : Brushes.LightCoral;
+                if (child is Button btn)
+                {
+                    btn.Background = background;
+                }
+                else if (child is Panel panel)
+                {
+                    // Recursive call for nested panels
+                    SetActionButtonBackgrounds(panel, background);
+                }
             }
         }
+
 
         public static double ComputePolylineArea(Polyline pl)
         {
@@ -181,6 +211,22 @@ namespace FoundationDetailer.UI
                 ed.WriteMessage($"\nBoundary selected: {result.ObjectId.Handle}");
             }
         }
+
+        private void BtnClearGradeBeams_Click(object sender, RoutedEventArgs e)
+        {
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+
+            using (doc.LockDocument())
+            using (var tr = doc.Database.TransactionManager.StartTransaction())
+            {
+                GradeBeamManager.ClearGradeBeams(doc, tr);
+                tr.Commit();
+            }
+
+            TxtStatus.Text = "All grade beams cleared.";
+        }
+
 
         #endregion
 
@@ -296,6 +342,35 @@ private void AddGradeBeams()
 
 
         private void AddPiers() => MessageBox.Show("Add piers to model.");
+        private void AddGradeBeams()
+        {
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+
+            if (!PolylineBoundaryManager.TryGetBoundary(out Polyline boundary))
+            {
+                doc.Editor.WriteMessage("\nNo boundary selected.");
+                return;
+            }
+
+            double maxSpacing = 144.0;
+            int vertexCount = 5;
+
+            try
+            {
+                using (doc.LockDocument())
+                {
+                    // Let GradeBeamManager handle everything internally
+                    GradeBeamManager.CreateBothGridlines(boundary, maxSpacing, vertexCount);
+
+                    doc.Editor.WriteMessage("\nGrade beams created successfully.");
+                }
+            }
+            catch (Autodesk.AutoCAD.Runtime.Exception ex)
+            {
+                doc.Editor.WriteMessage($"\nError creating grade beams: {ex.Message}");
+            }
+        }
 
         private void AddRebarBars() => MessageBox.Show("Add rebar bars to model.");
         private void AddStrands() => MessageBox.Show("Add strands to model.");
