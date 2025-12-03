@@ -27,11 +27,14 @@ namespace FoundationDetailer.Managers
         // Document -> command-scoped state (appended/erased objects observed during a command)
         private static readonly ConcurrentDictionary<Document, CommandState> _docCommandStates = new ConcurrentDictionary<Document, CommandState>();
 
+        // Per-document deferred idle handlers
+        private static readonly ConcurrentDictionary<Document, EventHandler> _deferredIdleHandlers = new ConcurrentDictionary<Document, EventHandler>();
+
         // Commands worth watching (kept uppercase)
         private static readonly HashSet<string> _monitoredCommands = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "MOVE", "STRETCH", "GRIP_STRETCH", "PEDIT", "EXPLODE", "GRIPS", "GRIP_MOVE",
-            "ROTATE", "SCALE", "MIRROR", "ERASE", "DELETE", "U", "UNDO", "REDO", "JOIN"
+            "ROTATE", "SCALE", "MIRROR", "ERASE", "DELETE", /*"U", "UNDO", "REDO",*/ "JOIN"
         };
 
         // Commands that often *replace* geometry (we'll attempt replacement detection after these)
@@ -68,7 +71,7 @@ namespace FoundationDetailer.Managers
             dm.DocumentActivated -= DocManager_DocumentActivated;
             dm.DocumentActivated += DocManager_DocumentActivated;
 
-            // Load for active document
+            // Load for active document (deferred to be safe)
             LoadBoundaryForActiveDocument();
         }
 
@@ -83,12 +86,21 @@ namespace FoundationDetailer.Managers
             _docBoundaryIds.TryRemove(e.Document, out _);
             _lastSnapshots.TryRemove(e.Document, out _);
             _docCommandStates.TryRemove(e.Document, out _);
+
+            if (_deferredIdleHandlers.TryRemove(e.Document, out var existing))
+            {
+                Application.Idle -= existing;
+            }
         }
 
         private static void DocManager_DocumentActivated(object sender, DocumentCollectionEventArgs e)
         {
-            LoadBoundary(e.Document);
-            BoundaryChanged?.Invoke(null, EventArgs.Empty);
+            // Defer loading to idle so we don't start transactions inside activation handlers
+            DeferActionForDocument(e.Document, () =>
+            {
+                LoadBoundary(e.Document);
+                BoundaryChanged?.Invoke(null, EventArgs.Empty);
+            });
         }
 
         private static void AttachDocumentEvents(Document doc)
@@ -127,9 +139,9 @@ namespace FoundationDetailer.Managers
             // Initialize command state holder for this document
             _docCommandStates.AddOrUpdate(doc, new CommandState(), (d, old) => { old.Clear(); return old; });
 
-            // If this doc is active, attempt to load its stored boundary now
+            // If this doc is active, attempt to load its stored boundary now (deferred)
             if (doc == Application.DocumentManager.MdiActiveDocument)
-                LoadBoundary(doc);
+                DeferActionForDocument(doc, () => LoadBoundary(doc));
         }
 
         private static void DetachDocumentEvents(Document doc)
@@ -146,6 +158,11 @@ namespace FoundationDetailer.Managers
             doc.CommandWillStart -= Doc_CommandWillStart;
             doc.CommandEnded -= Doc_CommandEnded;
             doc.CommandCancelled -= Doc_CommandCancelled;
+
+            if (_deferredIdleHandlers.TryRemove(doc, out var existing))
+            {
+                Application.Idle -= existing;
+            }
         }
 
         public static void Dispose()
@@ -330,37 +347,38 @@ namespace FoundationDetailer.Managers
 
         private static void Db_ObjectAppended(object sender, ObjectEventArgs e)
         {
-            Application.Idle -= CheckBoundaryDeferred;
-            Application.Idle += CheckBoundaryDeferred;
-        }
+            var db = sender as Database;
+            var doc = TryGetDocumentForDatabase(db) ?? Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
 
+            DeferActionForDocument(doc, () => CheckBoundaryForDocument(doc));
+        }
 
         private static void Db_ObjectErased(object sender, ObjectErasedEventArgs e)
         {
-            Application.Idle -= CheckBoundaryDeferred;
-            Application.Idle += CheckBoundaryDeferred;
+            var db = sender as Database;
+            var doc = TryGetDocumentForDatabase(db) ?? Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+
+            DeferActionForDocument(doc, () => CheckBoundaryForDocument(doc));
         }
 
-        private static void CheckBoundaryDeferred(object sender, EventArgs e)
+        private static void CheckBoundaryForDocument(Document doc)
         {
-            // Unsubscribe immediately to run only once
-            Application.Idle -= CheckBoundaryDeferred;
-
-            var doc = Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
 
             try
             {
-                using (doc.LockDocument())
                 using (var tr = doc.Database.TransactionManager.StartTransaction())
                 {
                     // Get the stored polyline from the XRecord
                     ObjectId storedId = GetBoundaryFromXRecord(doc, tr);
-                    if (storedId.IsNull) return;
+                    if (storedId.IsNull) { tr.Commit(); return; }
 
                     // Optionally: verify that the polyline still exists
                     if (!storedId.IsNull && storedId.IsValid)
                     {
+                        _docBoundaryIds.AddOrUpdate(doc, storedId, (d, old) => storedId);
                         BoundaryChanged?.Invoke(null, EventArgs.Empty);
                     }
 
@@ -372,8 +390,6 @@ namespace FoundationDetailer.Managers
                 // Fail silently
             }
         }
-
-
 
         private static void Db_ObjectUnappended(object sender, ObjectEventArgs e)
         {
@@ -397,9 +413,11 @@ namespace FoundationDetailer.Managers
 
         private static void Db_ObjectModified(object sender, ObjectEventArgs e)
         {
-            // Schedule boundary check after current operation completes
-            Application.Idle -= CheckBoundaryDeferred;
-            Application.Idle += CheckBoundaryDeferred;
+            var db = sender as Database;
+            var doc = TryGetDocumentForDatabase(db) ?? Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+
+            DeferActionForDocument(doc, () => CheckBoundaryForDocument(doc));
         }
 
 
@@ -462,11 +480,14 @@ namespace FoundationDetailer.Managers
             var doc = sender as Document ?? Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
 
-            // If monitored, reload XRecord and notify
+            // If monitored, reload XRecord and notify (deferred)
             if (_monitoredCommands.Contains(cmd))
             {
-                LoadBoundary(doc);
-                BoundaryChanged?.Invoke(null, EventArgs.Empty);
+                DeferActionForDocument(doc, () =>
+                {
+                    LoadBoundary(doc);
+                    BoundaryChanged?.Invoke(null, EventArgs.Empty);
+                });
             }
 
             // Hybrid replacement detection:
@@ -476,57 +497,66 @@ namespace FoundationDetailer.Managers
             {
                 if (_docCommandStates.TryGetValue(doc, out CommandState state))
                 {
-                    // Try appended objects first
-                    bool adopted = false;
-                    if (state.AppendedIds.Count > 0)
+                    // Capture a copy of appended ids NOW (state may be cleared later)
+                    var appendedCopy = state.AppendedIds.ToList();
+
+                    DeferActionForDocument(doc, () =>
                     {
-                        using (doc.LockDocument())
-                        using (var tr = doc.TransactionManager.StartTransaction())
+                        bool adopted = false;
+
+                        if (appendedCopy.Count > 0)
                         {
-                            foreach (var oid in state.AppendedIds)
+                            try
                             {
-                                if (oid.IsNull || oid.IsErased) continue;
-                                try
+                                using (var tr = doc.TransactionManager.StartTransaction())
                                 {
-                                    var ent = tr.GetObject(oid, OpenMode.ForRead, false) as Polyline;
-                                    if (ent != null)
+                                    foreach (var oid in appendedCopy)
                                     {
-                                        // If snapshot exists, match by similarity; otherwise match by geometry heuristics
-                                        if (_lastSnapshots.TryGetValue(doc, out var snap))
+                                        if (oid.IsNull || oid.IsErased) continue;
+                                        try
                                         {
-                                            if (GeometrySnapshot.IsSimilar(ent, snap))
+                                            var ent = tr.GetObject(oid, OpenMode.ForRead, false) as Polyline;
+                                            if (ent != null)
                                             {
-                                                AdoptReplacement(doc, tr, ent.ObjectId);
-                                                adopted = true;
-                                                break;
+                                                // If snapshot exists, match by similarity; otherwise match by geometry heuristics
+                                                if (_lastSnapshots.TryGetValue(doc, out var snap))
+                                                {
+                                                    if (GeometrySnapshot.IsSimilar(ent, snap))
+                                                    {
+                                                        AdoptReplacement(doc, tr, ent.ObjectId);
+                                                        adopted = true;
+                                                        break;
+                                                    }
+                                                }
+                                                else
+                                                {
+                                                    // No snapshot; try simple heuristics: vertex count equal or close and extents overlap
+                                                    if (TrySimpleHeuristicMatch(doc, tr, ent))
+                                                    {
+                                                        AdoptReplacement(doc, tr, ent.ObjectId);
+                                                        adopted = true;
+                                                        break;
+                                                    }
+                                                }
                                             }
                                         }
-                                        else
-                                        {
-                                            // No snapshot; try simple heuristics: vertex count equal or close and extents overlap
-                                            if (TrySimpleHeuristicMatch(doc, tr, ent))
-                                            {
-                                                AdoptReplacement(doc, tr, ent.ObjectId);
-                                                adopted = true;
-                                                break;
-                                            }
-                                        }
+                                        catch { /* ignore per-entity errors */ }
                                     }
+
+                                    tr.Commit();
                                 }
-                                catch { /* ignore per-entity errors */ }
                             }
-                            tr.Commit();
+                            catch { /* ignore */ }
                         }
-                    }
 
-                    if (!adopted)
-                    {
-                        // Fallback: scan modelspace polylines via snapshot matching
-                        TryAdoptReplacementByGeometry(doc, ObjectId.Null);
-                    }
+                        if (!adopted)
+                        {
+                            TryAdoptReplacementByGeometry(doc, ObjectId.Null);
+                        }
 
-                    // Clear command state after processing
-                    state.Clear();
+                        // Clear command state after processing (safely)
+                        state.Clear();
+                    });
                 }
             }
             else
@@ -534,37 +564,47 @@ namespace FoundationDetailer.Managers
                 // For non-replacement commands, also consider that appended objects could match (rare)
                 if (_docCommandStates.TryGetValue(doc, out CommandState st))
                 {
-                    // Quick attempt: if stored id is null but appended list contains a matching polyline, adopt it
-                    if ((_docBoundaryIds.TryGetValue(doc, out ObjectId stored) && stored.IsNull) && st.AppendedIds.Count > 0)
+                    // Capture copy of appended ids now
+                    var appendedCopy = st.AppendedIds.ToList();
+
+                    DeferActionForDocument(doc, () =>
                     {
-                        using (doc.LockDocument())
-                        using (var tr = doc.TransactionManager.StartTransaction())
+                        try
                         {
-                            foreach (var oid in st.AppendedIds)
+                            // Quick attempt: if stored id is null but appended list contains a matching polyline, adopt it
+                            if ((_docBoundaryIds.TryGetValue(doc, out ObjectId stored) && stored.IsNull) && appendedCopy.Count > 0)
                             {
-                                if (oid.IsNull || oid.IsErased) continue;
-                                try
+                                using (var tr = doc.TransactionManager.StartTransaction())
                                 {
-                                    var ent = tr.GetObject(oid, OpenMode.ForRead, false) as Polyline;
-                                    if (ent != null)
+                                    foreach (var oid in appendedCopy)
                                     {
-                                        if (_lastSnapshots.TryGetValue(doc, out var snap))
+                                        if (oid.IsNull || oid.IsErased) continue;
+                                        try
                                         {
-                                            if (GeometrySnapshot.IsSimilar(ent, snap))
+                                            var ent = tr.GetObject(oid, OpenMode.ForRead, false) as Polyline;
+                                            if (ent != null)
                                             {
-                                                AdoptReplacement(doc, tr, ent.ObjectId);
-                                                break;
+                                                if (_lastSnapshots.TryGetValue(doc, out var snap))
+                                                {
+                                                    if (GeometrySnapshot.IsSimilar(ent, snap))
+                                                    {
+                                                        AdoptReplacement(doc, tr, ent.ObjectId);
+                                                        break;
+                                                    }
+                                                }
                                             }
                                         }
+                                        catch { }
                                     }
-                                }
-                                catch { }
-                            }
-                            tr.Commit();
-                        }
-                    }
 
-                    st.Clear();
+                                    tr.Commit();
+                                }
+                            }
+                        }
+                        catch { }
+
+                        st.Clear();
+                    });
                 }
             }
         }
@@ -574,10 +614,10 @@ namespace FoundationDetailer.Managers
             var doc = sender as Document ?? Application.DocumentManager.MdiActiveDocument;
             if (doc != null)
             {
-                LoadBoundary(doc);
+                DeferActionForDocument(doc, () => LoadBoundary(doc));
             }
 
-            BoundaryChanged?.Invoke(null, EventArgs.Empty);
+            DeferActionForDocument(doc, () => BoundaryChanged?.Invoke(null, EventArgs.Empty));
         }
 
         #endregion
@@ -598,7 +638,7 @@ namespace FoundationDetailer.Managers
         {
             var doc = Application.DocumentManager.MdiActiveDocument;
             if (doc != null)
-                LoadBoundary(doc);
+                DeferActionForDocument(doc, () => LoadBoundary(doc));
         }
 
         /// <summary>
@@ -632,22 +672,26 @@ namespace FoundationDetailer.Managers
 
                     var arr = xr.Data.AsArray();
                     var tv = arr[0];
-                    if (tv == null || tv.TypeCode != (int)DxfCode.Handle)
+                    if (tv == null)
                     {
                         _docBoundaryIds.AddOrUpdate(doc, ObjectId.Null, (d, old) => ObjectId.Null);
                         tr.Commit();
                         return;
                     }
 
-                    var handleString = tv.Value as string ?? tv.Value.ToString();
                     ObjectId oid = ObjectId.Null;
 
+                    // If stored as a handle string, try parsing robustly.
                     try
                     {
-                        // Try convert handle string to Handle (hex or decimal)
-                        if (TryParseHandle(handleString, out Handle h))
+                        var s = tv.Value as string ?? tv.Value.ToString();
+                        if (TryParseHandle(s, out Handle h))
                         {
                             oid = doc.Database.GetObjectId(false, h, 0);
+                        }
+                        else if (tv.TypeCode == (int)DxfCode.SoftPointerId && tv.Value is ObjectId tvOid)
+                        {
+                            oid = tvOid;
                         }
                     }
                     catch
@@ -1125,12 +1169,30 @@ namespace FoundationDetailer.Managers
                 if (xr?.Data == null) return ObjectId.Null;
 
                 var arr = xr.Data.AsArray();
-                if (arr.Length == 0 || arr[0].TypeCode != (int)DxfCode.Handle)
+                if (arr.Length == 0)
                     return ObjectId.Null;
 
-                // Convert handle to ObjectId
-                Handle h = new Handle(Convert.ToInt64(arr[0].Value));
-                return db.GetObjectId(false, h, 0);
+                var tv = arr[0];
+
+                // Convert handle string or ObjectId
+                try
+                {
+                    if (tv.TypeCode == (int)DxfCode.Handle)
+                    {
+                        var s = tv.Value as string ?? tv.Value.ToString();
+                        if (TryParseHandle(s, out Handle h))
+                        {
+                            return db.GetObjectId(false, h, 0);
+                        }
+                    }
+                    else if (tv.TypeCode == (int)DxfCode.SoftPointerId && tv.Value is ObjectId oid)
+                    {
+                        return oid;
+                    }
+                }
+                catch { }
+
+                return ObjectId.Null;
             }
             catch
             {
@@ -1176,6 +1238,48 @@ namespace FoundationDetailer.Managers
                 if (Max.Y < other.Min.Y || other.Max.Y < Min.Y) return false;
                 return true;
             }
+        }
+
+        #endregion
+
+        #region Deferred helper
+
+        /// <summary>
+        /// Defers an action to run once at the next Application.Idle, tracked per-document.
+        /// If a previous deferred action exists for the same document it will be replaced.
+        /// The action runs without acquiring the document lock — any action that modifies the DB should call LockDocument/transactions itself.
+        /// </summary>
+        private static void DeferActionForDocument(Document doc, Action action)
+        {
+            if (doc == null || action == null) return;
+
+            // Remove existing handler for this doc if present
+            if (_deferredIdleHandlers.TryRemove(doc, out var existing))
+            {
+                try { Application.Idle -= existing; } catch { }
+            }
+
+            EventHandler handler = null;
+            handler = (s, e) =>
+            {
+                try
+                {
+                    // Unsubscribe immediately
+                    Application.Idle -= handler;
+                    _deferredIdleHandlers.TryRemove(doc, out _);
+
+                    // Execute user action (may perform locking/transactions as needed)
+                    action();
+                }
+                catch
+                {
+                    // swallow exceptions from deferred actions
+                }
+            };
+
+            // Track and subscribe
+            _deferredIdleHandlers.TryAdd(doc, handler);
+            Application.Idle += handler;
         }
 
         #endregion

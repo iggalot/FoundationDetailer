@@ -67,7 +67,7 @@ namespace FoundationDetailer.Commands
                 return;
             }
 
-            if (FoundationBoundaryManager.TrySetBoundary(res.ObjectId, out string error))
+            if (PolylineBoundaryManager.TrySetBoundary(res.ObjectId, out string error))
             {
                 ed.WriteMessage("\nBoundary accepted, validated, and saved.");
             }
@@ -81,7 +81,7 @@ namespace FoundationDetailer.Commands
         [CommandMethod("FD_SHOWBOUNDARY")]
         public void ShowBoundaryCommand()
         {
-            FoundationBoundaryManager.HighlightBoundary();
+            PolylineBoundaryManager.HighlightBoundary();
         }
 
 

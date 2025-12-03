@@ -33,7 +33,7 @@ namespace FoundationDetailer.UI
         public PaletteMain()
         {
             InitializeComponent();
-            FoundationBoundaryManager.BoundaryChanged += OnBoundaryChanged;  // subscribe for the boundary changed event
+            PolylineBoundaryManager.BoundaryChanged += OnBoundaryChanged;  // subscribe for the boundary changed event
 
             // Initialize PierControl
             //PierUI = new PierControl();
@@ -113,7 +113,7 @@ namespace FoundationDetailer.UI
         {
             bool isValid = false;
 
-            if (FoundationBoundaryManager.TryGetBoundary(out Polyline pl) && pl.Closed)
+            if (PolylineBoundaryManager.TryGetBoundary(out Polyline pl) && pl.Closed)
             {
                 isValid = true;
                 TxtBoundaryStatus.Text = "Boundary valid - "+ pl.ObjectId.Handle.ToString();
@@ -202,7 +202,7 @@ namespace FoundationDetailer.UI
             if (result.Status != PromptStatus.OK) return;
 
             // Try set the boundary
-            if (!FoundationBoundaryManager.TrySetBoundary(result.ObjectId, out string error))
+            if (!PolylineBoundaryManager.TrySetBoundary(result.ObjectId, out string error))
             {
                 ed.WriteMessage($"\nError setting boundary: {error}");
             }
@@ -285,60 +285,6 @@ namespace FoundationDetailer.UI
         #endregion
 
         #region --- Model Operations ---
-
-private void AddGradeBeams()
-{
-    // Get stored boundary
-    if (!FoundationBoundaryManager.TryGetBoundary(out Polyline boundaryRecord))
-    {
-        MessageBox.Show("No boundary selected.");
-        return;
-    }
-
-    var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-    var db = doc.Database;
-
-    // Palette already runs inside AutoCAD's main document context
-    using (Transaction tr = db.TransactionManager.StartTransaction())
-    {
-        // Open boundary for read
-        Polyline pl = tr.GetObject(boundaryRecord.ObjectId, OpenMode.ForRead) as Polyline;
-        if (pl == null)
-        {
-            MessageBox.Show("Boundary polyline was not found.");
-            return;
-        }
-
-        // Clone (safe, optional)
-        //Polyline workPl = (Polyline)pl.Clone();
-
-        // Build grid
-        double maxSpacing = 10.0;
-        GridLineManager grid = new GridLineManager(pl, maxSpacing, 5);
-
-        var verticalLines = grid.GetVerticalPolylines();
-        var horizontalLines = grid.GetHorizontalPolylines();
-
-        //BlockTableRecord btr = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
-
-        //foreach (var ln in verticalLines)
-        //{
-        //    btr.AppendEntity(ln);
-        //    tr.AddNewlyCreatedDBObject(ln, true);
-        //}
-
-        //foreach (var ln in horizontalLines)
-        //{
-        //    btr.AppendEntity(ln);
-        //    tr.AddNewlyCreatedDBObject(ln, true);
-        //}
-
-        tr.Commit();
-    }
-}
-
-
-
 
 
         private void AddPiers() => MessageBox.Show("Add piers to model.");
