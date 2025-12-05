@@ -1,5 +1,6 @@
 ﻿using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Runtime;
 using System;
 using System.Collections.Generic;
@@ -422,6 +423,76 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             MessageBox.Show("EE_Foundation.json imported.");
         }
 
+        [CommandMethod("CreateSampleFoundationForNOD")]
+        public void CreateSampleFoundationForNOD()
+        {
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            Database db = doc.Database;
+            Editor ed = doc.Editor;
+
+            using (Transaction tr = db.TransactionManager.StartTransaction())
+            {
+                // Get the Named Objects Dictionary
+                DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+                DBDictionary root = NODManager.EnsureDictionary(tr, nod, ROOT);
+
+                // Ensure FD_BOUNDARY and FD_GRADEBEAM dictionaries
+                DBDictionary boundaryDict = NODManager.EnsureDictionary(tr, root, KEY_BOUNDARY);
+                DBDictionary gradebeamDict = NODManager.EnsureDictionary(tr, root, KEY_GRADEBEAM);
+
+                // Get ModelSpace
+                BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+                BlockTableRecord ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+
+                // ----- 1. Create FD_BOUNDARY polyline -----
+                Polyline boundary = new Polyline();
+                boundary.AddVertexAt(0, new Autodesk.AutoCAD.Geometry.Point2d(0, 0), 0, 0, 0);
+                boundary.AddVertexAt(1, new Autodesk.AutoCAD.Geometry.Point2d(100, 0), 0, 0, 0);
+                boundary.AddVertexAt(2, new Autodesk.AutoCAD.Geometry.Point2d(100, 50), 0, 0, 0);
+                boundary.AddVertexAt(3, new Autodesk.AutoCAD.Geometry.Point2d(0, 50), 0, 0, 0);
+                boundary.Closed = true;
+
+                ms.AppendEntity(boundary);
+                tr.AddNewlyCreatedDBObject(boundary, true);
+
+                // Register in FD_BOUNDARY dictionary
+                string boundaryKey = boundary.Handle.ToString().ToUpperInvariant();
+                if (!boundaryDict.Contains(boundaryKey))
+                {
+                    Xrecord xr = new Xrecord();
+                    xr.Data = new ResultBuffer(new TypedValue((int)DxfCode.Handle, boundaryKey));
+                    boundaryDict.SetAt(boundaryKey, xr);
+                    tr.AddNewlyCreatedDBObject(xr, true);
+                }
+
+                // ----- 2. Create 3-4 FD_GRADEBEAM polylines -----
+                for (int i = 0; i < 4; i++)
+                {
+                    Polyline gradebeam = new Polyline();
+                    int y = 10 + i * 10;
+
+                    gradebeam.AddVertexAt(0, new Autodesk.AutoCAD.Geometry.Point2d(10, y), 0, 0, 0);
+                    gradebeam.AddVertexAt(1, new Autodesk.AutoCAD.Geometry.Point2d(90, y), 0, 0, 0);
+
+                    ms.AppendEntity(gradebeam);
+                    tr.AddNewlyCreatedDBObject(gradebeam, true);
+
+                    // Register in FD_GRADEBEAM dictionary
+                    string gbKey = gradebeam.Handle.ToString().ToUpperInvariant();
+                    if (!gradebeamDict.Contains(gbKey))
+                    {
+                        Xrecord xr = new Xrecord();
+                        xr.Data = new ResultBuffer(new TypedValue((int)DxfCode.Handle, gbKey));
+                        gradebeamDict.SetAt(gbKey, xr);
+                        tr.AddNewlyCreatedDBObject(xr, true);
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            ed.WriteMessage("\nSample polylines created for FD_BOUNDARY and FD_GRADEBEAM.");
+        }
 
     }
 }
