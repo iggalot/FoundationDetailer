@@ -494,5 +494,80 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             ed.WriteMessage("\nSample polylines created for FD_BOUNDARY and FD_GRADEBEAM.");
         }
 
+        [CommandMethod("RemoveNODRecord")]
+        public void RemoveNODRecord()
+        {
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            Database db = doc.Database;
+            Editor ed = doc.Editor;
+
+            // Prompt for subdictionary
+            PromptStringOptions pso_sub = new PromptStringOptions(
+                "\nEnter subdictionary to remove from [FD_BOUNDARY/FD_GRADEBEAM]:");
+            pso_sub.AllowSpaces = false;
+
+            PromptResult resSub = ed.GetString(pso_sub);
+            if (resSub.Status != PromptStatus.OK) return;
+
+            string subDictName = resSub.StringResult.Trim().ToUpperInvariant();
+
+            // Validate input
+            if (subDictName != KEY_BOUNDARY && subDictName != KEY_GRADEBEAM)
+            {
+                ed.WriteMessage("\nInvalid subdictionary. Must be FD_BOUNDARY or FD_GRADEBEAM.");
+                return;
+            }
+
+            // Prompt for handle
+            PromptStringOptions pso = new PromptStringOptions($"\nEnter handle of the object to remove from {subDictName}:");
+            pso.AllowSpaces = false;
+            PromptResult resHandle = ed.GetString(pso);
+            if (resHandle.Status != PromptStatus.OK) return;
+
+            string handleStr = resHandle.StringResult.ToUpperInvariant();
+
+            if (!IsValidHexHandleString(handleStr))
+            {
+                ed.WriteMessage("\nInvalid handle string.");
+                return;
+            }
+
+            using (Transaction tr = db.TransactionManager.StartTransaction())
+            {
+                DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+
+                if (!nod.Contains(ROOT))
+                {
+                    ed.WriteMessage("\nEE_Foundation dictionary does not exist.");
+                    return;
+                }
+
+                DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
+
+                if (!root.Contains(subDictName))
+                {
+                    ed.WriteMessage($"\nSubdictionary {subDictName} does not exist.");
+                    return;
+                }
+
+                DBDictionary subDict = (DBDictionary)tr.GetObject(root.GetAt(subDictName), OpenMode.ForWrite);
+
+                if (!subDict.Contains(handleStr))
+                {
+                    ed.WriteMessage($"\nHandle {handleStr} not found in {subDictName}.");
+                    return;
+                }
+
+                // Erase the Xrecord
+                Xrecord xr = (Xrecord)tr.GetObject(subDict.GetAt(handleStr), OpenMode.ForWrite);
+                xr.Erase();
+
+                ed.WriteMessage($"\nHandle {handleStr} removed from {subDictName}.");
+
+                tr.Commit();
+            }
+        }
+
+
     }
 }
