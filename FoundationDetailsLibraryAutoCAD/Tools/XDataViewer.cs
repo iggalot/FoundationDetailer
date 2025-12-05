@@ -3,6 +3,8 @@ using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Runtime;
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using System.Windows; // WPF MessageBox
 
@@ -137,13 +139,59 @@ namespace FoundationDetailer.AutoCAD
                             {
                                 try
                                 {
-                                    Handle h = new Handle(Convert.ToInt64(tv.Value));
+                                    Handle h;
+
+                                    // Robust handle resolution: cover all common Xrecord handle types
+                                    switch (tv.Value)
+                                    {
+                                        case Handle handleObj:
+                                            h = handleObj;
+                                            break;
+
+                                        case string s:
+                                            // Hex string
+                                            h = new Handle(Convert.ToInt64(s, 16));
+                                            break;
+
+                                        case int i:
+                                            h = new Handle(i);
+                                            break;
+
+                                        case long l:
+                                            h = new Handle(l);
+                                            break;
+
+                                        case short sh:
+                                            h = new Handle(sh);
+                                            break;
+
+                                        default:
+                                            display.AppendLine($"Unsupported handle format: {tv.Value} ({tv.Value.GetType()})");
+                                            continue;
+                                    }
+
+                                    // Resolve ObjectId
                                     ObjectId id = db.GetObjectId(false, h, 0);
                                     display.AppendLine($"Handle: {h}  ObjectId: {id}");
+
+                                    // Optional: inspect entity type and polyline vertices
+                                    Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+                                    if (ent != null)
+                                    {
+                                        display.AppendLine($"  Entity type: {ent.GetType().Name}");
+                                        if (ent is Polyline pl)
+                                        {
+                                            display.AppendLine($"  Polyline vertices: {pl.NumberOfVertices}");
+                                        }
+                                    }
                                 }
-                                catch
+                                catch (Autodesk.AutoCAD.Runtime.Exception ex)
                                 {
-                                    display.AppendLine($"Handle: {tv.Value} (unable to resolve ObjectId)");
+                                    display.AppendLine($"Handle: {tv.Value} (unable to resolve ObjectId) - {ex.Message}");
+                                }
+                                catch (System.Exception ex)
+                                {
+                                    display.AppendLine($"Handle: {tv.Value} (unexpected error) - {ex.Message}");
                                 }
                             }
                             else
@@ -160,10 +208,121 @@ namespace FoundationDetailer.AutoCAD
                     tr.Commit();
                 }
             }
-            catch (Autodesk.AutoCAD.Runtime.Exception ex)
+            catch (System.Exception ex)
             {
-                MessageBox.Show($"Error: {ex.Message}", "NOD XData Viewer", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"Unexpected error: {ex.Message}", "NOD XData Viewer", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
+
+
+        [CommandMethod("CleanNodHandlesSafe")]
+        public static void CleanNodHandlesSafe()
+        {
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null)
+            {
+                MessageBox.Show("No active document.", "NOD Cleanup", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            Database db = doc.Database;
+
+            try
+            {
+                using (Transaction tr = db.TransactionManager.StartTransaction())
+                {
+                    // Open NOD for read
+                    DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+
+                    int removedHandles = 0;
+                    int removedXrecords = 0;
+
+                    string[] keysToCheck = { "FD_BOUNDARY", "FD_GRADEBEAM" };
+
+                    foreach (string key in keysToCheck)
+                    {
+                        if (!nod.Contains(key))
+                            continue;
+
+                        // Open Xrecord for write
+                        Xrecord xr = (Xrecord)tr.GetObject(nod.GetAt(key), OpenMode.ForWrite);
+                        TypedValue[] arr = xr.Data?.AsArray() ?? new TypedValue[0];
+
+                        List<TypedValue> validHandles = new List<TypedValue>();
+
+                        for (int i = 0; i < arr.Length; i++)
+                        {
+                            TypedValue tv = arr[i];
+                            if (tv.TypeCode != (int)DxfCode.Handle)
+                                continue;
+
+                            Handle h;
+                            try
+                            {
+                                if (tv.Value is string s)
+                                    h = new Handle(Convert.ToInt64(s, 16));
+                                else if (tv.Value is int ii)
+                                    h = new Handle(ii);
+                                else if (tv.Value is long ll)
+                                    h = new Handle(ll);
+                                else if (tv.Value is Handle hh)
+                                    h = hh;
+                                else
+                                    continue;
+                            }
+                            catch
+                            {
+                                removedHandles++;
+                                continue;
+                            }
+
+                            try
+                            {
+                                ObjectId id = db.GetObjectId(false, h, 0);
+                                if (!id.IsErased)
+                                {
+                                    validHandles.Add(new TypedValue((int)DxfCode.Handle, h.ToString()));
+                                }
+                                else
+                                {
+                                    removedHandles++;
+                                }
+                            }
+                            catch
+                            {
+                                removedHandles++;
+                            }
+                        }
+
+                        if (validHandles.Count > 0)
+                        {
+                            xr.Data = new ResultBuffer(validHandles.ToArray());
+                        }
+                        else
+                        {
+                            // Only upgrade NOD when actually removing an Xrecord
+                            if (!nod.IsWriteEnabled)
+                                nod.UpgradeOpen();
+
+                            nod.Remove(key);
+                            removedXrecords++;
+                        }
+                    }
+
+                    tr.Commit();
+
+                    MessageBox.Show(
+                        string.Format("NOD cleanup complete.\nRemoved handles: {0}\nRemoved Xrecords: {1}", removedHandles, removedXrecords),
+                        "NOD Cleanup", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+            }
+            catch (System.Exception ex)
+            {
+                MessageBox.Show("Error during NOD cleanup: " + ex.Message, "NOD Cleanup", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+
+
     }
 }

@@ -1,7 +1,11 @@
-﻿using System;
-using Autodesk.AutoCAD.ApplicationServices;
+﻿using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.Runtime;
 using Autodesk.AutoCAD.Windows;
+using FoundationDetailsLibraryAutoCAD.AutoCAD;
+using System;
+using System.Collections.Generic;
+using System.Windows;
 
 namespace FoundationDetailer
 {
@@ -12,17 +16,37 @@ namespace FoundationDetailer
         // Call this once at startup
         public static void Initialize()
         {
+            // Create the NOD dictionaries
+            NODManager.InitFoundationNOD();
+
             // Attach to existing documents
-            foreach (Document doc in Application.DocumentManager)
+            foreach (Document doc in Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager)
                 AttachDocumentEvents(doc);
 
             // Listen for new documents
-            Application.DocumentManager.DocumentCreated -= DocManager_DocumentCreated;
-            Application.DocumentManager.DocumentCreated += DocManager_DocumentCreated;
+            Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.DocumentCreated -= DocManager_DocumentCreated;
+            Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.DocumentCreated += DocManager_DocumentCreated;
 
             // Create palette set
             CreatePalette();
         }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
         private static void DocManager_DocumentCreated(object sender, DocumentCollectionEventArgs e)
         {

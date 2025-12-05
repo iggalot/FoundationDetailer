@@ -52,6 +52,8 @@ namespace FoundationDetailer.UI
         private void WireEvents()
         {
             BtnQuery.Click += (s, e) => QueryXData();
+            BtnSyncNod.Click += (s, e) => SyncNodData();
+
             BtnSelectBoundary.Click += (s, e) => SelectBoundary();
             //BtnAddPiers.Click += (s, e) => AddPiers();
             BtnAddGradeBeams.Click += (s, e) => AddGradeBeams();
@@ -78,6 +80,11 @@ namespace FoundationDetailer.UI
         private void QueryXData()
         {
             NodXDataViewer.ShowNodXData();
+        }
+
+        private void SyncNodData()
+        {
+            NodXDataViewer.CleanNodHandlesSafe();
         }
 
         #region --- Boundary Selection and UI Updates ---

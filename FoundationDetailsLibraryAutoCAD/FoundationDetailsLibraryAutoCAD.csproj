@@ -64,6 +64,7 @@
   <ItemGroup>
     <Compile Include="AutoCAD\AutoCADAdapter.cs" />
     <Compile Include="AutoCAD\GradeBeamManager.cs" />
+    <Compile Include="AutoCAD\NODManager.cs" />
     <Compile Include="AutoCAD\PaletteManager.cs" />
     <Compile Include="AutoCAD\PolylineBoundaryManager.cs" />
     <Compile Include="Commands\FoundationCommands.cs" />
