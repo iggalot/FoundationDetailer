@@ -75,8 +75,8 @@ namespace FoundationDetailer.UI
             //BtnPreview.Click += (s, e) => ShowPreview();
             //BtnClearPreview.Click += (s, e) => ClearPreview();
             //BtnCommit.Click += (s, e) => CommitModel();
-            //BtnSave.Click += (s, e) => SaveModel();
-            //BtnLoad.Click += (s, e) => LoadModel();
+            BtnSave.Click += (s, e) => SaveModel();
+            BtnLoad.Click += (s, e) => LoadModel();
 
             BtnShowBoundary.Click += (s, e) => PolylineBoundaryManager.HighlightBoundary();
             BtnZoomBoundary.Click += (s, e) => PolylineBoundaryManager.ZoomToBoundary();
@@ -372,38 +372,12 @@ namespace FoundationDetailer.UI
 
         private void SaveModel()
         {
-            string filePath = "FoundationProject.json";
-            try
-            {
-                JsonStorage.Save(filePath, _currentModel);
-                Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = $"Model saved to {filePath}"));
-            }
-            catch (Exception ex)
-            {
-                Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = $"Save error: {ex.Message}"));
-            }
+            NODManager.ExportFoundationNOD();
         }
 
         private void LoadModel()
         {
-            string filePath = "FoundationProject.json";
-            try
-            {
-                var model = JsonStorage.Load<FoundationModel>(filePath);
-                if (model != null)
-                {
-                    _currentModel = model;
-                    Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = "Model loaded."));
-                }
-                else
-                {
-                    Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = "No saved model found."));
-                }
-            }
-            catch (Exception ex)
-            {
-                Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = $"Load error: {ex.Message}"));
-            }
+            NODManager.ImportFoundationNOD();
         }
 
         #endregion

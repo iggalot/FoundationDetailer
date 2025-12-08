@@ -376,70 +376,158 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         [CommandMethod("ExportFoundationNOD")]
         public static void ExportFoundationNOD()
         {
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application
+                                .DocumentManager.MdiActiveDocument;
             Database db = doc.Database;
 
-            using (Transaction tr = db.TransactionManager.StartTransaction())
+            // Build filename in same folder as drawing
+            string drawingFolder = Path.GetDirectoryName(doc.Name);
+            string drawingName = Path.GetFileNameWithoutExtension(doc.Name);
+            string jsonFile = Path.Combine(drawingFolder, $"{drawingName}_FDN_DATA.json");
+
+            // Container for export data
+            Dictionary<string, List<string>> exportData =
+                new Dictionary<string, List<string>>();
+
+            using (var tr = db.TransactionManager.StartTransaction())
             {
                 try
                 {
-                    DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-                    if (!nod.Contains(ROOT)) { MessageBox.Show("EE_Foundation dictionary does not exist."); return; }
+                    // Open the top-level NOD (Named Objects Dictionary)
+                    DBDictionary nod =
+                        (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
 
-                    DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForRead);
-                    Dictionary<string, List<string>> data = new Dictionary<string, List<string>>();
-
-                    foreach (DBDictionaryEntry group in root)
+                    if (!nod.Contains(ROOT))
                     {
-                        DBDictionary sub = (DBDictionary)tr.GetObject(group.Value, OpenMode.ForRead);
-                        List<string> handles = new List<string>();
-                        foreach (DBDictionaryEntry entry in sub) handles.Add(entry.Key);
-                        data[group.Key] = handles;
+                        MessageBox.Show("EE_Foundation dictionary does not exist.");
+                        return;
                     }
 
-                    string json = Newtonsoft.Json.JsonConvert.SerializeObject(data, Newtonsoft.Json.Formatting.Indented);
-                    File.WriteAllText("EE_Foundation.json", json);
+                    // Open EE_Foundation
+                    DBDictionary root =
+                        (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForRead);
+
+                    // Loop through all known subdictionaries so they appear even if empty
+                    foreach (string sub in KNOWN_SUBDIRS)
+                    {
+                        List<string> handles = new List<string>();
+
+                        if (root.Contains(sub))
+                        {
+                            DBDictionary subDict =
+                                (DBDictionary)tr.GetObject(root.GetAt(sub), OpenMode.ForRead);
+
+                            // Collect handle keys
+                            foreach (DBDictionaryEntry entry in subDict)
+                            {
+                                handles.Add(entry.Key);
+                            }
+                        }
+
+                        // store result (empty list if none)
+                        exportData[sub] = handles;
+                    }
+
                     tr.Commit();
-                    MessageBox.Show("Exported to EE_Foundation.json");
                 }
                 catch (System.Exception ex)
                 {
-                    doc.Editor.WriteMessage($"\nTransaction failed: {ex.Message}");
+                    doc.Editor.WriteMessage($"\nExport failed: {ex.Message}");
+                    return;
                 }
             }
+
+            // Convert dictionary → JSON and write to file
+            string json = Newtonsoft.Json.JsonConvert.SerializeObject(
+                exportData,
+                Newtonsoft.Json.Formatting.Indented);
+
+            File.WriteAllText(jsonFile, json);
+
+            MessageBox.Show($"Export complete:\n{jsonFile}");
         }
 
         [CommandMethod("ImportFoundationNOD")]
         public static void ImportFoundationNOD()
         {
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application
+                                .DocumentManager.MdiActiveDocument;
             Database db = doc.Database;
 
-            if (!File.Exists("EE_Foundation.json")) { MessageBox.Show("EE_Foundation.json not found."); return; }
+            // Build the JSON file name in the drawing’s folder
+            string drawingFolder = Path.GetDirectoryName(doc.Name);
+            string drawingName = Path.GetFileNameWithoutExtension(doc.Name);
+            string jsonFile = Path.Combine(drawingFolder, $"{drawingName}_FDN_DATA.json");
 
-            string json = File.ReadAllText("EE_Foundation.json");
-            var data = Newtonsoft.Json.JsonConvert.DeserializeObject<Dictionary<string, List<string>>>(json);
-
-            using (Transaction tr = db.TransactionManager.StartTransaction())
+            if (!File.Exists(jsonFile))
             {
-                try
-                {
-                    DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
-                    DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
+                MessageBox.Show($"{jsonFile} not found.");
+                return;
+            }
 
-                    foreach (var kvp in data)
-                    {
-                        DBDictionary sub = (DBDictionary)tr.GetObject(root.GetAt(kvp.Key), OpenMode.ForWrite);
-                        foreach (string handle in kvp.Value)
-                            if (IsValidHexHandleString(handle))
-                                AddHandleToDictionary(tr, sub, handle);
-                    }
-                    tr.Commit();
-                    MessageBox.Show("EE_Foundation.json imported.");
-                }
-                catch (System.Exception ex)
+            // Read and deserialize JSON
+            string json = File.ReadAllText(jsonFile);
+            var importData =
+                Newtonsoft.Json.JsonConvert.DeserializeObject<Dictionary<string, List<string>>>(json);
+            if (importData == null)
+            {
+                MessageBox.Show("JSON format invalid.");
+                return;
+            }
+
+            using (doc.LockDocument())
+            {
+                using (Transaction tr = db.TransactionManager.StartTransaction())
                 {
-                    doc.Editor.WriteMessage($"\nTransaction failed: {ex.Message}");
+                    InitFoundationNOD(tr);
+                    tr.Commit();
+                }
+
+                using (Transaction tr = db.TransactionManager.StartTransaction())
+                {
+                    try
+                    {
+                        // Open the parent NOD for write
+                        DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+
+                        DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
+
+                        // Process each group found in the JSON
+                        foreach (var kvp in importData)
+                        {
+                            string subName = kvp.Key;
+                            List<string> handles = kvp.Value ?? new List<string>();
+
+                            // Ensure subdictionary exists
+                            DBDictionary subDict;
+                            if (!root.Contains(subName))
+                            {
+                                subDict = new DBDictionary();
+                                root.SetAt(subName, subDict);
+                                tr.AddNewlyCreatedDBObject(subDict, true);
+                            }
+                            else
+                            {
+                                subDict = (DBDictionary)tr.GetObject(root.GetAt(subName), OpenMode.ForWrite);
+                            }
+
+                            // Import handles
+                            foreach (string handle in handles)
+                            {
+                                if (IsValidHexHandleString(handle))
+                                {
+                                    AddHandleToDictionary(tr, subDict, handle);
+                                }
+                            }
+                        }
+
+                        tr.Commit();
+                        MessageBox.Show($"{jsonFile} imported successfully.");
+                    }
+                    catch (System.Exception ex)
+                    {
+                        doc.Editor.WriteMessage($"\nImport failed: {ex.Message}");
+                    }
                 }
             }
         }
