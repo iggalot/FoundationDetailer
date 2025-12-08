@@ -16,7 +16,7 @@ namespace FoundationDetailer
         // Call this once at startup
         public static void Initialize()
         {
-            // Create the NOD dictionaries
+            // Create the QueryNOD dictionaries
             NODManager.InitFoundationNOD();
 
             // Attach to existing documents

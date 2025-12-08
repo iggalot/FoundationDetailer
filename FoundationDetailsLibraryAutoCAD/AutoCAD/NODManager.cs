@@ -34,10 +34,20 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         {
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                action(tr);
-                tr.Commit();
+                try
+                {
+                    action(tr);
+                    tr.Commit(); // commits if everything went well
+                }
+                catch (System.Exception ex)
+                {
+                    // no need to manually abort — disposing will handle it
+                    Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage($"\nTransaction failed: {ex.Message}");
+                }
             }
         }
+
+
 
         /// <summary>
         /// Ensures a subdictionary exists, creates if missing.
@@ -50,6 +60,11 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 DBDictionary sub = new DBDictionary();
                 parent.SetAt(name, sub);
                 tr.AddNewlyCreatedDBObject(sub, true);
+
+                Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+                Database db = doc.Database;
+                Editor ed = doc.Editor;
+                ed.WriteMessage("\nAdded dictionary " + name);
                 return sub;
             }
             return (DBDictionary)tr.GetObject(parent.GetAt(name), OpenMode.ForWrite);
@@ -130,7 +145,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         }
 
         // ==========================================================
-        //  NOD ENTRY REPRESENTATION
+        //  QueryNOD ENTRY REPRESENTATION
         // ==========================================================
         public class HandleEntry
         {
@@ -148,6 +163,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         {
             Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
             Database db = doc.Database;
+            Editor ed = doc.Editor;
 
             ExecuteTransaction(db, tr =>
             {
@@ -157,7 +173,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 EnsureDictionary(tr, root, KEY_GRADEBEAM);
             });
 
-            doc.Editor.WriteMessage("\nEE_Foundation NOD structure initialized.");
+            ed.WriteMessage("\nEE_Foundation NOD structure initialized successfully.");
         }
 
         // ==========================================================
@@ -227,7 +243,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         }
 
         // ==========================================================
-        //  VIEW NOD CONTENT
+        //  VIEW QueryNOD CONTENT
         // ==========================================================
         [CommandMethod("ViewFoundationNOD")]
         public static void ViewFoundationNOD()
@@ -260,7 +276,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         }
 
         // ==========================================================
-        //  REMOVE ENTIRE NOD STRUCTURE
+        //  REMOVE ENTIRE QueryNOD STRUCTURE
         // ==========================================================
         [CommandMethod("EraseFoundationNOD")]
         public static void EraseFoundationNOD()
@@ -280,6 +296,47 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 
             MessageBox.Show("EE_Foundation dictionary erased.");
         }
+
+        /// <summary>
+        /// Erases a specified subdictionary under EE_Foundation.
+        /// </summary>
+        /// <param name="subDictionaryName">Name of the subdictionary to remove, e.g., "FD_BOUNDARY" or "FD_GRADEBEAM"</param>
+        public static void EraseFoundationSubDictionary(string subDictionaryName)
+        {
+            if (string.IsNullOrWhiteSpace(subDictionaryName))
+                throw new ArgumentException("Subdictionary name cannot be null or empty.", nameof(subDictionaryName));
+
+            subDictionaryName = subDictionaryName.Trim().ToUpperInvariant();
+
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            Database db = doc.Database;
+            Editor ed = doc.Editor;
+
+            ExecuteTransaction(db, tr =>
+            {
+                DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+
+                if (!nod.Contains(ROOT))
+                {
+                    ed.WriteMessage("\nEE_Foundation root dictionary does not exist.");
+                    return;
+                }
+
+                DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
+
+                if (!root.Contains(subDictionaryName))
+                {
+                    ed.WriteMessage($"\nSubdictionary {subDictionaryName} does not exist.");
+                    return;
+                }
+
+                DBDictionary subDict = (DBDictionary)tr.GetObject(root.GetAt(subDictionaryName), OpenMode.ForWrite);
+                subDict.Erase();
+
+                ed.WriteMessage($"\nSubdictionary {subDictionaryName} erased.");
+            });
+        }
+
 
         // ==========================================================
         //  EXPORT / IMPORT JSON
@@ -446,7 +503,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         }
 
         // ==========================================================
-        //  CLEAN ALL NOD ENTRIES
+        //  CLEAN ALL QueryNOD ENTRIES
         // ==========================================================
         [CommandMethod("NODCleaner")]
         public static void NODCleanAll()

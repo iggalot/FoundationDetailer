@@ -7,7 +7,7 @@ using FoundationDetailer.Model;
 using FoundationDetailer.Storage;
 using FoundationDetailer.UI.Controls;
 using FoundationDetailer.UI.Converters;
-using FoundationDetailsLibraryAutoCAD.Managers;
+using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using System;
 using System.Windows;
 using System.Windows.Controls;
@@ -33,6 +33,9 @@ namespace FoundationDetailer.UI
         public PaletteMain()
         {
             InitializeComponent();
+
+            NODManager.InitFoundationNOD();
+
             PolylineBoundaryManager.BoundaryChanged += OnBoundaryChanged;  // subscribe for the boundary changed event
 
             // Initialize PierControl
@@ -51,7 +54,7 @@ namespace FoundationDetailer.UI
 
         private void WireEvents()
         {
-            BtnQuery.Click += (s, e) => QueryXData();
+            BtnQuery.Click += (s, e) => QueryNOD();
             BtnSyncNod.Click += (s, e) => SyncNodData();
 
             BtnSelectBoundary.Click += (s, e) => SelectBoundary();
@@ -77,14 +80,14 @@ namespace FoundationDetailer.UI
 
         }
 
-        private void QueryXData()
+        private void QueryNOD()
         {
-            NodXDataViewer.ShowNodXData();
+            NODManager.ViewFoundationNOD();
         }
 
         private void SyncNodData()
         {
-            NodXDataViewer.CleanNodHandlesSafe();
+            NODManager.CleanFoundationNOD();
         }
 
         #region --- Boundary Selection and UI Updates ---
@@ -221,16 +224,7 @@ namespace FoundationDetailer.UI
 
         private void BtnClearGradeBeams_Click(object sender, RoutedEventArgs e)
         {
-            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            if (doc == null) return;
-
-            using (doc.LockDocument())
-            using (var tr = doc.Database.TransactionManager.StartTransaction())
-            {
-                GradeBeamManager.ClearGradeBeams(doc, tr);
-                tr.Commit();
-            }
-
+            NODManager.EraseFoundationSubDictionary("FD_GRADEBEAM");
             TxtStatus.Text = "All grade beams cleared.";
         }
 
