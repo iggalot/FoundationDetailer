@@ -125,6 +125,37 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         }
 
         // ==========================================================
+        //  TRANSACTION GUARD
+        // ==========================================================
+        private class TransactionGuard : IDisposable
+        {
+            [ThreadStatic] private static int _activeTransactionCount;
+            public bool IsOuterTransaction { get; }
+            public Transaction Tr { get; }
+
+            public TransactionGuard(Database db, bool forWrite = false)
+            {
+                if (_activeTransactionCount > 0)
+                    throw new InvalidOperationException("Nested transaction detected!");
+
+                IsOuterTransaction = true;
+                _activeTransactionCount++;
+                Tr = db.TransactionManager.StartTransaction();
+            }
+
+            public void Commit() => Tr?.Commit();
+
+            public void Dispose()
+            {
+                Tr?.Dispose();
+                if (IsOuterTransaction)
+                    _activeTransactionCount--;
+            }
+
+            public static bool HasActiveTransaction => _activeTransactionCount > 0;
+        }
+
+        // ==========================================================
         //  QueryNODData ENTRY REPRESENTATION
         // ==========================================================
         public class HandleEntry
@@ -145,19 +176,19 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             Database db = doc.Database;
             Editor ed = doc.Editor;
 
-            using (Transaction tr = db.TransactionManager.StartTransaction())
+            using (var guard = new TransactionGuard(db))
             {
                 try
                 {
-                    DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+                    DBDictionary nod = (DBDictionary)guard.Tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
 
-                    var (root, createdRoot) = EnsureDictionary(tr, nod, ROOT);
+                    var (root, createdRoot) = EnsureDictionary(guard.Tr, nod, ROOT);
                     if (createdRoot) ed.WriteMessage("\nCreated ROOT dictionary");
 
-                    var (_, _) = EnsureDictionary(tr, root, KEY_BOUNDARY);
-                    var (_, _) = EnsureDictionary(tr, root, KEY_GRADEBEAM);
+                    var (_, _) = EnsureDictionary(guard.Tr, root, KEY_BOUNDARY);
+                    var (_, _) = EnsureDictionary(guard.Tr, root, KEY_GRADEBEAM);
 
-                    tr.Commit();
+                    guard.Commit();
                     ed.WriteMessage("\nEE_Foundation NOD structure initialized successfully.");
                 }
                 catch (System.Exception ex)
@@ -176,18 +207,18 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
             Database db = doc.Database;
 
-            using (Transaction tr = db.TransactionManager.StartTransaction())
+            using (var guard = new TransactionGuard(db))
             {
                 try
                 {
-                    DBDictionary nod = tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead) as DBDictionary;
+                    DBDictionary nod = guard.Tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead) as DBDictionary;
                     if (nod == null || !nod.Contains(ROOT)) return results;
 
-                    DBDictionary root = tr.GetObject(nod.GetAt(ROOT), OpenMode.ForRead) as DBDictionary;
+                    DBDictionary root = guard.Tr.GetObject(nod.GetAt(ROOT), OpenMode.ForRead) as DBDictionary;
 
                     foreach (DBDictionaryEntry group in root)
                     {
-                        DBDictionary sub = tr.GetObject(group.Value, OpenMode.ForRead) as DBDictionary;
+                        DBDictionary sub = guard.Tr.GetObject(group.Value, OpenMode.ForRead) as DBDictionary;
                         if (sub == null) continue;
 
                         List<string> keys = new List<string>();
@@ -209,7 +240,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                             {
                                 try
                                 {
-                                    Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+                                    Entity ent = guard.Tr.GetObject(id, OpenMode.ForRead) as Entity;
                                     entryResult.Status = (ent == null || ent.IsErased) ? "Missing" : "Valid";
                                     entryResult.Id = id;
                                     if (entryResult.Status != "Valid") keysToRemove.Add(handleStr);
@@ -230,7 +261,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                             foreach (string key in keysToRemove) sub.Remove(key);
                         }
                     }
-                    tr.Commit();
+                    guard.Commit();
                 }
                 catch
                 {
@@ -293,17 +324,17 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
             Database db = doc.Database;
 
-            using (Transaction tr = db.TransactionManager.StartTransaction())
+            using (var guard = new TransactionGuard(db))
             {
                 try
                 {
-                    DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+                    DBDictionary nod = (DBDictionary)guard.Tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
                     if (nod.Contains(ROOT))
                     {
-                        DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
+                        DBDictionary root = (DBDictionary)guard.Tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
                         root.Erase();
                     }
-                    tr.Commit();
+                    guard.Commit();
                     MessageBox.Show("EE_Foundation dictionary erased.");
                 }
                 catch (System.Exception ex)
@@ -324,11 +355,11 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             Database db = doc.Database;
             Editor ed = doc.Editor;
 
-            using (Transaction tr = db.TransactionManager.StartTransaction())
+            using (var guard = new TransactionGuard(db))
             {
                 try
                 {
-                    DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+                    DBDictionary nod = (DBDictionary)guard.Tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
 
                     if (!nod.Contains(ROOT))
                     {
@@ -336,7 +367,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                         return;
                     }
 
-                    DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
+                    DBDictionary root = (DBDictionary)guard.Tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
 
                     if (!root.Contains(subDictionaryName))
                     {
@@ -344,9 +375,9 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                         return;
                     }
 
-                    DBDictionary subDict = (DBDictionary)tr.GetObject(root.GetAt(subDictionaryName), OpenMode.ForWrite);
+                    DBDictionary subDict = (DBDictionary)guard.Tr.GetObject(root.GetAt(subDictionaryName), OpenMode.ForWrite);
                     subDict.Erase();
-                    tr.Commit();
+                    guard.Commit();
 
                     ed.WriteMessage($"\nSubdictionary {subDictionaryName} erased.");
                 }
@@ -371,11 +402,11 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             string jsonFileName = drawingName + "_FDN_DATA.json";
             string jsonFilePath = Path.Combine(drawingFolder, jsonFileName);
 
-            using (Transaction tr = db.TransactionManager.StartTransaction())
+            using (var guard = new TransactionGuard(db))
             {
                 try
                 {
-                    DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+                    DBDictionary nod = (DBDictionary)guard.Tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
 
                     if (!nod.Contains(ROOT))
                     {
@@ -383,13 +414,13 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                         return;
                     }
 
-                    DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForRead);
+                    DBDictionary root = (DBDictionary)guard.Tr.GetObject(nod.GetAt(ROOT), OpenMode.ForRead);
 
                     Dictionary<string, List<string>> data = new Dictionary<string, List<string>>();
 
                     foreach (DBDictionaryEntry group in root)
                     {
-                        DBDictionary sub = (DBDictionary)tr.GetObject(group.Value, OpenMode.ForRead);
+                        DBDictionary sub = (DBDictionary)guard.Tr.GetObject(group.Value, OpenMode.ForRead);
                         List<string> handles = new List<string>();
                         foreach (DBDictionaryEntry entry in sub)
                             handles.Add(entry.Key);
@@ -400,7 +431,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                     string json = Newtonsoft.Json.JsonConvert.SerializeObject(data, Newtonsoft.Json.Formatting.Indented);
                     File.WriteAllText(jsonFilePath, json);
 
-                    tr.Commit();
+                    guard.Commit();
                     MessageBox.Show($"Exported EE_Foundation data to:\n{jsonFilePath}");
                 }
                 catch (System.Exception ex)
@@ -430,25 +461,25 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             string json = File.ReadAllText(jsonFileName);
             var data = Newtonsoft.Json.JsonConvert.DeserializeObject<Dictionary<string, List<string>>>(json);
 
-            using (Transaction tr = db.TransactionManager.StartTransaction())
+            using (var guard = new TransactionGuard(db))
             {
                 try
                 {
-                    DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-                    var (root, _) = EnsureDictionary(tr, nod, ROOT);
+                    DBDictionary nod = (DBDictionary)guard.Tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+                    var (root, _) = EnsureDictionary(guard.Tr, nod, ROOT);
 
                     foreach (var kvp in data)
                     {
-                        var (sub, _) = EnsureDictionary(tr, root, kvp.Key);
+                        var (sub, _) = EnsureDictionary(guard.Tr, root, kvp.Key);
 
                         foreach (string handle in kvp.Value)
                         {
                             if (IsValidHexHandleString(handle))
-                                AddHandleToDictionary(tr, sub, handle);
+                                AddHandleToDictionary(guard.Tr, sub, handle);
                         }
                     }
 
-                    tr.Commit();
+                    guard.Commit();
                     MessageBox.Show($"{jsonFileName} imported successfully.");
                 }
                 catch (System.Exception ex)
@@ -468,17 +499,17 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             Database db = doc.Database;
             Editor ed = doc.Editor;
 
-            using (Transaction tr = db.TransactionManager.StartTransaction())
+            using (var guard = new TransactionGuard(db))
             {
                 try
                 {
-                    DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
-                    var (root, _) = EnsureDictionary(tr, nod, ROOT);
-                    var (boundaryDict, _) = EnsureDictionary(tr, root, KEY_BOUNDARY);
-                    var (gradebeamDict, _) = EnsureDictionary(tr, root, KEY_GRADEBEAM);
+                    DBDictionary nod = (DBDictionary)guard.Tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+                    var (root, _) = EnsureDictionary(guard.Tr, nod, ROOT);
+                    var (boundaryDict, _) = EnsureDictionary(guard.Tr, root, KEY_BOUNDARY);
+                    var (gradebeamDict, _) = EnsureDictionary(guard.Tr, root, KEY_GRADEBEAM);
 
-                    BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-                    BlockTableRecord ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+                    BlockTable bt = (BlockTable)guard.Tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+                    BlockTableRecord ms = (BlockTableRecord)guard.Tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
                     Polyline boundary = new Polyline();
                     boundary.AddVertexAt(0, new Point2d(0, 0), 0, 0, 0);
@@ -488,8 +519,8 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                     boundary.Closed = true;
 
                     ms.AppendEntity(boundary);
-                    tr.AddNewlyCreatedDBObject(boundary, true);
-                    AddHandleToDictionary(tr, boundaryDict, boundary.Handle.ToString().ToUpperInvariant());
+                    guard.Tr.AddNewlyCreatedDBObject(boundary, true);
+                    AddHandleToDictionary(guard.Tr, boundaryDict, boundary.Handle.ToString().ToUpperInvariant());
 
                     for (int i = 0; i < 4; i++)
                     {
@@ -499,10 +530,10 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                         gb.AddVertexAt(1, new Point2d(90, y), 0, 0, 0);
 
                         ms.AppendEntity(gb);
-                        tr.AddNewlyCreatedDBObject(gb, true);
-                        AddHandleToDictionary(tr, gradebeamDict, gb.Handle.ToString().ToUpperInvariant());
+                        guard.Tr.AddNewlyCreatedDBObject(gb, true);
+                        AddHandleToDictionary(guard.Tr, gradebeamDict, gb.Handle.ToString().ToUpperInvariant());
                     }
-                    tr.Commit();
+                    guard.Commit();
                     ed.WriteMessage("\nSample polylines created for FD_BOUNDARY and FD_GRADEBEAM.");
                 }
                 catch (System.Exception ex)
@@ -548,23 +579,23 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             string handleStr = resHandle.StringResult.ToUpperInvariant();
             if (!IsValidHexHandleString(handleStr)) { ed.WriteMessage("\nInvalid handle string."); return; }
 
-            using (Transaction tr = db.TransactionManager.StartTransaction())
+            using (var guard = new TransactionGuard(db))
             {
                 try
                 {
-                    DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+                    DBDictionary nod = (DBDictionary)guard.Tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
                     if (!nod.Contains(ROOT)) { ed.WriteMessage("\nEE_Foundation dictionary does not exist."); return; }
 
-                    DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
+                    DBDictionary root = (DBDictionary)guard.Tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
                     if (!root.Contains(subDictName)) { ed.WriteMessage($"\nSubdictionary {subDictName} does not exist."); return; }
 
-                    DBDictionary subDict = (DBDictionary)tr.GetObject(root.GetAt(subDictName), OpenMode.ForWrite);
+                    DBDictionary subDict = (DBDictionary)guard.Tr.GetObject(root.GetAt(subDictName), OpenMode.ForWrite);
                     if (!subDict.Contains(handleStr)) { ed.WriteMessage($"\nHandle {handleStr} not found in {subDictName}."); return; }
 
-                    Xrecord xr = (Xrecord)tr.GetObject(subDict.GetAt(handleStr), OpenMode.ForWrite);
+                    Xrecord xr = (Xrecord)guard.Tr.GetObject(subDict.GetAt(handleStr), OpenMode.ForWrite);
                     xr.Erase();
 
-                    tr.Commit();
+                    guard.Commit();
                     ed.WriteMessage($"\nHandle {handleStr} removed from {subDictName}.");
                 }
                 catch (System.Exception ex)
