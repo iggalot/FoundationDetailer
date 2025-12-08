@@ -78,7 +78,7 @@ namespace FoundationDetailer.AutoCAD
         {
             var db = doc.Database;
 
-            // --- 1. Remove any grade beams listed in the QueryNOD ---
+            // --- 1. Remove any grade beams listed in the QueryNODData ---
             DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
             if (nod.Contains("FD_GRADEBEAM"))
             {
@@ -199,7 +199,7 @@ namespace FoundationDetailer.AutoCAD
                 _gradeBeams[doc] = new List<ObjectId>();
             _gradeBeams[doc].Add(pl.ObjectId);
 
-            // Store all grade beams in QueryNOD
+            // Store all grade beams in QueryNODData
             StoreGradeBeamsInNod(doc, tr);
         }
 

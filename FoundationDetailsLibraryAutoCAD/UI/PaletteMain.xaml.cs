@@ -34,7 +34,7 @@ namespace FoundationDetailer.UI
         {
             InitializeComponent();
 
-            NODManager.InitFoundationNOD();
+            NODManager.InitFoundationNOD();  // initialize the NOD for our application
 
             PolylineBoundaryManager.BoundaryChanged += OnBoundaryChanged;  // subscribe for the boundary changed event
 
@@ -54,7 +54,7 @@ namespace FoundationDetailer.UI
 
         private void WireEvents()
         {
-            BtnQuery.Click += (s, e) => QueryNOD();
+            BtnQuery.Click += (s, e) => QueryNODData();
             BtnSyncNod.Click += (s, e) => SyncNodData();
 
             BtnSelectBoundary.Click += (s, e) => SelectBoundary();
@@ -65,8 +65,8 @@ namespace FoundationDetailer.UI
             //BtnPreview.Click += (s, e) => ShowPreview();
             //BtnClearPreview.Click += (s, e) => ClearPreview();
             //BtnCommit.Click += (s, e) => CommitModel();
-            //BtnSave.Click += (s, e) => SaveModel();
-            //BtnLoad.Click += (s, e) => LoadModel();
+            BtnSave.Click += (s, e) => SaveModel();
+            BtnLoad.Click += (s, e) => LoadModel();
 
             BtnShowBoundary.Click += (s, e) => PolylineBoundaryManager.HighlightBoundary();
             BtnZoomBoundary.Click += (s, e) => PolylineBoundaryManager.ZoomToBoundary();
@@ -80,11 +80,17 @@ namespace FoundationDetailer.UI
 
         }
 
-        private void QueryNOD()
+        /// <summary>
+        /// Queries the NOD for a list of handles in each subdirectory.
+        /// </summary>
+        private void QueryNODData()
         {
             NODManager.ViewFoundationNOD();
         }
 
+        /// <summary>
+        /// Cleans the NOD of any stake handles
+        /// </summary>
         private void SyncNodData()
         {
             NODManager.CleanFoundationNOD();
@@ -270,18 +276,18 @@ namespace FoundationDetailer.UI
 
         #region --- PierControl Handlers ---
 
-        private void OnPierAdded(PierData data)
-        {
-            Pier pier = PierConverter.ToModelPier(data);
-            CurrentModel.Piers.Add(pier);
-            Dispatcher.BeginInvoke(new Action(() =>
-                TxtStatus.Text = $"Pier added at ({pier.Location.X:F2}, {pier.Location.Y:F2})"));
-        }
+        //private void OnPierAdded(PierData data)
+        //{
+        //    Pier pier = PierConverter.ToModelPier(data);
+        //    CurrentModel.Piers.Add(pier);
+        //    Dispatcher.BeginInvoke(new Action(() =>
+        //        TxtStatus.Text = $"Pier added at ({pier.Location.X:F2}, {pier.Location.Y:F2})"));
+        //}
 
-        private void PickPierLocation()
-        {
-            MessageBox.Show("Pick pier location in AutoCAD.");
-        }
+        //private void PickPierLocation()
+        //{
+        //    MessageBox.Show("Pick pier location in AutoCAD.");
+        //}
 
         #endregion
 
@@ -322,72 +328,15 @@ namespace FoundationDetailer.UI
         private void AddRebarBars() => MessageBox.Show("Add rebar bars to model.");
         private void AddStrands() => MessageBox.Show("Add strands to model.");
 
-        private void ShowPreview()
-        {
-            try
-            {
-                PreviewManager.ShowPreview(_currentModel);
-                Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = "Preview shown."));
-            }
-            catch (Exception ex)
-            {
-                Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = $"Preview error: {ex.Message}"));
-            }
-        }
-
-        private void ClearPreview()
-        {
-            PreviewManager.ClearPreview();
-            Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = "Preview cleared."));
-        }
-
-        private void CommitModel()
-        {
-            try
-            {
-                AutoCADAdapter.CommitModelToDrawing(_currentModel);
-                Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = "Model committed to DWG."));
-            }
-            catch (Exception ex)
-            {
-                Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = $"Commit error: {ex.Message}"));
-            }
-        }
 
         private void SaveModel()
         {
-            string filePath = "FoundationProject.json";
-            try
-            {
-                JsonStorage.Save(filePath, _currentModel);
-                Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = $"Model saved to {filePath}"));
-            }
-            catch (Exception ex)
-            {
-                Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = $"Save error: {ex.Message}"));
-            }
+            NODManager.ExportFoundationNOD();
         }
 
         private void LoadModel()
         {
-            string filePath = "FoundationProject.json";
-            try
-            {
-                var model = JsonStorage.Load<FoundationModel>(filePath);
-                if (model != null)
-                {
-                    _currentModel = model;
-                    Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = "Model loaded."));
-                }
-                else
-                {
-                    Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = "No saved model found."));
-                }
-            }
-            catch (Exception ex)
-            {
-                Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = $"Load error: {ex.Message}"));
-            }
+            NODManager.ImportFoundationNOD();
         }
 
         #endregion

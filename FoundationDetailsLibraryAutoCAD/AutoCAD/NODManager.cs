@@ -19,39 +19,52 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         // ==========================================================
         //  CONSTANTS
         // ==========================================================
-        private const string ROOT = "EE_Foundation";
-        private const string KEY_BOUNDARY = "FD_BOUNDARY";
-        private const string KEY_GRADEBEAM = "FD_GRADEBEAM";
+        public const string ROOT = "EE_Foundation";
+        public const string KEY_BOUNDARY = "FD_BOUNDARY";
+        public const string KEY_GRADEBEAM = "FD_GRADEBEAM";
+        // ==========================================================
+        //  KNOWN SUBDICTIONARIES
+        // ==========================================================
+        private static readonly string[] KNOWN_SUBDICTIONARIES = { KEY_BOUNDARY, KEY_GRADEBEAM };
 
         // ==========================================================
         //  HELPER UTILITIES
         // ==========================================================
 
         /// <summary>
-        /// Ensures a subdictionary exists, creates if missing.
+        /// Ensures a subdictionary exists under a parent dictionary. Returns the dictionary and a flag indicating if it was newly created.
+        /// This method is eLock-safe: it upgrades to write only if necessary.
         /// </summary>
-        private static DBDictionary EnsureDictionary(Transaction tr, DBDictionary parent, string name)
+        private static (DBDictionary Dict, bool Created) EnsureDictionary(Transaction tr, DBDictionary parent, string name)
         {
-            if (!parent.Contains(name))
+            if (parent.Contains(name))
             {
-                parent.UpgradeOpen();
-                DBDictionary sub = new DBDictionary();
-                parent.SetAt(name, sub);
-                tr.AddNewlyCreatedDBObject(sub, true);
-
-                Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-                Editor ed = doc.Editor;
-                ed.WriteMessage("\nAdded dictionary " + name);
-                return sub;
+                DBDictionary existing = (DBDictionary)tr.GetObject(parent.GetAt(name), OpenMode.ForWrite);
+                return (existing, false);
             }
-            return (DBDictionary)tr.GetObject(parent.GetAt(name), OpenMode.ForWrite);
+
+            if (!parent.IsWriteEnabled)
+                parent.UpgradeOpen();
+
+            DBDictionary sub = new DBDictionary();
+            parent.SetAt(name, sub);
+            tr.AddNewlyCreatedDBObject(sub, true);
+
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            Editor ed = doc.Editor;
+            ed.WriteMessage("\nAdded dictionary " + name);
+
+            return (sub, true);
         }
 
         /// <summary>
-        /// Adds a handle as an Xrecord to a dictionary if it doesn't exist.
+        /// Adds a handle as an Xrecord to a dictionary if it doesn't exist. Automatically upgrades dictionary to write if needed.
         /// </summary>
         private static void AddHandleToDictionary(Transaction tr, DBDictionary dict, string handle)
         {
+            if (!dict.IsWriteEnabled)
+                dict.UpgradeOpen();
+
             if (!dict.Contains(handle))
             {
                 Xrecord xr = new Xrecord
@@ -63,9 +76,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             }
         }
 
-        /// <summary>
-        /// Validates that a string can be a hex handle.
-        /// </summary>
         private static bool IsValidHexHandleString(string s)
         {
             if (string.IsNullOrEmpty(s)) return false;
@@ -78,10 +88,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             return true;
         }
 
-        /// <summary>
-        /// Attempts to parse a handle string to a Handle object.
-        /// Accepts hex or decimal strings.
-        /// </summary>
         private static bool TryParseHandleString(string s, out Handle handle)
         {
             handle = new Handle(0L);
@@ -101,9 +107,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             return false;
         }
 
-        /// <summary>
-        /// Attempts to get an ObjectId from a handle string.
-        /// </summary>
         private static bool TryGetObjectIdFromHandleString(Database db, string handleStr, out ObjectId id)
         {
             id = ObjectId.Null;
@@ -122,7 +125,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         }
 
         // ==========================================================
-        //  QueryNOD ENTRY REPRESENTATION
+        //  QueryNODData ENTRY REPRESENTATION
         // ==========================================================
         public class HandleEntry
         {
@@ -147,9 +150,13 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 try
                 {
                     DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
-                    DBDictionary root = EnsureDictionary(tr, nod, ROOT);
-                    EnsureDictionary(tr, root, KEY_BOUNDARY);
-                    EnsureDictionary(tr, root, KEY_GRADEBEAM);
+
+                    var (root, createdRoot) = EnsureDictionary(tr, nod, ROOT);
+                    if (createdRoot) ed.WriteMessage("\nCreated ROOT dictionary");
+
+                    var (_, _) = EnsureDictionary(tr, root, KEY_BOUNDARY);
+                    var (_, _) = EnsureDictionary(tr, root, KEY_GRADEBEAM);
+
                     tr.Commit();
                     ed.WriteMessage("\nEE_Foundation NOD structure initialized successfully.");
                 }
@@ -235,7 +242,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         }
 
         // ==========================================================
-        //  VIEW QueryNOD CONTENT
+        //  VIEW QueryNODData CONTENT
         // ==========================================================
         [CommandMethod("ViewFoundationNOD")]
         public static void ViewFoundationNOD()
@@ -243,8 +250,18 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             var entries = IterateFoundationNod(cleanStale: false);
             StringBuilder sb = new StringBuilder();
             sb.AppendLine("=== EE_Foundation Contents ===");
-            foreach (var e in entries)
-                sb.AppendLine($"[{e.GroupName}] {e.HandleKey} : {e.Status}");
+
+            foreach (string subDict in KNOWN_SUBDICTIONARIES)
+            {
+                var subEntries = entries.FindAll(e => e.GroupName.Equals(subDict, StringComparison.OrdinalIgnoreCase));
+
+                if (subEntries.Count == 0)
+                    sb.AppendLine($"[{subDict}] No records");
+                else
+                    foreach (var e in subEntries)
+                        sb.AppendLine($"[{e.GroupName}] {e.HandleKey} : {e.Status}");
+            }
+
             MessageBox.Show(sb.ToString(), "EE_Foundation Viewer");
         }
 
@@ -268,7 +285,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         }
 
         // ==========================================================
-        //  REMOVE ENTIRE QueryNOD STRUCTURE
+        //  REMOVE ENTIRE QueryNODData STRUCTURE
         // ==========================================================
         [CommandMethod("EraseFoundationNOD")]
         public static void EraseFoundationNOD()
@@ -296,9 +313,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             }
         }
 
-        /// <summary>
-        /// Erases a specified subdictionary under EE_Foundation.
-        /// </summary>
         public static void EraseFoundationSubDictionary(string subDictionaryName)
         {
             if (string.IsNullOrWhiteSpace(subDictionaryName))
@@ -352,28 +366,42 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
             Database db = doc.Database;
 
+            string drawingFolder = Path.GetDirectoryName(doc.Name);
+            string drawingName = Path.GetFileNameWithoutExtension(doc.Name);
+            string jsonFileName = drawingName + "_FDN_DATA.json";
+            string jsonFilePath = Path.Combine(drawingFolder, jsonFileName);
+
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
                 try
                 {
                     DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-                    if (!nod.Contains(ROOT)) { MessageBox.Show("EE_Foundation dictionary does not exist."); return; }
+
+                    if (!nod.Contains(ROOT))
+                    {
+                        MessageBox.Show("EE_Foundation dictionary does not exist.");
+                        return;
+                    }
 
                     DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForRead);
+
                     Dictionary<string, List<string>> data = new Dictionary<string, List<string>>();
 
                     foreach (DBDictionaryEntry group in root)
                     {
                         DBDictionary sub = (DBDictionary)tr.GetObject(group.Value, OpenMode.ForRead);
                         List<string> handles = new List<string>();
-                        foreach (DBDictionaryEntry entry in sub) handles.Add(entry.Key);
+                        foreach (DBDictionaryEntry entry in sub)
+                            handles.Add(entry.Key);
+
                         data[group.Key] = handles;
                     }
 
                     string json = Newtonsoft.Json.JsonConvert.SerializeObject(data, Newtonsoft.Json.Formatting.Indented);
-                    File.WriteAllText("EE_Foundation.json", json);
+                    File.WriteAllText(jsonFilePath, json);
+
                     tr.Commit();
-                    MessageBox.Show("Exported to EE_Foundation.json");
+                    MessageBox.Show($"Exported EE_Foundation data to:\n{jsonFilePath}");
                 }
                 catch (System.Exception ex)
                 {
@@ -388,27 +416,40 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
             Database db = doc.Database;
 
-            if (!File.Exists("EE_Foundation.json")) { MessageBox.Show("EE_Foundation.json not found."); return; }
+            string drawingFolder = Path.GetDirectoryName(doc.Name);
+            string drawingName = Path.GetFileNameWithoutExtension(doc.Name);
 
-            string json = File.ReadAllText("EE_Foundation.json");
+            string jsonFileName = Path.Combine(drawingFolder, $"{drawingName}_FDN_DATA.json");
+
+            if (!File.Exists(jsonFileName))
+            {
+                MessageBox.Show($"{jsonFileName} not found.");
+                return;
+            }
+
+            string json = File.ReadAllText(jsonFileName);
             var data = Newtonsoft.Json.JsonConvert.DeserializeObject<Dictionary<string, List<string>>>(json);
 
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
                 try
                 {
-                    DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
-                    DBDictionary root = EnsureDictionary(tr, nod, ROOT);
+                    DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+                    var (root, _) = EnsureDictionary(tr, nod, ROOT);
 
                     foreach (var kvp in data)
                     {
-                        DBDictionary sub = EnsureDictionary(tr, root, kvp.Key);
+                        var (sub, _) = EnsureDictionary(tr, root, kvp.Key);
+
                         foreach (string handle in kvp.Value)
+                        {
                             if (IsValidHexHandleString(handle))
                                 AddHandleToDictionary(tr, sub, handle);
+                        }
                     }
+
                     tr.Commit();
-                    MessageBox.Show("EE_Foundation.json imported.");
+                    MessageBox.Show($"{jsonFileName} imported successfully.");
                 }
                 catch (System.Exception ex)
                 {
@@ -432,14 +473,13 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 try
                 {
                     DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
-                    DBDictionary root = EnsureDictionary(tr, nod, ROOT);
-                    DBDictionary boundaryDict = EnsureDictionary(tr, root, KEY_BOUNDARY);
-                    DBDictionary gradebeamDict = EnsureDictionary(tr, root, KEY_GRADEBEAM);
+                    var (root, _) = EnsureDictionary(tr, nod, ROOT);
+                    var (boundaryDict, _) = EnsureDictionary(tr, root, KEY_BOUNDARY);
+                    var (gradebeamDict, _) = EnsureDictionary(tr, root, KEY_GRADEBEAM);
 
                     BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
                     BlockTableRecord ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
-                    // Create FD_BOUNDARY polyline
                     Polyline boundary = new Polyline();
                     boundary.AddVertexAt(0, new Point2d(0, 0), 0, 0, 0);
                     boundary.AddVertexAt(1, new Point2d(100, 0), 0, 0, 0);
@@ -451,7 +491,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                     tr.AddNewlyCreatedDBObject(boundary, true);
                     AddHandleToDictionary(tr, boundaryDict, boundary.Handle.ToString().ToUpperInvariant());
 
-                    // Create 4 FD_GRADEBEAM polylines
                     for (int i = 0; i < 4; i++)
                     {
                         Polyline gb = new Polyline();
@@ -483,7 +522,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             Database db = doc.Database;
             Editor ed = doc.Editor;
 
-            // Prompt for subdictionary
             PromptStringOptions pso_sub = new PromptStringOptions("\nEnter subdictionary to remove from [FD_BOUNDARY/FD_GRADEBEAM]:")
             {
                 AllowSpaces = false
@@ -499,7 +537,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 return;
             }
 
-            // Prompt for handle
             PromptStringOptions pso = new PromptStringOptions("\nEnter handle to remove:")
             {
                 AllowSpaces = false
@@ -538,7 +575,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         }
 
         // ==========================================================
-        //  CLEAN ALL QueryNOD ENTRIES
+        //  CLEAN ALL QueryNODData ENTRIES
         // ==========================================================
         [CommandMethod("NODCleaner")]
         public static void NODCleanAll()
