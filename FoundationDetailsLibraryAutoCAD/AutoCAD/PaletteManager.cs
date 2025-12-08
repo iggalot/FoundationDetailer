@@ -1,5 +1,6 @@
 ﻿using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Runtime;
 using Autodesk.AutoCAD.Windows;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
@@ -16,37 +17,34 @@ namespace FoundationDetailer
         // Call this once at startup
         public static void Initialize()
         {
-            // Create the QueryNODData dictionaries
-            NODManager.InitFoundationNOD();
+            Document document = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            Database db = document.Database;
+            Editor ed = document.Editor;
 
-            // Attach to existing documents
-            foreach (Document doc in Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager)
-                AttachDocumentEvents(doc);
+            try
+            {
+                // Create the QueryNOD dictionaries
+                using (Transaction tr = db.TransactionManager.StartTransaction())
+                {
+                    NODManager.InitFoundationNOD(tr);
+                    tr.Commit();
+                }
 
-            // Listen for new documents
-            Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.DocumentCreated -= DocManager_DocumentCreated;
-            Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.DocumentCreated += DocManager_DocumentCreated;
+                // Attach to existing documents
+                foreach (Document doc in Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager)
+                    AttachDocumentEvents(doc);
 
-            // Create palette set
-            CreatePalette();
+                // Listen for new documents
+                Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.DocumentCreated -= DocManager_DocumentCreated;
+                Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.DocumentCreated += DocManager_DocumentCreated;
+
+                // Create palette set
+                CreatePalette();
+            } catch
+            {
+                ed.WriteMessage("\nError initializing PalleteManager.");
+            }
         }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
         private static void DocManager_DocumentCreated(object sender, DocumentCollectionEventArgs e)
         {
