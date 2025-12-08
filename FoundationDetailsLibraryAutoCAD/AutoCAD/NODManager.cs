@@ -1,6 +1,7 @@
 ﻿using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
+using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Runtime;
 using System;
 using System.Collections.Generic;
@@ -15,50 +16,32 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 {
     public class NODManager
     {
-        private static readonly string ROOT = "EE_Foundation";
-        private static readonly string KEY_BOUNDARY = "FD_BOUNDARY";
-        private static readonly string KEY_GRADEBEAM = "FD_GRADEBEAM";
+        // ==========================================================
+        //  CONSTANTS
+        // ==========================================================
+        private const string ROOT = "EE_Foundation";
+        private const string KEY_BOUNDARY = "FD_BOUNDARY";
+        private const string KEY_GRADEBEAM = "FD_GRADEBEAM";
 
         // ==========================================================
-        //  1.  HELPER UTILITIES
+        //  HELPER UTILITIES
         // ==========================================================
 
-        private static bool IsValidHexHandleString(string s)
+        /// <summary>
+        /// Executes an action inside a transaction and commits automatically.
+        /// </summary>
+        private static void ExecuteTransaction(Database db, Action<Transaction> action)
         {
-            if (string.IsNullOrEmpty(s))
-                return false;
-
-            foreach (char c in s)
+            using (var tr = db.TransactionManager.StartTransaction())
             {
-                bool digit = (c >= '0' && c <= '9');
-                bool hex = (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f');
-
-                if (!digit && !hex)
-                    return false;
-            }
-            return true;
-        }
-
-        private static bool TryGetObjectIdFromHandleString(Database db, string handleStr, out ObjectId id)
-        {
-            id = ObjectId.Null;
-
-            if (!IsValidHexHandleString(handleStr))
-                return false;
-
-            try
-            {
-                long value = Convert.ToInt64(handleStr, 16);
-                Handle h = new Handle(value);
-                id = db.GetObjectId(false, h, 0);
-                return true;
-            }
-            catch
-            {
-                return false;
+                action(tr);
+                tr.Commit();
             }
         }
 
+        /// <summary>
+        /// Ensures a subdictionary exists, creates if missing.
+        /// </summary>
         private static DBDictionary EnsureDictionary(Transaction tr, DBDictionary parent, string name)
         {
             if (!parent.Contains(name))
@@ -72,672 +55,72 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             return (DBDictionary)tr.GetObject(parent.GetAt(name), OpenMode.ForWrite);
         }
 
-        // Placeholder – users define how entities belong in groups
-        private static bool ShouldBelongToKey(Entity ent, string key)
+        /// <summary>
+        /// Adds a handle as an Xrecord to a dictionary if it doesn't exist.
+        /// </summary>
+        private static void AddHandleToDictionary(Transaction tr, DBDictionary dict, string handle)
         {
-            // TODO: Replace this with your real logic.
-            // For now: nothing automatically qualifies.
+            if (!dict.Contains(handle))
+            {
+                Xrecord xr = new Xrecord
+                {
+                    Data = new ResultBuffer(new TypedValue((int)DxfCode.Handle, handle))
+                };
+                dict.SetAt(handle, xr);
+                tr.AddNewlyCreatedDBObject(xr, true);
+            }
+        }
+
+        /// <summary>
+        /// Validates that a string can be a hex handle.
+        /// </summary>
+        private static bool IsValidHexHandleString(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return false;
+            foreach (char c in s)
+            {
+                bool digit = c >= '0' && c <= '9';
+                bool hex = (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f');
+                if (!digit && !hex) return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Attempts to parse a handle string to a Handle object.
+        /// Accepts hex or decimal strings.
+        /// </summary>
+        private static bool TryParseHandleString(string s, out Handle handle)
+        {
+            handle = new Handle(0L);
+            if (string.IsNullOrWhiteSpace(s)) return false;
+            s = s.Trim();
+
+            if (s.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+                s = s.Substring(2);
+
+            if (long.TryParse(s, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out long value) ||
+                long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out value))
+            {
+                handle = new Handle(value);
+                return true;
+            }
+
             return false;
         }
 
-
-        // ==========================================================
-        //  2.  COMMAND: INITIALIZE FOUNDATION STRUCTURE
-        // ==========================================================
-
-        [CommandMethod("InitFoundationNOD")]
-        public static void InitFoundationNOD()
-        {
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            Database db = doc.Database;
-
-            using (Transaction tr = db.TransactionManager.StartTransaction())
-            {
-                DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
-
-                DBDictionary root = EnsureDictionary(tr, nod, ROOT);
-                EnsureDictionary(tr, root, KEY_BOUNDARY);
-                EnsureDictionary(tr, root, KEY_GRADEBEAM);
-
-                tr.Commit();
-            }
-
-            doc.Editor.WriteMessage("\nEE_Foundation NOD structure initialized.");
-        }
-
-
-        // ==========================================================
-        //  3.  COMMAND: SYNC FOUNDATION NOD
-        // ==========================================================
-
-        [CommandMethod("SyncFoundationNOD")]
-        public static void SyncFoundationNOD()
-        {
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            Database db = doc.Database;
-
-            int removed = 0;
-            int added = 0;
-            int normalized = 0;
-
-            using (Transaction tr = db.TransactionManager.StartTransaction())
-            {
-                DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-
-                if (!nod.Contains(ROOT))
-                {
-                    MessageBox.Show("EE_Foundation dictionary does not exist. Run InitFoundationNOD first.");
-                    return;
-                }
-
-                DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
-
-                string[] subkeys = { KEY_BOUNDARY, KEY_GRADEBEAM };
-
-                // Get ModelSpace
-                BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-                BlockTableRecord ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
-
-                foreach (string key in subkeys)
-                {
-                    if (!root.Contains(key))
-                        continue;
-
-                    DBDictionary sub = (DBDictionary)tr.GetObject(root.GetAt(key), OpenMode.ForWrite);
-                    List<string> toRemove = new List<string>();
-
-                    // STEP 1 — Clean existing entries
-                    foreach (DBDictionaryEntry entry in sub)
-                    {
-                        string handleStr = entry.Key;
-                        ObjectId id;
-
-                        // Remove malformed handles
-                        if (!IsValidHexHandleString(handleStr))
-                        {
-                            toRemove.Add(handleStr);
-                            continue;
-                        }
-
-                        // Remove broken resolver
-                        if (!TryGetObjectIdFromHandleString(db, handleStr, out id))
-                        {
-                            toRemove.Add(handleStr);
-                            continue;
-                        }
-
-                        // Remove missing objects
-                        Entity ent = null;
-                        try { ent = tr.GetObject(id, OpenMode.ForRead) as Entity; } catch { }
-
-                        if (ent == null)
-                        {
-                            toRemove.Add(handleStr);
-                            continue;
-                        }
-
-                        // Normalize to uppercase
-                        // Normalize to uppercase
-                        string normalizedKey = id.Handle.ToString().ToUpperInvariant();
-                        if (normalizedKey != handleStr)
-                        {
-                            // Get original record
-                            Xrecord xr = (Xrecord)tr.GetObject(sub.GetAt(handleStr), OpenMode.ForWrite);
-
-                            // Add under normalized key
-                            sub.SetAt(normalizedKey, xr);
-
-                            // Remove old key
-                            sub.Remove(handleStr);
-
-                            normalized++; // <- increment your counter variable
-                        }
-
-                    }
-
-                    // Remove bad entries
-                    foreach (string keyToDelete in toRemove)
-                    {
-                        Xrecord xr = (Xrecord)tr.GetObject(sub.GetAt(keyToDelete), OpenMode.ForWrite);
-                        xr.Erase();
-                        removed++;
-                    }
-
-                    // STEP 2 — Add missing items (based on user logic)
-                    foreach (ObjectId id in ms)
-                    {
-                        Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
-                        if (ent == null) continue;
-
-                        if (!ShouldBelongToKey(ent, key))
-                            continue;
-
-                        string handleKey = id.Handle.ToString().ToUpperInvariant();
-
-                        if (!sub.Contains(handleKey))
-                        {
-                            Xrecord xr = new Xrecord();
-                            xr.Data = new ResultBuffer(new TypedValue((int)DxfCode.Handle, handleKey));
-                            sub.SetAt(handleKey, xr);
-                            tr.AddNewlyCreatedDBObject(xr, true);
-                            added++;
-                        }
-                    }
-                }
-
-                tr.Commit();
-            }
-
-            MessageBox.Show(
-                $"Sync Complete\nRemoved: {removed}\nAdded: {added}\nNormalized: {normalized}",
-                "EE_Foundation Sync"
-            );
-        }
-
-
-        // ==========================================================
-        //  4.  VIEWER COMMAND
-        // ==========================================================
-
-        [CommandMethod("ViewFoundationNOD")]
-        public static void ViewFoundationNOD()
-        {
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            Database db = doc.Database;
-
-            using (Transaction tr = db.TransactionManager.StartTransaction())
-            {
-                DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-
-                if (!nod.Contains(ROOT))
-                {
-                    MessageBox.Show("EE_Foundation dictionary does not exist.");
-                    return;
-                }
-
-                DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForRead);
-
-                StringBuilder sb = new StringBuilder();
-                sb.AppendLine("=== EE_Foundation Contents ===");
-
-                foreach (DBDictionaryEntry group in root)
-                {
-                    bool record_found = true;
-                    sb.AppendLine($"\n[{group.Key}]");
-                    DBDictionary sub = (DBDictionary)tr.GetObject(group.Value, OpenMode.ForRead);
-
-                    // First, collect all keys (handles) to check
-                    List<string> keys = new List<string>();
-                    foreach (DBDictionaryEntry entry in sub)
-                        keys.Add(entry.Key);
-
-                    // Now iterate over the copy
-                    foreach (string handleStr in keys)
-                    {
-
-                        ObjectId id;
-                        if (!TryGetObjectIdFromHandleString(db, handleStr, out id))
-                        {
-                            // Remove this handle from the dictionary safely
-                            sub.UpgradeOpen();  // Open dictionary for write
-                            sub.Remove(handleStr);
-                            //sb.AppendLine("INVALID HANDLE");
-                            continue;
-                        }
-
-                        try
-                        {
-                            Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
-                            if (ent == null || ent.IsErased)
-                            {
-                                //sb.AppendLine("Missing object");
-
-                                // Remove this handle from the dictionary safely
-                                sub.UpgradeOpen();  // Open dictionary for write
-                                sub.Remove(handleStr);
-                            }
-                            else
-                            {
-                                sb.Append($"  {handleStr} : ");
-                                sb.AppendLine(ent.GetType().Name);
-                            }
-                        }
-                        catch
-                        {
-                            sb.AppendLine("Error reading object");
-                        }
-                    }
-
-                }
-
-                MessageBox.Show(sb.ToString(), "EE_Foundation Viewer");
-            }
-        }
-
-
-        // ==========================================================
-        //  5.  CLEANUP COMMAND (remove entire structure)
-        // ==========================================================
-
-        [CommandMethod("EraseFoundationNOD")]
-        public static void EraseFoundationNOD()
-        {
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            Database db = doc.Database;
-
-            using (Transaction tr = db.TransactionManager.StartTransaction())
-            {
-                DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
-
-                if (nod.Contains(ROOT))
-                {
-                    DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
-                    root.Erase();
-                }
-
-                tr.Commit();
-            }
-
-            MessageBox.Show("EE_Foundation dictionary erased.");
-        }
-
-
-        // ==========================================================
-        //  6.  JSON EXPORT
-        // ==========================================================
-
-        [CommandMethod("ExportFoundationNOD")]
-        public static void ExportFoundationNOD()
-        {
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            Database db = doc.Database;
-
-            using (Transaction tr = db.TransactionManager.StartTransaction())
-            {
-                DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-
-                if (!nod.Contains(ROOT))
-                {
-                    MessageBox.Show("EE_Foundation dictionary does not exist.");
-                    return;
-                }
-
-                DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForRead);
-
-                Dictionary<string, List<string>> data =
-                    new Dictionary<string, List<string>>();
-
-                foreach (DBDictionaryEntry group in root)
-                {
-                    DBDictionary sub = (DBDictionary)tr.GetObject(group.Value, OpenMode.ForRead);
-                    List<string> handles = new List<string>();
-                    foreach (DBDictionaryEntry entry in sub)
-                    {
-                        handles.Add(entry.Key);
-                    }
-
-                    data[group.Key] = handles;
-                }
-
-                string json = Newtonsoft.Json.JsonConvert.SerializeObject(
-                    data, Newtonsoft.Json.Formatting.Indented);
-
-                File.WriteAllText("EE_Foundation.json", json);
-
-                MessageBox.Show("Exported to EE_Foundation.json");
-            }
-        }
-
-
-        // ==========================================================
-        //  7.  JSON IMPORT
-        // ==========================================================
-
-        [CommandMethod("ImportFoundationNOD")]
-        public static void ImportFoundationNOD()
-        {
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            Database db = doc.Database;
-
-            if (!File.Exists("EE_Foundation.json"))
-            {
-                MessageBox.Show("EE_Foundation.json not found.");
-                return;
-            }
-
-            string json = File.ReadAllText("EE_Foundation.json");
-
-            var data = Newtonsoft.Json.JsonConvert.DeserializeObject<
-                Dictionary<string, List<string>>>(json);
-
-            using (Transaction tr = db.TransactionManager.StartTransaction())
-            {
-                DBDictionary nod =
-                    (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
-
-                DBDictionary root = EnsureDictionary(tr, nod, ROOT);
-
-                foreach (var kvp in data)
-                {
-                    DBDictionary sub = EnsureDictionary(tr, root, kvp.Key);
-
-                    foreach (string handle in kvp.Value)
-                    {
-                        if (!IsValidHexHandleString(handle))
-                            continue;
-
-                        if (!sub.Contains(handle))
-                        {
-                            Xrecord xr = new Xrecord();
-                            xr.Data = new ResultBuffer(new TypedValue((int)DxfCode.Handle, handle));
-                            sub.SetAt(handle, xr);
-                            tr.AddNewlyCreatedDBObject(xr, true);
-                        }
-                    }
-                }
-
-                tr.Commit();
-            }
-
-            MessageBox.Show("EE_Foundation.json imported.");
-        }
-
-        [CommandMethod("CreateSampleFoundationForNOD")]
-        public void CreateSampleFoundationForNOD()
-        {
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            Database db = doc.Database;
-            Editor ed = doc.Editor;
-
-            using (Transaction tr = db.TransactionManager.StartTransaction())
-            {
-                // Get the Named Objects Dictionary
-                DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
-                DBDictionary root = NODManager.EnsureDictionary(tr, nod, ROOT);
-
-                // Ensure FD_BOUNDARY and FD_GRADEBEAM dictionaries
-                DBDictionary boundaryDict = NODManager.EnsureDictionary(tr, root, KEY_BOUNDARY);
-                DBDictionary gradebeamDict = NODManager.EnsureDictionary(tr, root, KEY_GRADEBEAM);
-
-                // Get ModelSpace
-                BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-                BlockTableRecord ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
-
-                // ----- 1. Create FD_BOUNDARY polyline -----
-                Polyline boundary = new Polyline();
-                boundary.AddVertexAt(0, new Autodesk.AutoCAD.Geometry.Point2d(0, 0), 0, 0, 0);
-                boundary.AddVertexAt(1, new Autodesk.AutoCAD.Geometry.Point2d(100, 0), 0, 0, 0);
-                boundary.AddVertexAt(2, new Autodesk.AutoCAD.Geometry.Point2d(100, 50), 0, 0, 0);
-                boundary.AddVertexAt(3, new Autodesk.AutoCAD.Geometry.Point2d(0, 50), 0, 0, 0);
-                boundary.Closed = true;
-
-                ms.AppendEntity(boundary);
-                tr.AddNewlyCreatedDBObject(boundary, true);
-
-                // Register in FD_BOUNDARY dictionary
-                string boundaryKey = boundary.Handle.ToString().ToUpperInvariant();
-                if (!boundaryDict.Contains(boundaryKey))
-                {
-                    Xrecord xr = new Xrecord();
-                    xr.Data = new ResultBuffer(new TypedValue((int)DxfCode.Handle, boundaryKey));
-                    boundaryDict.SetAt(boundaryKey, xr);
-                    tr.AddNewlyCreatedDBObject(xr, true);
-                }
-
-                // ----- 2. Create 3-4 FD_GRADEBEAM polylines -----
-                for (int i = 0; i < 4; i++)
-                {
-                    Polyline gradebeam = new Polyline();
-                    int y = 10 + i * 10;
-
-                    gradebeam.AddVertexAt(0, new Autodesk.AutoCAD.Geometry.Point2d(10, y), 0, 0, 0);
-                    gradebeam.AddVertexAt(1, new Autodesk.AutoCAD.Geometry.Point2d(90, y), 0, 0, 0);
-
-                    ms.AppendEntity(gradebeam);
-                    tr.AddNewlyCreatedDBObject(gradebeam, true);
-
-                    // Register in FD_GRADEBEAM dictionary
-                    string gbKey = gradebeam.Handle.ToString().ToUpperInvariant();
-                    if (!gradebeamDict.Contains(gbKey))
-                    {
-                        Xrecord xr = new Xrecord();
-                        xr.Data = new ResultBuffer(new TypedValue((int)DxfCode.Handle, gbKey));
-                        gradebeamDict.SetAt(gbKey, xr);
-                        tr.AddNewlyCreatedDBObject(xr, true);
-                    }
-                }
-
-                tr.Commit();
-            }
-
-            ed.WriteMessage("\nSample polylines created for FD_BOUNDARY and FD_GRADEBEAM.");
-        }
-
-        [CommandMethod("RemoveNODRecord")]
-        public void RemoveNODRecord()
-        {
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            Database db = doc.Database;
-            Editor ed = doc.Editor;
-
-            // Prompt for subdictionary
-            PromptStringOptions pso_sub = new PromptStringOptions(
-                "\nEnter subdictionary to remove from [FD_BOUNDARY/FD_GRADEBEAM]:");
-            pso_sub.AllowSpaces = false;
-
-            PromptResult resSub = ed.GetString(pso_sub);
-            if (resSub.Status != PromptStatus.OK) return;
-
-            string subDictName = resSub.StringResult.Trim().ToUpperInvariant();
-
-            // Validate input
-            if (subDictName != KEY_BOUNDARY && subDictName != KEY_GRADEBEAM)
-            {
-                ed.WriteMessage("\nInvalid subdictionary. Must be FD_BOUNDARY or FD_GRADEBEAM.");
-                return;
-            }
-
-            // Prompt for handle
-            PromptStringOptions pso = new PromptStringOptions($"\nEnter handle of the object to remove from {subDictName}:");
-            pso.AllowSpaces = false;
-            PromptResult resHandle = ed.GetString(pso);
-            if (resHandle.Status != PromptStatus.OK) return;
-
-            string handleStr = resHandle.StringResult.ToUpperInvariant();
-
-            if (!IsValidHexHandleString(handleStr))
-            {
-                ed.WriteMessage("\nInvalid handle string.");
-                return;
-            }
-
-            using (Transaction tr = db.TransactionManager.StartTransaction())
-            {
-                DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
-
-                if (!nod.Contains(ROOT))
-                {
-                    ed.WriteMessage("\nEE_Foundation dictionary does not exist.");
-                    return;
-                }
-
-                DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
-
-                if (!root.Contains(subDictName))
-                {
-                    ed.WriteMessage($"\nSubdictionary {subDictName} does not exist.");
-                    return;
-                }
-
-                DBDictionary subDict = (DBDictionary)tr.GetObject(root.GetAt(subDictName), OpenMode.ForWrite);
-
-                if (!subDict.Contains(handleStr))
-                {
-                    ed.WriteMessage($"\nHandle {handleStr} not found in {subDictName}.");
-                    return;
-                }
-
-                // Erase the Xrecord
-                Xrecord xr = (Xrecord)tr.GetObject(subDict.GetAt(handleStr), OpenMode.ForWrite);
-                xr.Erase();
-
-                ed.WriteMessage($"\nHandle {handleStr} removed from {subDictName}.");
-
-                tr.Commit();
-            }
-        }
-
         /// <summary>
-        /// Cleans all subdictionaries under the root EE_Foundation dictionary.
-        /// Removes any Xrecords whose handles no longer correspond to valid objects.
-        /// Returns a map of subdictionary → remaining valid ObjectIds.
+        /// Attempts to get an ObjectId from a handle string.
         /// </summary>
-        /// <summary>
-        /// Cleans handle references stored under the EE_Foundation root dictionary's sub-dictionaries.
-        /// Removes handle entries that no longer exist in the drawing.
-        /// </summary>
-        /// <param name="doc">Current document</param>
-        /// <param name="subDictionaryNames">Names of subdictionaries under the root to check, e.g. "FD_BOUNDARY","FD_GRADEBEAM"</param>
-        [CommandMethod("NODCleaner")]
-        public static void CleanHandlesInNod()
+        private static bool TryGetObjectIdFromHandleString(Database db, string handleStr, out ObjectId id)
         {
-            // Get the active document
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            if (doc == null)
-                return;
+            id = ObjectId.Null;
+            if (string.IsNullOrWhiteSpace(handleStr)) return false;
+            if (!TryParseHandleString(handleStr, out Handle h)) return false;
 
-            // List of subdictionaries to clean
-            string[] subDictionaries = { "FD_BOUNDARY", "FD_GRADEBEAM" };
-
-            const string ROOT = "EE_Foundation";
-            Database db = doc.Database;
-            Editor ed = doc.Editor;
-
-            using (Transaction tr = db.TransactionManager.StartTransaction())
-            {
-                try
-                {
-                    DBDictionary nod = tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead) as DBDictionary;
-                    if (nod == null)
-                    {
-                        ed.WriteMessage("\nCould not open NamedObjectsDictionary.");
-                        tr.Commit();
-                        return;
-                    }
-
-                    if (!nod.Contains(ROOT))
-                    {
-                        ed.WriteMessage("\nRoot dictionary not found: " + ROOT);
-                        tr.Commit();
-                        return;
-                    }
-
-                    DBDictionary rootDict = tr.GetObject(nod.GetAt(ROOT), OpenMode.ForRead) as DBDictionary;
-                    if (rootDict == null)
-                    {
-                        tr.Commit();
-                        return;
-                    }
-
-                    foreach (string subName in subDictionaries)
-                    {
-                        if (!rootDict.Contains(subName))
-                        {
-                            ed.WriteMessage("\nSubdictionary not found: " + subName);
-                            continue;
-                        }
-
-                        DBDictionary subDict = tr.GetObject(rootDict.GetAt(subName), OpenMode.ForRead) as DBDictionary;
-                        if (subDict == null)
-                            continue;
-
-                        List<string> removedMessages = new List<string>();
-                        List<string> entryKeys = new List<string>();
-
-                        foreach (DBDictionaryEntry entry in subDict)
-                            entryKeys.Add(entry.Key);
-
-                        foreach (string key in entryKeys)
-                        {
-                            ObjectId xrId = subDict.GetAt(key);
-                            Xrecord xrec = tr.GetObject(xrId, OpenMode.ForRead) as Xrecord;
-                            if (xrec == null || xrec.Data == null)
-                                continue;
-
-                            ResultBuffer rb = xrec.Data;
-                            TypedValue[] tvs = rb.AsArray();
-
-                            List<TypedValue> kept = new List<TypedValue>();
-                            List<string> removedHandles = new List<string>();
-
-                            foreach (TypedValue tv in tvs)
-                            {
-                                bool keep = true;
-
-                                if ((tv.TypeCode == 1000 || tv.TypeCode == 1005) && tv.Value is string s)
-                                {
-                                    Handle h;
-                                    if (TryParseHandleString(s, out h))
-                                    {
-                                        if (!ObjectExists(db, h))
-                                        {
-                                            keep = false;
-                                            removedHandles.Add(s);
-                                        }
-                                    }
-                                }
-
-                                if (keep) kept.Add(tv);
-                            }
-
-                            if (removedHandles.Count > 0)
-                            {
-                                xrec.UpgradeOpen();
-
-                                if (kept.Count > 0)
-                                {
-                                    xrec.Data = new ResultBuffer(kept.ToArray());
-                                }
-                                else
-                                {
-                                    subDict.UpgradeOpen();
-                                    subDict.Remove(key);
-                                }
-
-                                removedMessages.Add("Entry '" + key + "' removed handles: " +
-                                                    string.Join(",", removedHandles.ToArray()));
-                            }
-                        }
-
-                        if (removedMessages.Count > 0)
-                        {
-                            ed.WriteMessage("\nCleaned '" + subName + "':");
-                            foreach (var msg in removedMessages)
-                                ed.WriteMessage("\n  " + msg);
-                        }
-                        else
-                        {
-                            ed.WriteMessage("\nNo stale handles in '" + subName + "'.");
-                        }
-                    }
-
-                    tr.Commit();
-                }
-                catch (System.Exception ex)
-                {
-                    ed.WriteMessage("\nError: " + ex.Message);
-                }
-            }
-        }
-
-        private static bool ObjectExists(Database db, Handle h)
-        {
             try
             {
-                ObjectId id = db.GetObjectId(false, h, 0);
-                if (id.IsNull || id.IsErased)
-                    return false;
-
+                id = db.GetObjectId(false, h, 0);
                 return true;
             }
             catch
@@ -746,74 +129,329 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             }
         }
 
-        private static bool TryParseHandleString(string s, out Handle handle)
+        // ==========================================================
+        //  NOD ENTRY REPRESENTATION
+        // ==========================================================
+        public class HandleEntry
         {
-            //Default to a zero handle
-            handle = new Handle(0L);
-
-            if (string.IsNullOrWhiteSpace(s))
-                return false;
-
-            s = s.Trim();
-
-            long value;
-
-            // Remove "0x" prefix if present
-            if (s.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
-                s = s.Substring(2);
-
-            // Try hex first
-            if (long.TryParse(s, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out value))
-            {
-                handle = new Handle(value);
-                return true;
-            }
-
-            // Try decimal (your code may have stored decimal historically)
-            if (long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out value))
-            {
-                handle = new Handle(value);
-                return true;
-            }
-
-            return false;
+            public string GroupName;
+            public string HandleKey;
+            public ObjectId Id;
+            public string Status; // "Valid", "Missing", "Invalid", "Error"
         }
 
-        public static void RemoveStaleHandlesFromDictionary(DBDictionary dict, Transaction tr)
+        // ==========================================================
+        //  COMMAND: INITIALIZE FOUNDATION STRUCTURE
+        // ==========================================================
+        [CommandMethod("InitFoundationNOD")]
+        public static void InitFoundationNOD()
         {
-            // Collect keys to remove — cannot modify dictionary while iterating
-            List<string> keysToRemove = new List<string>();
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            Database db = doc.Database;
 
-            foreach (DBDictionaryEntry entry in dict)
+            ExecuteTransaction(db, tr =>
             {
-                ObjectId id = entry.Value;
+                DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+                DBDictionary root = EnsureDictionary(tr, nod, ROOT);
+                EnsureDictionary(tr, root, KEY_BOUNDARY);
+                EnsureDictionary(tr, root, KEY_GRADEBEAM);
+            });
 
-                // Check if the object exists
-                Entity ent = null;
-                try
-                {
-                    ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
-                }
-                catch
-                {
-                    ent = null;
-                }
-
-                if (ent == null || ent.IsErased)
-                {
-                    keysToRemove.Add(entry.Key);
-                }
-            }
-
-            // Remove stale entries
-            if (keysToRemove.Count > 0)
-                dict.UpgradeOpen(); // Open for write
-
-            foreach (string key in keysToRemove)
-            {
-                dict.Remove(key);
-            }
+            doc.Editor.WriteMessage("\nEE_Foundation NOD structure initialized.");
         }
 
+        // ==========================================================
+        //  ITERATE AND CLEAN HANDLES
+        // ==========================================================
+        public static List<HandleEntry> IterateFoundationNod(bool cleanStale = false)
+        {
+            List<HandleEntry> results = new List<HandleEntry>();
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            Database db = doc.Database;
+
+            ExecuteTransaction(db, tr =>
+            {
+                DBDictionary nod = tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead) as DBDictionary;
+                if (nod == null || !nod.Contains(ROOT)) return;
+
+                DBDictionary root = tr.GetObject(nod.GetAt(ROOT), OpenMode.ForRead) as DBDictionary;
+
+                foreach (DBDictionaryEntry group in root)
+                {
+                    DBDictionary sub = tr.GetObject(group.Value, OpenMode.ForRead) as DBDictionary;
+                    if (sub == null) continue;
+
+                    List<string> keys = new List<string>();
+                    foreach (DBDictionaryEntry entry in sub) keys.Add(entry.Key);
+
+                    List<string> keysToRemove = new List<string>();
+
+                    foreach (string handleStr in keys)
+                    {
+                        ObjectId id;
+                        var entryResult = new HandleEntry { GroupName = group.Key, HandleKey = handleStr };
+
+                        if (!TryGetObjectIdFromHandleString(db, handleStr, out id))
+                        {
+                            entryResult.Status = "Invalid";
+                            keysToRemove.Add(handleStr);
+                        }
+                        else
+                        {
+                            try
+                            {
+                                Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+                                entryResult.Status = (ent == null || ent.IsErased) ? "Missing" : "Valid";
+                                entryResult.Id = id;
+                                if (entryResult.Status != "Valid") keysToRemove.Add(handleStr);
+                            }
+                            catch
+                            {
+                                entryResult.Status = "Error";
+                                keysToRemove.Add(handleStr);
+                            }
+                        }
+
+                        results.Add(entryResult);
+                    }
+
+                    if (cleanStale && keysToRemove.Count > 0)
+                    {
+                        sub.UpgradeOpen();
+                        foreach (string key in keysToRemove) sub.Remove(key);
+                    }
+                }
+            });
+
+            return results;
+        }
+
+        // ==========================================================
+        //  VIEW NOD CONTENT
+        // ==========================================================
+        [CommandMethod("ViewFoundationNOD")]
+        public static void ViewFoundationNOD()
+        {
+            var entries = IterateFoundationNod(cleanStale: false);
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("=== EE_Foundation Contents ===");
+            foreach (var e in entries)
+                sb.AppendLine($"[{e.GroupName}] {e.HandleKey} : {e.Status}");
+            MessageBox.Show(sb.ToString(), "EE_Foundation Viewer");
+        }
+
+        // ==========================================================
+        //  CLEAN STALE HANDLES
+        // ==========================================================
+        [CommandMethod("CleanFoundationNOD")]
+        public static void CleanFoundationNOD()
+        {
+            var entries = IterateFoundationNod(cleanStale: true);
+            List<string> removed = new List<string>();
+            foreach (var e in entries)
+                if (e.Status == "Missing" || e.Status == "Invalid" || e.Status == "Error")
+                    removed.Add($"[{e.GroupName}] {e.HandleKey}");
+
+            string msg = removed.Count > 0 ?
+                "Removed stale handles:\n" + string.Join("\n", removed) :
+                "No stale handles found.";
+
+            MessageBox.Show(msg, "CleanFoundationNOD");
+        }
+
+        // ==========================================================
+        //  REMOVE ENTIRE NOD STRUCTURE
+        // ==========================================================
+        [CommandMethod("EraseFoundationNOD")]
+        public static void EraseFoundationNOD()
+        {
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            Database db = doc.Database;
+
+            ExecuteTransaction(db, tr =>
+            {
+                DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+                if (nod.Contains(ROOT))
+                {
+                    DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
+                    root.Erase();
+                }
+            });
+
+            MessageBox.Show("EE_Foundation dictionary erased.");
+        }
+
+        // ==========================================================
+        //  EXPORT / IMPORT JSON
+        // ==========================================================
+        [CommandMethod("ExportFoundationNOD")]
+        public static void ExportFoundationNOD()
+        {
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            Database db = doc.Database;
+
+            ExecuteTransaction(db, tr =>
+            {
+                DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+                if (!nod.Contains(ROOT)) { MessageBox.Show("EE_Foundation dictionary does not exist."); return; }
+
+                DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForRead);
+                Dictionary<string, List<string>> data = new Dictionary<string, List<string>>();
+
+                foreach (DBDictionaryEntry group in root)
+                {
+                    DBDictionary sub = (DBDictionary)tr.GetObject(group.Value, OpenMode.ForRead);
+                    List<string> handles = new List<string>();
+                    foreach (DBDictionaryEntry entry in sub) handles.Add(entry.Key);
+                    data[group.Key] = handles;
+                }
+
+                string json = Newtonsoft.Json.JsonConvert.SerializeObject(data, Newtonsoft.Json.Formatting.Indented);
+                File.WriteAllText("EE_Foundation.json", json);
+                MessageBox.Show("Exported to EE_Foundation.json");
+            });
+        }
+
+        [CommandMethod("ImportFoundationNOD")]
+        public static void ImportFoundationNOD()
+        {
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            Database db = doc.Database;
+
+            if (!File.Exists("EE_Foundation.json")) { MessageBox.Show("EE_Foundation.json not found."); return; }
+
+            string json = File.ReadAllText("EE_Foundation.json");
+            var data = Newtonsoft.Json.JsonConvert.DeserializeObject<Dictionary<string, List<string>>>(json);
+
+            ExecuteTransaction(db, tr =>
+            {
+                DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+                DBDictionary root = EnsureDictionary(tr, nod, ROOT);
+
+                foreach (var kvp in data)
+                {
+                    DBDictionary sub = EnsureDictionary(tr, root, kvp.Key);
+                    foreach (string handle in kvp.Value)
+                        if (IsValidHexHandleString(handle))
+                            AddHandleToDictionary(tr, sub, handle);
+                }
+            });
+
+            MessageBox.Show("EE_Foundation.json imported.");
+        }
+
+        // ==========================================================
+        //  SAMPLE DATA CREATION
+        // ==========================================================
+        [CommandMethod("CreateSampleFoundationForNOD")]
+        public void CreateSampleFoundationForNOD()
+        {
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            Database db = doc.Database;
+            Editor ed = doc.Editor;
+
+            ExecuteTransaction(db, tr =>
+            {
+                DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+                DBDictionary root = EnsureDictionary(tr, nod, ROOT);
+                DBDictionary boundaryDict = EnsureDictionary(tr, root, KEY_BOUNDARY);
+                DBDictionary gradebeamDict = EnsureDictionary(tr, root, KEY_GRADEBEAM);
+
+                BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+                BlockTableRecord ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+
+                // Create FD_BOUNDARY polyline
+                Polyline boundary = new Polyline();
+                boundary.AddVertexAt(0, new Point2d(0, 0), 0, 0, 0);
+                boundary.AddVertexAt(1, new Point2d(100, 0), 0, 0, 0);
+                boundary.AddVertexAt(2, new Point2d(100, 50), 0, 0, 0);
+                boundary.AddVertexAt(3, new Point2d(0, 50), 0, 0, 0);
+                boundary.Closed = true;
+
+                ms.AppendEntity(boundary);
+                tr.AddNewlyCreatedDBObject(boundary, true);
+                AddHandleToDictionary(tr, boundaryDict, boundary.Handle.ToString().ToUpperInvariant());
+
+                // Create 4 FD_GRADEBEAM polylines
+                for (int i = 0; i < 4; i++)
+                {
+                    Polyline gb = new Polyline();
+                    int y = 10 + i * 10;
+                    gb.AddVertexAt(0, new Point2d(10, y), 0, 0, 0);
+                    gb.AddVertexAt(1, new Point2d(90, y), 0, 0, 0);
+
+                    ms.AppendEntity(gb);
+                    tr.AddNewlyCreatedDBObject(gb, true);
+                    AddHandleToDictionary(tr, gradebeamDict, gb.Handle.ToString().ToUpperInvariant());
+                }
+            });
+
+            ed.WriteMessage("\nSample polylines created for FD_BOUNDARY and FD_GRADEBEAM.");
+        }
+
+        // ==========================================================
+        //  REMOVE SPECIFIC HANDLE
+        // ==========================================================
+        [CommandMethod("RemoveNODRecord")]
+        public void RemoveNODRecord()
+        {
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            Database db = doc.Database;
+            Editor ed = doc.Editor;
+
+            // Prompt for subdictionary
+            PromptStringOptions pso_sub = new PromptStringOptions("\nEnter subdictionary to remove from [FD_BOUNDARY/FD_GRADEBEAM]:")
+            {
+                AllowSpaces = false
+            };
+
+            PromptResult resSub = ed.GetString(pso_sub);
+            if (resSub.Status != PromptStatus.OK) return;
+
+            string subDictName = resSub.StringResult.Trim().ToUpperInvariant();
+            if (subDictName != KEY_BOUNDARY && subDictName != KEY_GRADEBEAM)
+            {
+                ed.WriteMessage("\nInvalid subdictionary. Must be FD_BOUNDARY or FD_GRADEBEAM.");
+                return;
+            }
+
+            // Prompt for handle
+            PromptStringOptions pso = new PromptStringOptions("\nEnter subdictionary to remove from [FD_BOUNDARY/FD_GRADEBEAM]:")
+            {
+                AllowSpaces = false
+            };
+
+            PromptResult resHandle = ed.GetString(pso);
+            if (resHandle.Status != PromptStatus.OK) return;
+
+            string handleStr = resHandle.StringResult.ToUpperInvariant();
+            if (!IsValidHexHandleString(handleStr)) { ed.WriteMessage("\nInvalid handle string."); return; }
+
+            ExecuteTransaction(db, tr =>
+            {
+                DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+                if (!nod.Contains(ROOT)) { ed.WriteMessage("\nEE_Foundation dictionary does not exist."); return; }
+
+                DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
+                if (!root.Contains(subDictName)) { ed.WriteMessage($"\nSubdictionary {subDictName} does not exist."); return; }
+
+                DBDictionary subDict = (DBDictionary)tr.GetObject(root.GetAt(subDictName), OpenMode.ForWrite);
+                if (!subDict.Contains(handleStr)) { ed.WriteMessage($"\nHandle {handleStr} not found in {subDictName}."); return; }
+
+                Xrecord xr = (Xrecord)tr.GetObject(subDict.GetAt(handleStr), OpenMode.ForWrite);
+                xr.Erase();
+
+                ed.WriteMessage($"\nHandle {handleStr} removed from {subDictName}.");
+            });
+        }
+
+        // ==========================================================
+        //  CLEAN ALL NOD ENTRIES
+        // ==========================================================
+        [CommandMethod("NODCleaner")]
+        public static void NODCleanAll()
+        {
+            IterateFoundationNod(true);
+        }
     }
 }
