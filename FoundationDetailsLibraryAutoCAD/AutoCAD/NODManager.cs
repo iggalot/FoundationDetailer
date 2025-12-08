@@ -4,6 +4,7 @@ using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Runtime;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Windows;
@@ -261,34 +262,52 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 
                 foreach (DBDictionaryEntry group in root)
                 {
+                    bool record_found = true;
                     sb.AppendLine($"\n[{group.Key}]");
                     DBDictionary sub = (DBDictionary)tr.GetObject(group.Value, OpenMode.ForRead);
 
+                    // First, collect all keys (handles) to check
+                    List<string> keys = new List<string>();
                     foreach (DBDictionaryEntry entry in sub)
+                        keys.Add(entry.Key);
+
+                    // Now iterate over the copy
+                    foreach (string handleStr in keys)
                     {
-                        string handleStr = entry.Key;
-                        sb.Append($"  {handleStr} : ");
 
                         ObjectId id;
                         if (!TryGetObjectIdFromHandleString(db, handleStr, out id))
                         {
-                            sb.AppendLine("INVALID HANDLE");
+                            // Remove this handle from the dictionary safely
+                            sub.UpgradeOpen();  // Open dictionary for write
+                            sub.Remove(handleStr);
+                            //sb.AppendLine("INVALID HANDLE");
                             continue;
                         }
 
                         try
                         {
                             Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
-                            if (ent == null)
-                                sb.AppendLine("Missing object");
+                            if (ent == null || ent.IsErased)
+                            {
+                                //sb.AppendLine("Missing object");
+
+                                // Remove this handle from the dictionary safely
+                                sub.UpgradeOpen();  // Open dictionary for write
+                                sub.Remove(handleStr);
+                            }
                             else
+                            {
+                                sb.Append($"  {handleStr} : ");
                                 sb.AppendLine(ent.GetType().Name);
+                            }
                         }
                         catch
                         {
                             sb.AppendLine("Error reading object");
                         }
                     }
+
                 }
 
                 MessageBox.Show(sb.ToString(), "EE_Foundation Viewer");
@@ -568,6 +587,233 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             }
         }
 
+        /// <summary>
+        /// Cleans all subdictionaries under the root EE_Foundation dictionary.
+        /// Removes any Xrecords whose handles no longer correspond to valid objects.
+        /// Returns a map of subdictionary → remaining valid ObjectIds.
+        /// </summary>
+        /// <summary>
+        /// Cleans handle references stored under the EE_Foundation root dictionary's sub-dictionaries.
+        /// Removes handle entries that no longer exist in the drawing.
+        /// </summary>
+        /// <param name="doc">Current document</param>
+        /// <param name="subDictionaryNames">Names of subdictionaries under the root to check, e.g. "FD_BOUNDARY","FD_GRADEBEAM"</param>
+        [CommandMethod("NODCleaner")]
+        public static void CleanHandlesInNod()
+        {
+            // Get the active document
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null)
+                return;
+
+            // List of subdictionaries to clean
+            string[] subDictionaries = { "FD_BOUNDARY", "FD_GRADEBEAM" };
+
+            const string ROOT = "EE_Foundation";
+            Database db = doc.Database;
+            Editor ed = doc.Editor;
+
+            using (Transaction tr = db.TransactionManager.StartTransaction())
+            {
+                try
+                {
+                    DBDictionary nod = tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead) as DBDictionary;
+                    if (nod == null)
+                    {
+                        ed.WriteMessage("\nCould not open NamedObjectsDictionary.");
+                        tr.Commit();
+                        return;
+                    }
+
+                    if (!nod.Contains(ROOT))
+                    {
+                        ed.WriteMessage("\nRoot dictionary not found: " + ROOT);
+                        tr.Commit();
+                        return;
+                    }
+
+                    DBDictionary rootDict = tr.GetObject(nod.GetAt(ROOT), OpenMode.ForRead) as DBDictionary;
+                    if (rootDict == null)
+                    {
+                        tr.Commit();
+                        return;
+                    }
+
+                    foreach (string subName in subDictionaries)
+                    {
+                        if (!rootDict.Contains(subName))
+                        {
+                            ed.WriteMessage("\nSubdictionary not found: " + subName);
+                            continue;
+                        }
+
+                        DBDictionary subDict = tr.GetObject(rootDict.GetAt(subName), OpenMode.ForRead) as DBDictionary;
+                        if (subDict == null)
+                            continue;
+
+                        List<string> removedMessages = new List<string>();
+                        List<string> entryKeys = new List<string>();
+
+                        foreach (DBDictionaryEntry entry in subDict)
+                            entryKeys.Add(entry.Key);
+
+                        foreach (string key in entryKeys)
+                        {
+                            ObjectId xrId = subDict.GetAt(key);
+                            Xrecord xrec = tr.GetObject(xrId, OpenMode.ForRead) as Xrecord;
+                            if (xrec == null || xrec.Data == null)
+                                continue;
+
+                            ResultBuffer rb = xrec.Data;
+                            TypedValue[] tvs = rb.AsArray();
+
+                            List<TypedValue> kept = new List<TypedValue>();
+                            List<string> removedHandles = new List<string>();
+
+                            foreach (TypedValue tv in tvs)
+                            {
+                                bool keep = true;
+
+                                if ((tv.TypeCode == 1000 || tv.TypeCode == 1005) && tv.Value is string s)
+                                {
+                                    Handle h;
+                                    if (TryParseHandleString(s, out h))
+                                    {
+                                        if (!ObjectExists(db, h))
+                                        {
+                                            keep = false;
+                                            removedHandles.Add(s);
+                                        }
+                                    }
+                                }
+
+                                if (keep) kept.Add(tv);
+                            }
+
+                            if (removedHandles.Count > 0)
+                            {
+                                xrec.UpgradeOpen();
+
+                                if (kept.Count > 0)
+                                {
+                                    xrec.Data = new ResultBuffer(kept.ToArray());
+                                }
+                                else
+                                {
+                                    subDict.UpgradeOpen();
+                                    subDict.Remove(key);
+                                }
+
+                                removedMessages.Add("Entry '" + key + "' removed handles: " +
+                                                    string.Join(",", removedHandles.ToArray()));
+                            }
+                        }
+
+                        if (removedMessages.Count > 0)
+                        {
+                            ed.WriteMessage("\nCleaned '" + subName + "':");
+                            foreach (var msg in removedMessages)
+                                ed.WriteMessage("\n  " + msg);
+                        }
+                        else
+                        {
+                            ed.WriteMessage("\nNo stale handles in '" + subName + "'.");
+                        }
+                    }
+
+                    tr.Commit();
+                }
+                catch (System.Exception ex)
+                {
+                    ed.WriteMessage("\nError: " + ex.Message);
+                }
+            }
+        }
+
+        private static bool ObjectExists(Database db, Handle h)
+        {
+            try
+            {
+                ObjectId id = db.GetObjectId(false, h, 0);
+                if (id.IsNull || id.IsErased)
+                    return false;
+
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool TryParseHandleString(string s, out Handle handle)
+        {
+            //Default to a zero handle
+            handle = new Handle(0L);
+
+            if (string.IsNullOrWhiteSpace(s))
+                return false;
+
+            s = s.Trim();
+
+            long value;
+
+            // Remove "0x" prefix if present
+            if (s.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+                s = s.Substring(2);
+
+            // Try hex first
+            if (long.TryParse(s, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out value))
+            {
+                handle = new Handle(value);
+                return true;
+            }
+
+            // Try decimal (your code may have stored decimal historically)
+            if (long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out value))
+            {
+                handle = new Handle(value);
+                return true;
+            }
+
+            return false;
+        }
+
+        public static void RemoveStaleHandlesFromDictionary(DBDictionary dict, Transaction tr)
+        {
+            // Collect keys to remove — cannot modify dictionary while iterating
+            List<string> keysToRemove = new List<string>();
+
+            foreach (DBDictionaryEntry entry in dict)
+            {
+                ObjectId id = entry.Value;
+
+                // Check if the object exists
+                Entity ent = null;
+                try
+                {
+                    ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+                }
+                catch
+                {
+                    ent = null;
+                }
+
+                if (ent == null || ent.IsErased)
+                {
+                    keysToRemove.Add(entry.Key);
+                }
+            }
+
+            // Remove stale entries
+            if (keysToRemove.Count > 0)
+                dict.UpgradeOpen(); // Open for write
+
+            foreach (string key in keysToRemove)
+            {
+                dict.Remove(key);
+            }
+        }
 
     }
 }
