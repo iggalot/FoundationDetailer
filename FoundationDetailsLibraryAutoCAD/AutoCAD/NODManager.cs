@@ -529,6 +529,8 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                         doc.Editor.WriteMessage($"\nImport failed: {ex.Message}");
                     }
                 }
+
+                CleanFoundationNOD();  // clean up stale handles that don't have an associated drawing object in the drawing.
             }
         }
 
