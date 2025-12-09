@@ -927,6 +927,33 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             return false;
         }
 
+        public static bool TryGetFirstEntity(Transaction tr, Database db, string subDictKey, out ObjectId oid)
+        {
+            oid = ObjectId.Null;
+
+            // Get subdictionary under EE_Foundation
+            DBDictionary subDict = GetSubDictionary(tr, db, subDictKey);
+            if (subDict == null || subDict.Count == 0)
+                return false;
+
+            // Pick the first handle key
+            string handleStr = null;
+            foreach (DBDictionaryEntry entry in subDict)
+            {
+                handleStr = entry.Key;
+                break;
+            }
+
+            if (string.IsNullOrWhiteSpace(handleStr))
+                return false;
+
+            // Convert handle string to ObjectId
+            if (!TryGetObjectIdFromHandleString(db, handleStr, out oid))
+                return false;
+
+            return true;
+        }
+
 
     }
 }

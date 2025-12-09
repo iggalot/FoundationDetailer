@@ -194,30 +194,30 @@ namespace FoundationDetailer.Managers
             var doc = Application.DocumentManager.MdiActiveDocument;
             if (doc == null) { error = "No active document."; return false; }
 
+            var db = doc.Database;
+
             try
             {
                 using (doc.LockDocument())
-                using (var tr = doc.TransactionManager.StartTransaction())
+                using (var tr = db.TransactionManager.StartTransaction())
                 {
-                    var ent = tr.GetObject(candidateId, OpenMode.ForRead, false) as Entity;
-                    if (ent == null || !(ent is Polyline))
+                    // Validate entity
+                    var ent = tr.GetObject(candidateId, OpenMode.ForRead, false) as Polyline;
+                    if (ent == null)
                     {
                         error = "Selected object is not a polyline.";
                         return false;
                     }
 
-                    var pl = (Polyline)ent;
-                    pl.UpgradeOpen();
+                    // Normalize polyline
+                    ent.UpgradeOpen();
+                    EnsureClosedAndCCW(ent);
+                    ent.DowngradeOpen();
 
-                    // normalize polyline
-                    EnsureClosedAndCCW(pl);
+                    // Persist handle via NODManager
+                    NODManager.AddBoundaryHandle(candidateId);
 
-                    pl.DowngradeOpen();
-
-                    // Persist handle in XRecord
-                    StorePolylineId(doc, candidateId, tr);
-
-                    // Store in memory map
+                    // Update in-memory map
                     _docBoundaryIds.AddOrUpdate(doc, candidateId, (d, old) => candidateId);
 
                     tr.Commit();
@@ -252,35 +252,15 @@ namespace FoundationDetailer.Managers
                 using (doc.LockDocument())
                 using (var tr = db.TransactionManager.StartTransaction())
                 {
-                    // Get the FD_BOUNDARY subdictionary from EE_Foundation
-                    DBDictionary boundaryDict = NODManager.GetSubDictionary(tr, db, NODManager.KEY_BOUNDARY);
-                    if (boundaryDict == null || boundaryDict.Count == 0)
-                        return false;
-
-                    // Use the first stored handle (assuming only one boundary)
-                    string handleStr = null;
-                    foreach (DBDictionaryEntry entry in boundaryDict)
-                    {
-                        handleStr = entry.Key;
-                        break;
-                    }
-
-                    if (string.IsNullOrWhiteSpace(handleStr))
-                        return false;
-
-                    // Convert handle string to ObjectId
-                    if (!NODManager.TryGetObjectIdFromHandleString(db, handleStr, out ObjectId oid))
+                    // Delegate the dictionary and handle lookup to NODManager
+                    if (!NODManager.TryGetFirstEntity(tr, db, NODManager.KEY_BOUNDARY, out ObjectId oid))
                         return false;
 
                     if (oid.IsNull || oid.IsErased || !oid.IsValid)
                         return false;
 
-                    var ent = tr.GetObject(oid, OpenMode.ForRead, false) as Polyline;
-                    if (ent == null)
-                        return false;
-
-                    pl = ent;
-                    return true;
+                    pl = tr.GetObject(oid, OpenMode.ForRead, false) as Polyline;
+                    return pl != null;
                 }
             }
             catch
