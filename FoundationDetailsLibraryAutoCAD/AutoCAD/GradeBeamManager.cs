@@ -1,16 +1,14 @@
 ﻿using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
+using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 
 namespace FoundationDetailer.AutoCAD
 {
     public static class GradeBeamManager
     {
-        private const string XrecordKey = "FD_GRADEBEAM";
-
         // Track grade beams per document
         private static readonly Dictionary<Document, List<ObjectId>> _gradeBeams = new Dictionary<Document, List<ObjectId>>();
 
@@ -163,9 +161,9 @@ namespace FoundationDetailer.AutoCAD
 
             var db = doc.Database;
             var rat = (RegAppTable)tr.GetObject(db.RegAppTableId, OpenMode.ForWrite);
-            if (!rat.Has(XrecordKey))
+            if (!rat.Has(NODManager.KEY_GRADEBEAM))
             {
-                var ratr = new RegAppTableRecord { Name = XrecordKey };
+                var ratr = new RegAppTableRecord { Name = NODManager.KEY_GRADEBEAM };
                 rat.Add(ratr);
                 tr.AddNewlyCreatedDBObject(ratr, true);
             }
@@ -199,8 +197,8 @@ namespace FoundationDetailer.AutoCAD
                 _gradeBeams[doc] = new List<ObjectId>();
             _gradeBeams[doc].Add(pl.ObjectId);
 
-            // Store all grade beams in QueryNOD
-            StoreGradeBeamsInNod(doc, tr);
+            // Store the grade beams in its NOD
+            NODManager.AddGradeBeamHandle(pl.ObjectId);
         }
 
         private static void SetGradeBeamXData(ObjectId id, Transaction tr)
@@ -208,46 +206,7 @@ namespace FoundationDetailer.AutoCAD
             if (id.IsNull) return;
 
             var ent = (Entity)tr.GetObject(id, OpenMode.ForWrite);
-            ent.XData = new ResultBuffer(new TypedValue((int)DxfCode.ExtendedDataRegAppName, XrecordKey));
+            ent.XData = new ResultBuffer(new TypedValue((int)DxfCode.ExtendedDataRegAppName, NODManager.KEY_GRADEBEAM));
         }
-
-        private static void StoreGradeBeamsInNod(Document doc, Transaction tr)
-        {
-            if (!_gradeBeams.ContainsKey(doc) || _gradeBeams[doc].Count == 0)
-                return;
-
-            var db = doc.Database;
-
-            // Open the Named Objects Dictionary
-            DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
-
-            Xrecord xr;
-
-            if (nod.Contains(XrecordKey))
-            {
-                // Use existing Xrecord
-                xr = (Xrecord)tr.GetObject(nod.GetAt(XrecordKey), OpenMode.ForWrite);
-            }
-            else
-            {
-                // Create new Xrecord
-                xr = new Xrecord();
-                nod.SetAt(XrecordKey, xr);
-                tr.AddNewlyCreatedDBObject(xr, true);
-            }
-
-            // Store all grade beam ObjectId handles in the Xrecord
-            var data = new List<TypedValue>();
-            foreach (var id in _gradeBeams[doc])
-            {
-                if (!id.IsNull)
-                {
-                    data.Add(new TypedValue((int)DxfCode.Handle, id.Handle.Value));
-                }
-            }
-
-            xr.Data = new ResultBuffer(data.ToArray());
-        }
-
     }
 }

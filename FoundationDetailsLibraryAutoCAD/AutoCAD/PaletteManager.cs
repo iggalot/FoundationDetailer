@@ -1,12 +1,8 @@
 ﻿using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
-using Autodesk.AutoCAD.Runtime;
 using Autodesk.AutoCAD.Windows;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
-using System;
-using System.Collections.Generic;
-using System.Windows;
 
 namespace FoundationDetailer
 {

@@ -76,7 +76,6 @@
     <Compile Include="Managers\GridlineManager.cs" />
     <Compile Include="Preview\PreviewManager.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="Storage\JsonStorage.cs" />
     <Compile Include="Tools\XDataViewer.cs" />
     <Compile Include="UI\Controls\PierControl.xaml.cs">
       <DependentUpon>PierControl.xaml</DependentUpon>
@@ -98,6 +97,9 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="Storage\" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <PropertyGroup>

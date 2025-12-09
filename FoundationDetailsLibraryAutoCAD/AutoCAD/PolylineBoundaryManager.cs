@@ -2,6 +2,7 @@
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
+using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -240,21 +241,43 @@ namespace FoundationDetailer.Managers
         public static bool TryGetBoundary(out Polyline pl)
         {
             pl = null;
-            var doc = Application.DocumentManager.MdiActiveDocument;
+
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return false;
 
-            if (!_docBoundaryIds.TryGetValue(doc, out ObjectId oid) || oid.IsNull) return false;
+            var db = doc.Database;
 
             try
             {
                 using (doc.LockDocument())
-                using (var tr = doc.TransactionManager.StartTransaction())
+                using (var tr = db.TransactionManager.StartTransaction())
                 {
+                    // Get the FD_BOUNDARY subdictionary from EE_Foundation
+                    DBDictionary boundaryDict = NODManager.GetSubDictionary(tr, db, NODManager.KEY_BOUNDARY);
+                    if (boundaryDict == null || boundaryDict.Count == 0)
+                        return false;
+
+                    // Use the first stored handle (assuming only one boundary)
+                    string handleStr = null;
+                    foreach (DBDictionaryEntry entry in boundaryDict)
+                    {
+                        handleStr = entry.Key;
+                        break;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(handleStr))
+                        return false;
+
+                    // Convert handle string to ObjectId
+                    if (!NODManager.TryGetObjectIdFromHandleString(db, handleStr, out ObjectId oid))
+                        return false;
+
                     if (oid.IsNull || oid.IsErased || !oid.IsValid)
                         return false;
 
                     var ent = tr.GetObject(oid, OpenMode.ForRead, false) as Polyline;
-                    if (ent == null) return false;
+                    if (ent == null)
+                        return false;
 
                     pl = ent;
                     return true;
@@ -265,6 +288,7 @@ namespace FoundationDetailer.Managers
                 return false;
             }
         }
+
 
         public static void HighlightBoundary()
         {
@@ -369,27 +393,94 @@ namespace FoundationDetailer.Managers
 
             try
             {
-                using (var tr = doc.Database.TransactionManager.StartTransaction())
-                {
-                    // Get the stored polyline from the XRecord
-                    ObjectId storedId = GetBoundaryFromXRecord(doc, tr);
-                    if (storedId.IsNull) { tr.Commit(); return; }
+                Database db = doc.Database;
 
-                    // Optionally: verify that the polyline still exists
-                    if (!storedId.IsNull && storedId.IsValid)
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    // ------------------------------
+                    // 1. Retrieve FD_BOUNDARY dictionary
+                    // ------------------------------
+                    DBDictionary nod =
+                        (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+
+                    if (!nod.Contains(NODManager.ROOT))
                     {
-                        _docBoundaryIds.AddOrUpdate(doc, storedId, (d, old) => storedId);
-                        BoundaryChanged?.Invoke(null, EventArgs.Empty);
+                        tr.Commit();
+                        return;
                     }
+
+                    DBDictionary root =
+                        (DBDictionary)tr.GetObject(nod.GetAt(NODManager.ROOT), OpenMode.ForRead);
+
+                    if (!root.Contains(NODManager.KEY_BOUNDARY))
+                    {
+                        tr.Commit();
+                        return;
+                    }
+
+                    DBDictionary boundaryDict =
+                        (DBDictionary)tr.GetObject(root.GetAt(NODManager.KEY_BOUNDARY), OpenMode.ForRead);
+
+                    // ------------------------------
+                    // 2. Expect exactly ONE boundary entry
+                    // ------------------------------
+                    if (boundaryDict.Count == 0)
+                    {
+                        tr.Commit();
+                        return;
+                    }
+
+                    // Get the *first* (and only expected) boundary handle
+                    var entry = boundaryDict.Cast<DBDictionaryEntry>().First();
+                    string handleStr = entry.Key;
+
+                    // ------------------------------
+                    // 3. Convert handle → ObjectId
+                    // ------------------------------
+                    ObjectId boundaryId;
+                    if (!NODManager.TryGetObjectIdFromHandleString(db, handleStr, out boundaryId) ||
+                        boundaryId.IsNull)
+                    {
+                        tr.Commit();
+                        return;
+                    }
+
+                    // ------------------------------
+                    // 4. Validate that the boundary entity exists and is not erased
+                    // ------------------------------
+                    Entity ent = null;
+
+                    try
+                    {
+                        ent = tr.GetObject(boundaryId, OpenMode.ForRead) as Entity;
+                    }
+                    catch
+                    {
+                        ent = null;
+                    }
+
+                    if (ent == null || ent.IsErased)
+                    {
+                        tr.Commit();
+                        return;
+                    }
+
+                    // ------------------------------
+                    // 5. Store in internal dictionary + notify listeners
+                    // ------------------------------
+                    _docBoundaryIds.AddOrUpdate(doc, boundaryId, (d, old) => boundaryId);
+
+                    BoundaryChanged?.Invoke(null, EventArgs.Empty);
 
                     tr.Commit();
                 }
             }
             catch
             {
-                // Fail silently
+                // Fail silently (matching your existing behavior)
             }
         }
+
 
         private static void Db_ObjectUnappended(object sender, ObjectEventArgs e)
         {
@@ -685,7 +776,7 @@ namespace FoundationDetailer.Managers
                     try
                     {
                         var s = tv.Value as string ?? tv.Value.ToString();
-                        if (TryParseHandle(s, out Handle h))
+                        if (NODManager.TryParseHandle(s, out Handle h))
                         {
                             oid = doc.Database.GetObjectId(false, h, 0);
                         }
@@ -734,88 +825,6 @@ namespace FoundationDetailer.Managers
             // Save the handle string so conversion later is robust
             var handleString = id.Handle.ToString();
             xr.Data = new ResultBuffer(new TypedValue((int)DxfCode.Handle, handleString));
-        }
-
-        private static bool TryParseHandle(string handleString, out Handle handle)
-        {
-            handle = new Handle(0);
-            if (string.IsNullOrWhiteSpace(handleString)) return false;
-
-            // Attempt common formats: hex (no prefix), decimal
-            // For robust parsing, try Hex first.
-            if (long.TryParse(handleString, System.Globalization.NumberStyles.HexNumber, null, out long hexValue))
-            {
-                handle = new Handle(hexValue);
-                return true;
-            }
-
-            if (long.TryParse(handleString, out long dec))
-            {
-                handle = new Handle(dec);
-                return true;
-            }
-
-            // Some XRecords might contain a raw long value; try that
-            try
-            {
-                var trimmed = handleString.Trim();
-                if (trimmed.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (long.TryParse(trimmed.Substring(2), System.Globalization.NumberStyles.HexNumber, null, out long hv))
-                    {
-                        handle = new Handle(hv);
-                        return true;
-                    }
-                }
-            }
-            catch { }
-
-            return false;
-        }
-
-        /// <summary>
-        /// If an object is appended, it may correspond to a stored handle; try to refresh mapping.
-        /// </summary>
-        private static void TryRefreshByHandle(Document doc, DBObject dbObj)
-        {
-            if (doc == null || dbObj == null) return;
-
-            try
-            {
-                using (doc.LockDocument())
-                using (var tr = doc.TransactionManager.StartTransaction())
-                {
-                    var db = doc.Database;
-                    var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-                    if (!nod.Contains(XrecordKey)) { tr.Commit(); return; }
-
-                    var xr = (Xrecord)tr.GetObject(nod.GetAt(XrecordKey), OpenMode.ForRead);
-                    if (xr == null || xr.Data == null || xr.Data.AsArray().Length == 0) { tr.Commit(); return; }
-
-                    var tv = xr.Data.AsArray()[0];
-                    if (tv == null || tv.TypeCode != (int)DxfCode.Handle) { tr.Commit(); return; }
-
-                    var handleStr = tv.Value as string ?? tv.Value.ToString();
-
-                    // Compare to appended object's handle
-                    var appendedHandle = dbObj.Handle.ToString();
-                    if (string.Equals(handleStr, appendedHandle, StringComparison.OrdinalIgnoreCase))
-                    {
-                        _docBoundaryIds.AddOrUpdate(doc, dbObj.ObjectId, (d, old) => dbObj.ObjectId);
-
-                        // Clear snapshot (we now have the object)
-                        _lastSnapshots.TryRemove(doc, out _);
-
-                        BoundaryChanged?.Invoke(null, EventArgs.Empty);
-                    }
-
-                    tr.Commit();
-                }
-            }
-            catch
-            {
-                // ignore
-            }
         }
 
         /// <summary>
@@ -1126,31 +1135,6 @@ namespace FoundationDetailer.Managers
             return sum < 0;
         }
 
-        private static bool IsReplacementBoundary(Polyline candidate, ObjectId storedId, Transaction tr)
-        {
-            if (candidate == null || storedId.IsNull)
-                return false;
-
-            var oldPl = tr.GetObject(storedId, OpenMode.ForRead) as Polyline;
-            if (oldPl == null) return false;
-
-            // Compare extents and approximate area/position
-            var ext1 = candidate.GeometricExtents;
-            var ext2 = oldPl.GeometricExtents;
-
-            double tolerance = 1e-6;
-
-            bool roughlySameCenter =
-                Math.Abs((ext1.MinPoint.X + ext1.MaxPoint.X) / 2 - (ext2.MinPoint.X + ext2.MaxPoint.X) / 2) < tolerance &&
-                Math.Abs((ext1.MinPoint.Y + ext1.MaxPoint.Y) / 2 - (ext2.MinPoint.Y + ext2.MaxPoint.Y) / 2) < tolerance;
-
-            bool roughlySameSize =
-                Math.Abs((ext1.MaxPoint.X - ext1.MinPoint.X) - (ext2.MaxPoint.X - ext2.MinPoint.X)) < tolerance &&
-                Math.Abs((ext1.MaxPoint.Y - ext1.MinPoint.Y) - (ext2.MaxPoint.Y - ext2.MinPoint.Y)) < tolerance;
-
-            return roughlySameCenter && roughlySameSize;
-        }
-
         private static ObjectId GetBoundaryFromXRecord(Document doc, Transaction tr)
         {
             if (doc == null || tr == null) return ObjectId.Null;
@@ -1180,7 +1164,7 @@ namespace FoundationDetailer.Managers
                     if (tv.TypeCode == (int)DxfCode.Handle)
                     {
                         var s = tv.Value as string ?? tv.Value.ToString();
-                        if (TryParseHandle(s, out Handle h))
+                        if (NODManager.TryParseHandle(s, out Handle h))
                         {
                             return db.GetObjectId(false, h, 0);
                         }

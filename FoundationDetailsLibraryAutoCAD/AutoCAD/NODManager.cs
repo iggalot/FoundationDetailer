@@ -10,7 +10,6 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Windows;
-using System.Windows.Markup;
 
 [assembly: CommandClass(typeof(FoundationDetailsLibraryAutoCAD.AutoCAD.NODManager))]
 
@@ -30,29 +29,96 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         // ==========================================================
         //  HELPER UTILITIES
         // ==========================================================
+        internal static DBDictionary GetOrCreateRootDictionary(Transaction tr, Database db)
+        {
+            if (tr == null || db == null)
+                return null;
+
+            // Open the top-level Named Objects Dictionary
+            DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+            if (nod == null)
+                return null;
+
+            // Check if EE_Foundation exists
+            if (!nod.Contains(ROOT))
+            {
+                DBDictionary root = new DBDictionary();
+                nod.SetAt(ROOT, root);
+                tr.AddNewlyCreatedDBObject(root, true);
+
+                Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+                doc.Editor.WriteMessage("\nCreated root dictionary: " + ROOT);
+                return root;
+            }
+
+            // Return existing EE_Foundation
+            return (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
+        }
 
         /// <summary>
         /// Ensures a subdictionary exists, creates if missing.
         /// </summary>
-        private static void CreateSubDictionary(Transaction tr, DBDictionary parent, string name)
+        internal static DBDictionary GetOrCreateSubDictionary(Transaction tr, Database db, string subKey)
         {
-            if (!parent.Contains(name))
-            {
-                parent.UpgradeOpen();
-                DBDictionary sub = new DBDictionary();
-                parent.SetAt(name, sub);
-                tr.AddNewlyCreatedDBObject(sub, true);
+            if (tr == null || db == null || string.IsNullOrWhiteSpace(subKey))
+                return null;
 
-                Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-                Editor ed = doc.Editor;
-                ed.WriteMessage("\nAdded dictionary " + name);
+            // Get the top-level NOD
+            DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+            if (nod == null || !nod.Contains(ROOT))
+                return null;
+
+            // Open root for write
+            DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
+            if (root == null)
+                return null;
+
+            // Check if subdictionary exists
+            if (!root.Contains(subKey))
+            {
+                // Create subdictionary under EE_Foundation
+                DBDictionary sub = new DBDictionary();
+                root.SetAt(subKey, sub);
+                tr.AddNewlyCreatedDBObject(sub, true);
+                return sub;
             }
+
+            // Return existing subdictionary opened for write
+            return (DBDictionary)tr.GetObject(root.GetAt(subKey), OpenMode.ForWrite);
         }
+
+        // --------------------------------------------------------
+        //  Generic helper to get or create a subdictionary under "EE_Foundation"
+        // --------------------------------------------------------
+        internal static DBDictionary GetSubDictionary(Transaction tr, Database db, string subKey)
+        {
+            if (tr == null || db == null || string.IsNullOrWhiteSpace(subKey))
+                return null;
+
+            // Get the top-level NOD
+            DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+            if (nod == null || !nod.Contains(ROOT))
+                return null;
+
+            // Get the root EE_Foundation dictionary
+            DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForRead);
+            if (root == null || !root.Contains(subKey))
+                return null;
+
+            // Return the subdictionary (FD_BOUNDARY or FD_GRADEBEAM)
+            return (DBDictionary)tr.GetObject(root.GetAt(subKey), OpenMode.ForRead);
+        }
+
+
+
+
+
+
 
         /// <summary>
         /// Adds a handle as an Xrecord to a dictionary if it doesn't exist.
         /// </summary>
-        private static void AddHandleToDictionary(Transaction tr, DBDictionary dict, string handle)
+        internal static void AddHandleToDictionary(Transaction tr, DBDictionary dict, string handle)
         {
             if (!dict.Contains(handle))
             {
@@ -64,6 +130,77 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 tr.AddNewlyCreatedDBObject(xr, true);
             }
         }
+
+        /// <summary>
+        /// Function to add a polyline boundary handle to the NOD
+        /// </summary>
+        /// <param name="id"></param>
+        public static void AddBoundaryHandle(ObjectId id)
+        {
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application
+                                .DocumentManager.MdiActiveDocument;
+            Database db = doc.Database;
+
+            using (doc.LockDocument())
+            {
+                using (Transaction tr = db.TransactionManager.StartTransaction())
+                {
+                    // Ensure NOD structure exists
+                    InitFoundationNOD(tr);
+
+                    DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+
+                    DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
+
+                    DBDictionary boundaryDict = (DBDictionary)tr.GetObject(root.GetAt(KEY_BOUNDARY), OpenMode.ForWrite);
+
+                    // Store handle (uppercase, same as everywhere else)
+                    string handleStr = id.Handle.ToString().ToUpperInvariant();
+
+                    // Use your existing helper
+                    AddHandleToDictionary(tr, boundaryDict, handleStr);
+
+                    tr.Commit();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Adds a grade beam polyline handle to the EE_Foundation NOD under FD_GRADEBEAM.
+        /// </summary>
+        /// <param name="id">The ObjectId of the grade beam polyline.</param>
+        public static void AddGradeBeamHandle(ObjectId id)
+        {
+            if (id.IsNull || !id.IsValid) return;
+
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+
+            Database db = doc.Database;
+
+            using (doc.LockDocument())
+            {
+                using (Transaction tr = db.TransactionManager.StartTransaction())
+                {
+                    // Ensure EE_Foundation NOD and subdictionaries exist
+                    InitFoundationNOD(tr);
+
+                    DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+                    DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
+                    DBDictionary gradebeamDict = (DBDictionary)tr.GetObject(root.GetAt(KEY_GRADEBEAM), OpenMode.ForWrite);
+
+                    // Convert ObjectId handle to uppercase string
+                    string handleStr = id.Handle.ToString().ToUpperInvariant();
+
+                    // Add to NOD using existing helper
+                    AddHandleToDictionary(tr, gradebeamDict, handleStr);
+
+                    tr.Commit();
+                }
+            }
+        }
+
+
 
         /// <summary>
         /// Validates that a string can be a hex handle.
@@ -103,26 +240,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             return false;
         }
 
-        /// <summary>
-        /// Attempts to get an ObjectId from a handle string.
-        /// </summary>
-        private static bool TryGetObjectIdFromHandleString(Database db, string handleStr, out ObjectId id)
-        {
-            id = ObjectId.Null;
-            if (string.IsNullOrWhiteSpace(handleStr)) return false;
-            if (!TryParseHandleString(handleStr, out Handle h)) return false;
-
-            try
-            {
-                id = db.GetObjectId(false, h, 0);
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
         // ==========================================================
         //  QueryNOD ENTRY REPRESENTATION
         // ==========================================================
@@ -144,15 +261,17 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             Database db = doc.Database;
             Editor ed = doc.Editor;
 
+            if (tr == null) return;
+
             try
             {
-                
-                DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
-                CreateSubDictionary(tr, nod, ROOT);
-                DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
+                // create the root dictionary
+                GetOrCreateRootDictionary(tr, db);
+
+                // create the sub dictionaries
                 foreach(var sub_dir in KNOWN_SUBDIRS)
                 {
-                    CreateSubDictionary(tr, root, sub_dir);
+                    GetOrCreateSubDictionary(tr, db, sub_dir);
                 }
 
                 ed.WriteMessage("\nEE_Foundation NOD structure initialized successfully.");
@@ -273,7 +392,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 
             MessageBox.Show(sb.ToString(), "EE_Foundation Viewer");
         }
-
 
         // ==========================================================
         //  CLEAN STALE HANDLES
@@ -447,6 +565,9 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             MessageBox.Show($"Export complete:\n{jsonFile}");
         }
 
+        /// <summary>
+        /// A function that loads the associated JSON file with the NOD data.
+        /// </summary>
         [CommandMethod("ImportFoundationNOD")]
         public static void ImportFoundationNOD()
         {
@@ -544,50 +665,58 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             Database db = doc.Database;
             Editor ed = doc.Editor;
 
-            using (Transaction tr = db.TransactionManager.StartTransaction())
+            using (doc.LockDocument())
             {
-                try
+                using (Transaction tr = db.TransactionManager.StartTransaction())
                 {
-                    DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
-                    DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
-
-
-                    DBDictionary boundaryDict = (DBDictionary)tr.GetObject(root.GetAt(KEY_BOUNDARY), OpenMode.ForWrite);
-                    DBDictionary gradebeamDict = (DBDictionary)tr.GetObject(root.GetAt(KEY_GRADEBEAM), OpenMode.ForWrite);
-
-                    BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-                    BlockTableRecord ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
-
-                    // Create FD_BOUNDARY polyline
-                    Polyline boundary = new Polyline();
-                    boundary.AddVertexAt(0, new Point2d(0, 0), 0, 0, 0);
-                    boundary.AddVertexAt(1, new Point2d(100, 0), 0, 0, 0);
-                    boundary.AddVertexAt(2, new Point2d(100, 50), 0, 0, 0);
-                    boundary.AddVertexAt(3, new Point2d(0, 50), 0, 0, 0);
-                    boundary.Closed = true;
-
-                    ms.AppendEntity(boundary);
-                    tr.AddNewlyCreatedDBObject(boundary, true);
-                    AddHandleToDictionary(tr, boundaryDict, boundary.Handle.ToString().ToUpperInvariant());
-
-                    // Create 4 FD_GRADEBEAM polylines
-                    for (int i = 0; i < 4; i++)
-                    {
-                        Polyline gb = new Polyline();
-                        int y = 10 + i * 10;
-                        gb.AddVertexAt(0, new Point2d(10, y), 0, 0, 0);
-                        gb.AddVertexAt(1, new Point2d(90, y), 0, 0, 0);
-
-                        ms.AppendEntity(gb);
-                        tr.AddNewlyCreatedDBObject(gb, true);
-                        AddHandleToDictionary(tr, gradebeamDict, gb.Handle.ToString().ToUpperInvariant());
-                    }
+                    InitFoundationNOD(tr);
                     tr.Commit();
-                    ed.WriteMessage("\nSample polylines created for FD_BOUNDARY and FD_GRADEBEAM.");
                 }
-                catch (System.Exception ex)
+
+                using (Transaction tr = db.TransactionManager.StartTransaction())
                 {
-                    ed.WriteMessage($"\nTransaction failed: {ex.Message}");
+                    try
+                    {
+                        DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+                        DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
+
+                        DBDictionary boundaryDict = (DBDictionary)tr.GetObject(root.GetAt(KEY_BOUNDARY), OpenMode.ForWrite);
+                        DBDictionary gradebeamDict = (DBDictionary)tr.GetObject(root.GetAt(KEY_GRADEBEAM), OpenMode.ForWrite);
+
+                        BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+                        BlockTableRecord ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+
+                        // Create FD_BOUNDARY polyline
+                        Polyline boundary = new Polyline();
+                        boundary.AddVertexAt(0, new Point2d(0, 0), 0, 0, 0);
+                        boundary.AddVertexAt(1, new Point2d(1000, 0), 0, 0, 0);
+                        boundary.AddVertexAt(2, new Point2d(1000, 500), 0, 0, 0);
+                        boundary.AddVertexAt(3, new Point2d(0, 500), 0, 0, 0);
+                        boundary.Closed = true;
+
+                        ms.AppendEntity(boundary);
+                        tr.AddNewlyCreatedDBObject(boundary, true);
+                        AddHandleToDictionary(tr, boundaryDict, boundary.Handle.ToString().ToUpperInvariant());
+
+                        // Create 4 FD_GRADEBEAM polylines
+                        for (int i = 0; i < 4; i++)
+                        {
+                            Polyline gb = new Polyline();
+                            int y = 10 + i * 10;
+                            gb.AddVertexAt(0, new Point2d(10, y), 0, 0, 0);
+                            gb.AddVertexAt(1, new Point2d(90, y), 0, 0, 0);
+
+                            ms.AppendEntity(gb);
+                            tr.AddNewlyCreatedDBObject(gb, true);
+                            AddHandleToDictionary(tr, gradebeamDict, gb.Handle.ToString().ToUpperInvariant());
+                        }
+                        tr.Commit();
+                        ed.WriteMessage("\nSample polylines created for FD_BOUNDARY and FD_GRADEBEAM.");
+                    }
+                    catch (System.Exception ex)
+                    {
+                        ed.WriteMessage($"\nTransaction failed: {ex.Message}");
+                    }
                 }
             }
         }
@@ -664,5 +793,140 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         {
             IterateFoundationNod(true);
         }
+
+        // ==========================================================
+        //  GET SUBDICTIONARY
+        // ==========================================================
+        /// <summary>
+        /// Utility function that return a subdictionary of a specified name.
+        /// </summary>
+        /// <param name="tr"></param>
+        /// <param name="name"></param>
+        /// <param name="createIfMissing"></param>
+        /// <returns></returns>
+        // --------------------------------------------------------
+        //  Get all handle strings from a subdictionary
+        // --------------------------------------------------------
+        internal static List<string> GetHandles(Transaction tr, DBDictionary subDict)
+        {
+            List<string> result = new List<string>();
+            foreach (DBDictionaryEntry entry in subDict)
+            {
+                result.Add(entry.Key);
+            }
+            return result;
+        }
+
+        // --------------------------------------------------------
+        //  Try convert handle string → ObjectId
+        // --------------------------------------------------------
+        internal static bool TryGetObjectIdFromHandleString(
+            Database db, string handleStr, out ObjectId id)
+        {
+            id = ObjectId.Null;
+
+            if (string.IsNullOrWhiteSpace(handleStr))
+                return false;
+
+            try
+            {
+                handleStr = handleStr.Trim();
+                if (handleStr.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+                    handleStr = handleStr.Substring(2);
+
+                long handleValue;
+                if (!long.TryParse(handleStr, System.Globalization.NumberStyles.HexNumber,
+                    System.Globalization.CultureInfo.InvariantCulture, out handleValue))
+                    return false;
+
+                Handle h = new Handle(handleValue);
+                id = db.GetObjectId(false, h, 0);
+                return id.IsValid;
+            }
+            catch
+            {
+                id = ObjectId.Null;
+                return false;
+            }
+        }
+
+        // --------------------------------------------------------
+        //  Get all valid ObjectIds from a subdictionary
+        // --------------------------------------------------------
+        internal static List<ObjectId> GetValidObjectIds(
+            Transaction tr, Database db, DBDictionary subDict)
+        {
+            List<ObjectId> validIds = new List<ObjectId>();
+            List<string> handles = GetHandles(tr, subDict);
+
+            foreach (string handleStr in handles)
+            {
+                ObjectId id;
+                if (TryGetObjectIdFromHandleString(db, handleStr, out id))
+                {
+                    try
+                    {
+                        DBObject obj = tr.GetObject(id, OpenMode.ForRead, false);
+                        if (obj != null && !obj.IsErased)
+                            validIds.Add(id);
+                    }
+                    catch
+                    {
+                        // ignore invalid objects
+                    }
+                }
+            }
+
+            return validIds;
+        }
+
+        // --------------------------------------------------------
+        //  Get a single ObjectId from a subdictionary (FD_BOUNDARY)
+        // --------------------------------------------------------
+        internal static ObjectId GetSingleObjectId(
+            Transaction tr, Database db, DBDictionary subDict)
+        {
+            List<ObjectId> ids = GetValidObjectIds(tr, db, subDict);
+            if (ids.Count > 0)
+                return ids[0];
+            return ObjectId.Null;
+        }
+
+        internal static bool TryParseHandle(string handleString, out Handle handle)
+        {
+            handle = new Handle(0);
+            if (string.IsNullOrWhiteSpace(handleString)) return false;
+
+            // Try hex (without prefix)
+            if (long.TryParse(handleString, System.Globalization.NumberStyles.HexNumber, null, out long hexValue))
+            {
+                handle = new Handle(hexValue);
+                return true;
+            }
+
+            // Try decimal
+            if (long.TryParse(handleString, out long dec))
+            {
+                handle = new Handle(dec);
+                return true;
+            }
+
+            // Try hex with "0x" prefix
+            try
+            {
+                var trimmed = handleString.Trim();
+                if (trimmed.StartsWith("0x", StringComparison.OrdinalIgnoreCase) &&
+                    long.TryParse(trimmed.Substring(2), System.Globalization.NumberStyles.HexNumber, null, out long prefixed))
+                {
+                    handle = new Handle(prefixed);
+                    return true;
+                }
+            }
+            catch { }
+
+            return false;
+        }
+
+
     }
 }

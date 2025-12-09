@@ -5,7 +5,6 @@ using Autodesk.AutoCAD.Geometry;
 using FoundationDetailer.AutoCAD;
 using FoundationDetailer.Managers;
 using FoundationDetailer.Model;
-using FoundationDetailer.Storage;
 using FoundationDetailer.UI.Controls;
 using FoundationDetailer.UI.Converters;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
@@ -58,8 +57,8 @@ namespace FoundationDetailer.UI
 
             WireEvents();
 
-            // Initialize boundary display immediately
-            LoadBoundaryForActiveDocument();
+            // Load the saved NOD (if available)
+            NODManager.ImportFoundationNOD();
         }
 
         private void WireEvents()
@@ -67,11 +66,14 @@ namespace FoundationDetailer.UI
             BtnQuery.Click += (s, e) => QueryNOD();
             BtnSyncNod.Click += (s, e) => SyncNodData();
 
-            BtnSelectBoundary.Click += (s, e) => SelectBoundary();
+            BtnSelectBoundary.Click += (s, e) => SelectBoundary(); // for selecting the boundary
+
+            BtnAddGradeBeams.Click += (s, e) => AddPreliminaryGradeBeams(); // for adding a preliminary gradebeam layout
+            
+            //BtnAddRebar.Click += (s, e) => AddRebarBars();
+            //BtnAddStrands.Click += (s, e) => AddStrands();
             //BtnAddPiers.Click += (s, e) => AddPiers();
-            BtnAddGradeBeams.Click += (s, e) => AddGradeBeams();
-            BtnAddRebar.Click += (s, e) => AddRebarBars();
-            BtnAddStrands.Click += (s, e) => AddStrands();
+
             //BtnPreview.Click += (s, e) => ShowPreview();
             //BtnClearPreview.Click += (s, e) => ClearPreview();
             //BtnCommit.Click += (s, e) => CommitModel();
@@ -234,6 +236,7 @@ namespace FoundationDetailer.UI
             }
             else
             {
+                NODManager.AddBoundaryHandle(result.ObjectId);  // store the boundary handle in the NOD
                 ed.WriteMessage($"\nBoundary selected: {result.ObjectId.Handle}");
             }
         }
@@ -244,43 +247,6 @@ namespace FoundationDetailer.UI
             TxtStatus.Text = "All grade beams cleared.";
         }
 
-
-        #endregion
-
-        #region --- Highlight and Zoom ---
-
-        private void ZoomToExtents(Editor ed, Extents3d ext)
-        {
-            try
-            {
-                if (ext.MinPoint.DistanceTo(ext.MaxPoint) < 1e-6)
-                    return;
-
-                var view = ed.GetCurrentView();
-
-                Point2d center = new Point2d(
-                    (ext.MinPoint.X + ext.MaxPoint.X) / 2.0,
-                    (ext.MinPoint.Y + ext.MaxPoint.Y) / 2.0
-                );
-
-                double width = ext.MaxPoint.X - ext.MinPoint.X;
-                double height = ext.MaxPoint.Y - ext.MinPoint.Y;
-
-                if (width < 1e-6) width = 1.0;
-                if (height < 1e-6) height = 1.0;
-
-                view.CenterPoint = center;
-                view.Width = width * 1.1;
-                view.Height = height * 1.1;
-
-                ed.SetCurrentView(view);
-            }
-            catch (Exception ex)
-            {
-                Dispatcher.BeginInvoke(new Action(() =>
-                    TxtBoundaryStatus.Text = $"Zoom error: {ex.Message}"));
-            }
-        }
 
         #endregion
 
@@ -305,7 +271,8 @@ namespace FoundationDetailer.UI
 
 
         private void AddPiers() => MessageBox.Show("Add piers to model.");
-        private void AddGradeBeams()
+
+        private void AddPreliminaryGradeBeams()
         {
             var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
@@ -338,37 +305,6 @@ namespace FoundationDetailer.UI
         private void AddRebarBars() => MessageBox.Show("Add rebar bars to model.");
         private void AddStrands() => MessageBox.Show("Add strands to model.");
 
-        private void ShowPreview()
-        {
-            try
-            {
-                PreviewManager.ShowPreview(_currentModel);
-                Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = "Preview shown."));
-            }
-            catch (Exception ex)
-            {
-                Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = $"Preview error: {ex.Message}"));
-            }
-        }
-
-        private void ClearPreview()
-        {
-            PreviewManager.ClearPreview();
-            Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = "Preview cleared."));
-        }
-
-        private void CommitModel()
-        {
-            try
-            {
-                AutoCADAdapter.CommitModelToDrawing(_currentModel);
-                Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = "Model committed to DWG."));
-            }
-            catch (Exception ex)
-            {
-                Dispatcher.BeginInvoke(new Action(() => TxtStatus.Text = $"Commit error: {ex.Message}"));
-            }
-        }
 
         private void SaveModel()
         {
