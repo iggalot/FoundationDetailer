@@ -18,7 +18,7 @@ namespace FoundationDetailer.AutoCAD
         /// <summary>
         /// Creates horizontal and vertical grade beams for a closed boundary polyline.
         /// </summary>
-        public static void CreateBothGridlines(Polyline boundary, double maxSpacing, int vertexCount)
+        public static void CreateBothGridlines(Polyline boundary, double horiz_min, double horiz_max, double vert_min, double vert_max, int vertexCount)
         {
             if (boundary == null) return;
 
@@ -36,14 +36,7 @@ namespace FoundationDetailer.AutoCAD
                     RegisterGradeBeamRegApp(doc, tr);
 
                     // Compute gridline points
-                    var (horizontalLines, verticalLines) = FoundationDetailsLibraryAutoCAD.Managers.GridlineManager
-                        .ComputeBothGridlines(boundary, maxSpacing, vertexCount);
-
-                    //// Prepare storage
-                    //if (!_gradeBeams.ContainsKey(doc))
-                    //    _gradeBeams[doc] = new List<ObjectId>();
-                    //else
-                    //    ClearGradeBeams(doc, tr);
+                    var (horizontalLines, verticalLines) = FoundationDetailsLibraryAutoCAD.Managers.GridlineManager.ComputeBothGridlines(boundary, horiz_min, horiz_max, vert_min, vert_max, vertexCount);
 
                     // Create DB polylines with XData
                     foreach (var pts in horizontalLines)
@@ -67,75 +60,6 @@ namespace FoundationDetailer.AutoCAD
             {
                 doc.Editor.WriteMessage($"\nError creating grade beams: {ex.Message}");
             }
-        }
-
-        /// <summary>
-        /// Remove previously created grade beams.
-        /// </summary>
-        public static void ClearGradeBeams(Document doc, Transaction tr)
-        {
-            var db = doc.Database;
-
-            // --- 1. Remove any grade beams listed in the QueryNOD ---
-            DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-            if (nod.Contains("FD_GRADEBEAM"))
-            {
-                Xrecord xr = (Xrecord)tr.GetObject(nod.GetAt("FD_GRADEBEAM"), OpenMode.ForWrite);
-                if (xr.Data != null)
-                {
-                    foreach (var tv in xr.Data)
-                    {
-                        if (tv.TypeCode == (int)DxfCode.Handle && tv.Value != null)
-                        {
-                            try
-                            {
-                                Handle h = new Handle(Convert.ToInt64(tv.Value));
-                                ObjectId id = db.GetObjectId(false, h, 0);
-                                if (!id.IsNull)
-                                {
-                                    var ent = tr.GetObject(id, OpenMode.ForWrite, false) as Entity;
-                                    ent?.Erase();
-                                }
-                            }
-                            catch { }
-                        }
-                    }
-
-                    // Clear the Xrecord after deletion
-                    xr.Data = new ResultBuffer();
-                }
-            }
-
-            // --- 2. Scan ModelSpace for polylines with FD_GRADEBEAM XData ---
-            BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-            BlockTableRecord btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
-
-            foreach (ObjectId id in btr)
-            {
-                try
-                {
-                    Entity ent = tr.GetObject(id, OpenMode.ForWrite) as Entity;
-                    if (ent == null) continue;
-
-                    ResultBuffer xdata = ent.XData;
-                    if (xdata == null) continue;
-
-                    foreach (TypedValue tv in xdata)
-                    {
-                        if (tv.TypeCode == (int)DxfCode.ExtendedDataRegAppName && tv.Value != null
-                            && tv.Value.ToString() == "FD_GRADEBEAM")
-                        {
-                            ent.Erase();
-                            break; // move to next entity
-                        }
-                    }
-                }
-                catch { }
-            }
-
-            // --- 3. Clear in-memory tracking dictionary ---
-            if (_gradeBeams.ContainsKey(doc))
-                _gradeBeams[doc].Clear();
         }
 
 

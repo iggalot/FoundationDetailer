@@ -91,34 +91,40 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                             ObjectId id;
                             var entryResult = new HandleEntry { GroupName = group.Key, HandleKey = handleStr };
 
-                            if (!TryGetObjectIdFromHandleString(db, handleStr, out id))
+                            try
                             {
-                                entryResult.Status = "Invalid";
-                                keysToRemove.Add(handleStr);
-                            }
-                            else
-                            {
-                                try
+                                if (!TryGetObjectIdFromHandleString(db, handleStr, out id))
                                 {
+                                    entryResult.Status = "Invalid";
+                                    keysToRemove.Add(handleStr);
+                                }
+                                else
+                                {
+
                                     Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
                                     entryResult.Status = (ent == null || ent.IsErased) ? "Missing" : "Valid";
                                     entryResult.Id = id;
                                     if (entryResult.Status != "Valid") keysToRemove.Add(handleStr);
                                 }
-                                catch
-                                {
-                                    entryResult.Status = "Error";
-                                    keysToRemove.Add(handleStr);
-                                }
+                            }
+                            catch
+                            {
+                                entryResult.Status = "Error";
+                                keysToRemove.Add(handleStr);
                             }
 
                             results.Add(entryResult);
                         }
 
-                        if (cleanStale && keysToRemove.Count > 0)
+                        
+                        
+                       if (keysToRemove.Count > 0)
                         {
                             sub.UpgradeOpen();
-                            foreach (string key in keysToRemove) sub.Remove(key);
+                            foreach (string handle_string in keysToRemove)
+                            {
+                                NODManager.RemoveHandleFromSubDictionary(tr, db, group.Key, handle_string);
+                            }
                         }
                     }
                     tr.Commit();

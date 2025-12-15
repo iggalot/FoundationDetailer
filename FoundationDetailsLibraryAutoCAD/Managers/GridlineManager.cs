@@ -8,13 +8,13 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
     public static class GridlineManager
     {
         public static (List<List<Point3d>> Horizontal, List<List<Point3d>> Vertical)
-            ComputeBothGridlines(Polyline pl, double maxSpacing, int vertexCount)
+            ComputeBothGridlines(Polyline pl, double horiz_min, double horiz_max, double vert_min, double vert_max, int vertexCount)
         {
-            ValidateInputs(pl, maxSpacing, vertexCount);
+            ValidateInputs(pl, horiz_min, horiz_max, vert_min, vert_max, vertexCount);
 
             return (
-                ComputeGridlines(pl, maxSpacing, vertexCount, horizontal: true),
-                ComputeGridlines(pl, maxSpacing, vertexCount, horizontal: false)
+                ComputeGridlines(pl, horiz_max, vertexCount, horizontal: true), // horiz prelim lines
+                ComputeGridlines(pl, vert_max, vertexCount, horizontal: false)  // vert prelim lines
             );
         }
 
@@ -22,11 +22,19 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
         // Internal Helpers
         // -------------------------
 
-        private static void ValidateInputs(Polyline pl, double maxSpacing, int vertexCount)
+        private static void ValidateInputs(Polyline pl, double horiz_min, double horiz_max, double vert_min, double vert_max, int vertexCount)
         {
             if (pl == null) throw new ArgumentNullException(nameof(pl));
             if (!pl.Closed) throw new ArgumentException("Polyline must be closed.", nameof(pl));
-            if (maxSpacing <= 0) throw new ArgumentException("Max spacing must be > 0.", nameof(maxSpacing));
+            if (horiz_min <= 0) throw new ArgumentException("Max spacing must be > 0.", nameof(horiz_min));
+            if (horiz_max <= 0) throw new ArgumentException("Max spacing must be > 0.", nameof(horiz_max));
+            if (vert_min <= 0) throw new ArgumentException("Max spacing must be > 0.", nameof(vert_min));
+            if (vert_max <= 0) throw new ArgumentException("Max spacing must be > 0.", nameof(vert_max));
+            if (horiz_min > horiz_max) throw new ArgumentException("Horiz. minimum must be less than or equal to maximum", nameof(horiz_min));
+            if (vert_min > vert_max) throw new ArgumentException("Vert. minimum must be less than or equal to maximum", nameof(vert_min));
+
+
+
             if (vertexCount < 2) throw new ArgumentException("vertexCount must be >= 2.", nameof(vertexCount));
         }
 

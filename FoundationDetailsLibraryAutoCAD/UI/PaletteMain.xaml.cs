@@ -21,8 +21,23 @@ namespace FoundationDetailer.UI
         private FoundationModel _currentModel = new FoundationModel();
         private PierControl PierUI;
 
-        private int _boundaryPollAttempts = 0;
-        private const int MaxPollAttempts = 25;
+        public double HorzGBMinSpacing => ParseDoubleOrDefault(TxtGBHorzMin.Text, 5.0);
+        public double HorzGBMaxSpacing => ParseDoubleOrDefault(TxtGBHorzMax.Text, 12.0);
+        public double VertGBMinSpacing => ParseDoubleOrDefault(TxtGBVertMin.Text, 5.0);
+        public double VertGBMaxSpacing => ParseDoubleOrDefault(TxtGBVertMax.Text, 12.0);
+
+        private readonly Brush _invalidBrush = Brushes.LightCoral;
+        private readonly Brush _validBrush = Brushes.White;
+
+
+        private double ParseDoubleOrDefault(string text, double defaultValue)
+        {
+            if (double.TryParse(text, out double val))
+                return val;
+            return defaultValue;
+        }
+
+
 
         public FoundationModel CurrentModel
         {
@@ -90,7 +105,52 @@ namespace FoundationDetailer.UI
             };
             BtnClearGradeBeams.Click += BtnClearGradeBeams_Click;
 
+            TxtGBHorzMin.TextChanged += Spacing_TextChanged;
+            TxtGBHorzMax.TextChanged += Spacing_TextChanged;
+            TxtGBVertMin.TextChanged += Spacing_TextChanged;
+            TxtGBVertMax.TextChanged += Spacing_TextChanged;
         }
+
+        private void Spacing_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (sender is TextBox tb)
+            {
+                if (IsValidSpacing(tb.Text, out double val))
+                {
+                    tb.Background = _validBrush;
+                    // Optionally store the value somewhere if needed
+                }
+                else
+                {
+                    tb.Background = _invalidBrush;
+                }
+                // Optionally, validate input and store updated spacing values
+                double hMin = HorzGBMinSpacing;
+                double hMax = HorzGBMaxSpacing;
+                double vMin = VertGBMinSpacing;
+                double vMax = VertGBMaxSpacing;
+
+                // For debug or status update
+                TxtStatus.Text = $"H: {hMin}-{hMax}, V: {vMin}-{vMax}";
+            }
+        }
+
+        private bool IsValidSpacing(string text, out double value)
+        {
+            value = 0;
+
+            // Must parse as double
+            if (!double.TryParse(text, out value))
+                return false;
+
+            // Must be non-negative
+            if (value < 0)
+                return false;
+
+            // Optionally, you could check for min <= max if you have both values
+            return true;
+        }
+
 
         /// <summary>
         /// Queries the NOD for a list of handles in each subdirectory.
@@ -288,10 +348,15 @@ namespace FoundationDetailer.UI
 
             try
             {
+                double horizMin = HorzGBMinSpacing;
+                double horizMax = HorzGBMaxSpacing;
+                double vertMin =  VertGBMinSpacing;
+                double vertMax =  VertGBMaxSpacing;
+
                 using (doc.LockDocument())
                 {
                     // Let GradeBeamManager handle everything internally
-                    GradeBeamManager.CreateBothGridlines(boundary, maxSpacing, vertexCount);
+                    GradeBeamManager.CreateBothGridlines(boundary, horizMin, horizMax, vertMin, vertMax, vertexCount);
 
                     doc.Editor.WriteMessage("\nGrade beams created successfully.");
                 }
