@@ -55,7 +55,7 @@ namespace FoundationDetailer.Managers
         /// Function to add a polyline boundary handle to the NOD
         /// </summary>
         /// <param name="id"></param>
-        private static void AddBoundaryHandleToNOD(ObjectId id)
+        internal static void AddBoundaryHandleToNOD(ObjectId id)
         {
             Document doc = Autodesk.AutoCAD.ApplicationServices.Application
                                 .DocumentManager.MdiActiveDocument;

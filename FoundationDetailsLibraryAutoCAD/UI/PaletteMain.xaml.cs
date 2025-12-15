@@ -236,7 +236,7 @@ namespace FoundationDetailer.UI
             }
             else
             {
-                NODManager.AddBoundaryHandleToNOD(result.ObjectId);  // store the boundary handle in the NOD
+                PolylineBoundaryManager.AddBoundaryHandleToNOD(result.ObjectId);  // store the boundary handle in the NOD
                 ed.WriteMessage($"\nBoundary selected: {result.ObjectId.Handle}");
             }
         }
