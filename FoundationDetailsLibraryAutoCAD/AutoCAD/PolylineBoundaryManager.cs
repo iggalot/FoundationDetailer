@@ -51,6 +51,40 @@ namespace FoundationDetailer.Managers
             Initialize();
         }
 
+        /// <summary>
+        /// Function to add a polyline boundary handle to the NOD
+        /// </summary>
+        /// <param name="id"></param>
+        private static void AddBoundaryHandleToNOD(ObjectId id)
+        {
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application
+                                .DocumentManager.MdiActiveDocument;
+            Database db = doc.Database;
+
+            using (doc.LockDocument())
+            {
+                using (Transaction tr = db.TransactionManager.StartTransaction())
+                {
+                    // Ensure NOD structure exists
+                    NODManager.InitFoundationNOD(tr);
+
+                    DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+
+                    DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(NODManager.ROOT), OpenMode.ForWrite);
+
+                    DBDictionary boundaryDict = (DBDictionary)tr.GetObject(root.GetAt(NODManager.KEY_BOUNDARY), OpenMode.ForWrite);
+
+                    // Store handle (uppercase, same as everywhere else)
+                    string handleStr = id.Handle.ToString().ToUpperInvariant();
+
+                    // Use your existing helper
+                    NODManager.AddHandleToDictionary(tr, boundaryDict, handleStr);
+
+                    tr.Commit();
+                }
+            }
+        }
+
         #region Initialization & Attach/Detach
 
         public static void Initialize()
@@ -215,7 +249,7 @@ namespace FoundationDetailer.Managers
                     ent.DowngradeOpen();
 
                     // Persist handle via NODManager
-                    NODManager.AddBoundaryHandle(candidateId);
+                    AddBoundaryHandleToNOD(candidateId);
 
                     // Update in-memory map
                     _docBoundaryIds.AddOrUpdate(doc, candidateId, (d, old) => candidateId);

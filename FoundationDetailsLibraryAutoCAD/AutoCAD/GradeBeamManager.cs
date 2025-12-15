@@ -198,7 +198,7 @@ namespace FoundationDetailer.AutoCAD
             _gradeBeams[doc].Add(pl.ObjectId);
 
             // Store the grade beams in its NOD
-            NODManager.AddGradeBeamHandle(pl.ObjectId);
+            AddGradeBeamHandleToNOD(pl.ObjectId);
         }
 
         private static void SetGradeBeamXData(ObjectId id, Transaction tr)
@@ -208,5 +208,41 @@ namespace FoundationDetailer.AutoCAD
             var ent = (Entity)tr.GetObject(id, OpenMode.ForWrite);
             ent.XData = new ResultBuffer(new TypedValue((int)DxfCode.ExtendedDataRegAppName, NODManager.KEY_GRADEBEAM));
         }
+
+        /// <summary>
+        /// Adds a grade beam polyline handle to the EE_Foundation NOD under FD_GRADEBEAM.
+        /// </summary>
+        /// <param name="id">The ObjectId of the grade beam polyline.</param>
+        private static void AddGradeBeamHandleToNOD(ObjectId id)
+        {
+            if (id.IsNull || !id.IsValid) return;
+
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+
+            Database db = doc.Database;
+
+            using (doc.LockDocument())
+            {
+                using (Transaction tr = db.TransactionManager.StartTransaction())
+                {
+                    // Ensure EE_Foundation NOD and subdictionaries exist
+                    NODManager.InitFoundationNOD(tr);
+
+                    DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+                    DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(NODManager.ROOT), OpenMode.ForWrite);
+                    DBDictionary gradebeamDict = (DBDictionary)tr.GetObject(root.GetAt(NODManager.KEY_GRADEBEAM), OpenMode.ForWrite);
+
+                    // Convert ObjectId handle to uppercase string
+                    string handleStr = id.Handle.ToString().ToUpperInvariant();
+
+                    // Add to NOD using existing helper
+                    NODManager.AddHandleToDictionary(tr, gradebeamDict, handleStr);
+
+                    tr.Commit();
+                }
+            }
+        }
+
     }
 }

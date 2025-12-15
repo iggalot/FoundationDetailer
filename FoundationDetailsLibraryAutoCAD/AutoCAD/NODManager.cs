@@ -26,230 +26,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 
         private static readonly string[] KNOWN_SUBDIRS = { KEY_BOUNDARY,  KEY_GRADEBEAM };
 
-        // ==========================================================
-        //  HELPER UTILITIES
-        // ==========================================================
-        internal static DBDictionary GetOrCreateRootDictionary(Transaction tr, Database db)
-        {
-            if (tr == null || db == null)
-                return null;
 
-            // Open the top-level Named Objects Dictionary
-            DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
-            if (nod == null)
-                return null;
-
-            // Check if EE_Foundation exists
-            if (!nod.Contains(ROOT))
-            {
-                DBDictionary root = new DBDictionary();
-                nod.SetAt(ROOT, root);
-                tr.AddNewlyCreatedDBObject(root, true);
-
-                Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-                doc.Editor.WriteMessage("\nCreated root dictionary: " + ROOT);
-                return root;
-            }
-
-            // Return existing EE_Foundation
-            return (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
-        }
-
-        /// <summary>
-        /// Ensures a subdictionary exists, creates if missing.
-        /// </summary>
-        internal static DBDictionary GetOrCreateSubDictionary(Transaction tr, Database db, string subKey)
-        {
-            if (tr == null || db == null || string.IsNullOrWhiteSpace(subKey))
-                return null;
-
-            // Get the top-level NOD
-            DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-            if (nod == null || !nod.Contains(ROOT))
-                return null;
-
-            // Open root for write
-            DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
-            if (root == null)
-                return null;
-
-            // Check if subdictionary exists
-            if (!root.Contains(subKey))
-            {
-                // Create subdictionary under EE_Foundation
-                DBDictionary sub = new DBDictionary();
-                root.SetAt(subKey, sub);
-                tr.AddNewlyCreatedDBObject(sub, true);
-                return sub;
-            }
-
-            // Return existing subdictionary opened for write
-            return (DBDictionary)tr.GetObject(root.GetAt(subKey), OpenMode.ForWrite);
-        }
-
-        // --------------------------------------------------------
-        //  Generic helper to get or create a subdictionary under "EE_Foundation"
-        // --------------------------------------------------------
-        internal static DBDictionary GetSubDictionary(Transaction tr, Database db, string subKey)
-        {
-            if (tr == null || db == null || string.IsNullOrWhiteSpace(subKey))
-                return null;
-
-            // Get the top-level NOD
-            DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-            if (nod == null || !nod.Contains(ROOT))
-                return null;
-
-            // Get the root EE_Foundation dictionary
-            DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForRead);
-            if (root == null || !root.Contains(subKey))
-                return null;
-
-            // Return the subdictionary (FD_BOUNDARY or FD_GRADEBEAM)
-            return (DBDictionary)tr.GetObject(root.GetAt(subKey), OpenMode.ForRead);
-        }
-
-
-
-
-
-
-
-        /// <summary>
-        /// Adds a handle as an Xrecord to a dictionary if it doesn't exist.
-        /// </summary>
-        internal static void AddHandleToDictionary(Transaction tr, DBDictionary dict, string handle)
-        {
-            if (!dict.Contains(handle))
-            {
-                Xrecord xr = new Xrecord
-                {
-                    Data = new ResultBuffer(new TypedValue((int)DxfCode.Handle, handle))
-                };
-                dict.SetAt(handle, xr);
-                tr.AddNewlyCreatedDBObject(xr, true);
-            }
-        }
-
-        /// <summary>
-        /// Function to add a polyline boundary handle to the NOD
-        /// </summary>
-        /// <param name="id"></param>
-        public static void AddBoundaryHandle(ObjectId id)
-        {
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application
-                                .DocumentManager.MdiActiveDocument;
-            Database db = doc.Database;
-
-            using (doc.LockDocument())
-            {
-                using (Transaction tr = db.TransactionManager.StartTransaction())
-                {
-                    // Ensure NOD structure exists
-                    InitFoundationNOD(tr);
-
-                    DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-
-                    DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
-
-                    DBDictionary boundaryDict = (DBDictionary)tr.GetObject(root.GetAt(KEY_BOUNDARY), OpenMode.ForWrite);
-
-                    // Store handle (uppercase, same as everywhere else)
-                    string handleStr = id.Handle.ToString().ToUpperInvariant();
-
-                    // Use your existing helper
-                    AddHandleToDictionary(tr, boundaryDict, handleStr);
-
-                    tr.Commit();
-                }
-            }
-        }
-
-        /// <summary>
-        /// Adds a grade beam polyline handle to the EE_Foundation NOD under FD_GRADEBEAM.
-        /// </summary>
-        /// <param name="id">The ObjectId of the grade beam polyline.</param>
-        public static void AddGradeBeamHandle(ObjectId id)
-        {
-            if (id.IsNull || !id.IsValid) return;
-
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            if (doc == null) return;
-
-            Database db = doc.Database;
-
-            using (doc.LockDocument())
-            {
-                using (Transaction tr = db.TransactionManager.StartTransaction())
-                {
-                    // Ensure EE_Foundation NOD and subdictionaries exist
-                    InitFoundationNOD(tr);
-
-                    DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-                    DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
-                    DBDictionary gradebeamDict = (DBDictionary)tr.GetObject(root.GetAt(KEY_GRADEBEAM), OpenMode.ForWrite);
-
-                    // Convert ObjectId handle to uppercase string
-                    string handleStr = id.Handle.ToString().ToUpperInvariant();
-
-                    // Add to NOD using existing helper
-                    AddHandleToDictionary(tr, gradebeamDict, handleStr);
-
-                    tr.Commit();
-                }
-            }
-        }
-
-
-
-        /// <summary>
-        /// Validates that a string can be a hex handle.
-        /// </summary>
-        private static bool IsValidHexHandleString(string s)
-        {
-            if (string.IsNullOrEmpty(s)) return false;
-            foreach (char c in s)
-            {
-                bool digit = c >= '0' && c <= '9';
-                bool hex = (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f');
-                if (!digit && !hex) return false;
-            }
-            return true;
-        }
-
-        /// <summary>
-        /// Attempts to parse a handle string to a Handle object.
-        /// Accepts hex or decimal strings.
-        /// </summary>
-        private static bool TryParseHandleString(string s, out Handle handle)
-        {
-            handle = new Handle(0L);
-            if (string.IsNullOrWhiteSpace(s)) return false;
-            s = s.Trim();
-
-            if (s.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
-                s = s.Substring(2);
-
-            if (long.TryParse(s, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out long value) ||
-                long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out value))
-            {
-                handle = new Handle(value);
-                return true;
-            }
-
-            return false;
-        }
-
-        // ==========================================================
-        //  QueryNOD ENTRY REPRESENTATION
-        // ==========================================================
-        public class HandleEntry
-        {
-            public string GroupName;
-            public string HandleKey;
-            public ObjectId Id;
-            public string Status; // "Valid", "Missing", "Invalid", "Error"
-        }
 
         // ==========================================================
         //  COMMAND: INITIALIZE FOUNDATION STRUCTURE
@@ -406,8 +183,8 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                     removed.Add($"[{e.GroupName}] {e.HandleKey}");
 
             string msg = removed.Count > 0 ?
-                "Removed stale handles:\n" + string.Join("\n", removed) :
-                "No stale handles found.";
+                "Removed stale handle_strings:\n" + string.Join("\n", removed) :
+                "No stale handle_strings found.";
 
             MessageBox.Show(msg, "CleanFoundationNOD");
         }
@@ -617,7 +394,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                         foreach (var kvp in importData)
                         {
                             string subName = kvp.Key;
-                            List<string> handles = kvp.Value ?? new List<string>();
+                            List<string> handle_strings = kvp.Value ?? new List<string>();
 
                             // Ensure subdictionary exists
                             DBDictionary subDict;
@@ -632,12 +409,13 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                                 subDict = (DBDictionary)tr.GetObject(root.GetAt(subName), OpenMode.ForWrite);
                             }
 
-                            // Import handles
-                            foreach (string handle in handles)
+                            // Import handle_strings
+                            foreach (string handle_string in handle_strings)
                             {
-                                if (IsValidHexHandleString(handle))
+                                Handle handle;
+                                if (TryParseHandle(handle_string, out handle))
                                 {
-                                    AddHandleToDictionary(tr, subDict, handle);
+                                    AddHandleToDictionary(tr, subDict, handle_string);
                                 }
                             }
                         }
@@ -651,7 +429,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                     }
                 }
 
-                CleanFoundationNOD();  // clean up stale handles that don't have an associated drawing object in the drawing.
+                CleanFoundationNOD();  // clean up stale handle_strings that don't have an associated drawing object in the drawing.
             }
         }
 
@@ -721,69 +499,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             }
         }
 
-        // ==========================================================
-        //  REMOVE SPECIFIC HANDLE
-        // ==========================================================
-        [CommandMethod("RemoveNODRecord")]
-        public void RemoveNODRecord()
-        {
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            Database db = doc.Database;
-            Editor ed = doc.Editor;
 
-            // Prompt for subdictionary
-            PromptStringOptions pso_sub = new PromptStringOptions("\nEnter subdictionary to remove from [FD_BOUNDARY/FD_GRADEBEAM]:")
-            {
-                AllowSpaces = false
-            };
-
-            PromptResult resSub = ed.GetString(pso_sub);
-            if (resSub.Status != PromptStatus.OK) return;
-
-            string subDictName = resSub.StringResult.Trim().ToUpperInvariant();
-            if (subDictName != KEY_BOUNDARY && subDictName != KEY_GRADEBEAM)
-            {
-                ed.WriteMessage("\nInvalid subdictionary. Must be FD_BOUNDARY or FD_GRADEBEAM.");
-                return;
-            }
-
-            // Prompt for handle
-            PromptStringOptions pso = new PromptStringOptions("\nEnter handle to remove:")
-            {
-                AllowSpaces = false
-            };
-
-            PromptResult resHandle = ed.GetString(pso);
-            if (resHandle.Status != PromptStatus.OK) return;
-
-            string handleStr = resHandle.StringResult.ToUpperInvariant();
-            if (!IsValidHexHandleString(handleStr)) { ed.WriteMessage("\nInvalid handle string."); return; }
-
-            using (Transaction tr = db.TransactionManager.StartTransaction())
-            {
-                try
-                {
-                    DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
-                    if (!nod.Contains(ROOT)) { ed.WriteMessage("\nEE_Foundation dictionary does not exist."); return; }
-
-                    DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
-                    if (!root.Contains(subDictName)) { ed.WriteMessage($"\nSubdictionary {subDictName} does not exist."); return; }
-
-                    DBDictionary subDict = (DBDictionary)tr.GetObject(root.GetAt(subDictName), OpenMode.ForWrite);
-                    if (!subDict.Contains(handleStr)) { ed.WriteMessage($"\nHandle {handleStr} not found in {subDictName}."); return; }
-
-                    Xrecord xr = (Xrecord)tr.GetObject(subDict.GetAt(handleStr), OpenMode.ForWrite);
-                    xr.Erase();
-
-                    tr.Commit();
-                    ed.WriteMessage($"\nHandle {handleStr} removed from {subDictName}.");
-                }
-                catch (System.Exception ex)
-                {
-                    ed.WriteMessage($"\nTransaction failed: {ex.Message}");
-                }
-            }
-        }
 
         // ==========================================================
         //  CLEAN ALL QueryNOD ENTRIES
@@ -798,7 +514,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         //  GET SUBDICTIONARY
         // ==========================================================
         /// <summary>
-        /// Utility function that return a subdictionary of a specified name.
+        /// Utility function that return all handle_strings of subdictionary of a specified name.
         /// </summary>
         /// <param name="tr"></param>
         /// <param name="name"></param>
@@ -807,41 +523,273 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         // --------------------------------------------------------
         //  Get all handle strings from a subdictionary
         // --------------------------------------------------------
-        internal static List<string> GetHandles(Transaction tr, DBDictionary subDict)
+        // ==========================================================
+        //  HELPER UTILITIES
+        // ==========================================================
+        internal static DBDictionary GetOrCreateRootDictionary(Transaction tr, Database db)
         {
-            List<string> result = new List<string>();
+            if (tr == null || db == null)
+                return null;
+
+            // Open the top-level Named Objects Dictionary
+            DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+            if (nod == null)
+                return null;
+
+            // Check if EE_Foundation exists
+            if (!nod.Contains(ROOT))
+            {
+                DBDictionary root = new DBDictionary();
+                nod.SetAt(ROOT, root);
+                tr.AddNewlyCreatedDBObject(root, true);
+
+                Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+                doc.Editor.WriteMessage("\nCreated root dictionary: " + ROOT);
+                return root;
+            }
+
+            // Return existing EE_Foundation
+            return (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
+        }
+
+        /// <summary>
+        /// Ensures a subdictionary exists, creates if missing.
+        /// </summary>
+        internal static DBDictionary GetOrCreateSubDictionary(Transaction tr, Database db, string subKey)
+        {
+            if (tr == null || db == null || string.IsNullOrWhiteSpace(subKey))
+                return null;
+
+            // Get the top-level NOD
+            DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+            if (nod == null || !nod.Contains(ROOT))
+                return null;
+
+            // Open root for write
+            DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
+            if (root == null)
+                return null;
+
+            // Check if subdictionary exists
+            if (!root.Contains(subKey))
+            {
+                // Create subdictionary under EE_Foundation
+                DBDictionary sub = new DBDictionary();
+                root.SetAt(subKey, sub);
+                tr.AddNewlyCreatedDBObject(sub, true);
+                return sub;
+            }
+
+            // Return existing subdictionary opened for write
+            return (DBDictionary)tr.GetObject(root.GetAt(subKey), OpenMode.ForWrite);
+        }
+
+        // --------------------------------------------------------
+        //  Generic helper to get or create a subdictionary under "EE_Foundation"
+        // --------------------------------------------------------
+        internal static DBDictionary GetSubDictionary(Transaction tr, Database db, string subKey)
+        {
+            if (tr == null || db == null || string.IsNullOrWhiteSpace(subKey))
+                return null;
+
+            // Get the top-level NOD
+            DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+            if (nod == null || !nod.Contains(ROOT))
+                return null;
+
+            // Get the root EE_Foundation dictionary
+            DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForRead);
+            if (root == null || !root.Contains(subKey))
+                return null;
+
+            // Return the subdictionary (FD_BOUNDARY or FD_GRADEBEAM)
+            return (DBDictionary)tr.GetObject(root.GetAt(subKey), OpenMode.ForRead);
+        }
+
+        /// <summary>
+        /// Adds a handle as an Xrecord to a dictionary if it doesn't exist.
+        /// </summary>
+        internal static void AddHandleToDictionary(Transaction tr, DBDictionary dict, string handle)
+        {
+            if (!dict.Contains(handle))
+            {
+                Xrecord xr = new Xrecord
+                {
+                    Data = new ResultBuffer(new TypedValue((int)DxfCode.Handle, handle))
+                };
+                dict.SetAt(handle, xr);
+                tr.AddNewlyCreatedDBObject(xr, true);
+            }
+        }
+        public class HandleEntry
+        {
+            public string GroupName;
+            public string HandleKey;
+            public ObjectId Id;
+            public string Status; // "Valid", "Missing", "Invalid", "Error"
+        }
+
+        /// <summary>
+        /// Returns all keys from the given AutoCAD sub-dictionary.
+        /// Keys are returned as raw strings (typically handle strings) with no validation.
+        /// </summary>
+        /// <param name="subDict">Sub-dictionary to enumerate (must not be null).</param>
+        /// <returns>List of dictionary keys.</returns>
+        /// <exception cref="ArgumentNullException">Thrown if <paramref name="subDict"/> is null.</exception>
+        internal static List<string> GetAllHandlesFromSubDictionary(DBDictionary subDict)
+        {
+            if (subDict == null)
+                throw new ArgumentNullException(nameof(subDict));
+
+            var result = new List<string>();
+
+            // Enumerate all dictionary entries and collect their keys
             foreach (DBDictionaryEntry entry in subDict)
             {
                 result.Add(entry.Key);
             }
+
             return result;
         }
 
-        // --------------------------------------------------------
-        //  Try convert handle string → ObjectId
-        // --------------------------------------------------------
+        /// <summary>
+        /// Returns all valid, non-erased ObjectIds from handle strings stored in a sub-dictionary.
+        /// Invalid handle_strings, erased objects, or stale references are ignored.
+        /// </summary>
+        /// <param name="tr">Active AutoCAD transaction for object validation.</param>
+        /// <param name="db">Database in which handle_strings are resolved.</param>
+        /// <param name="subDict">Sub-dictionary containing handle strings; null returns empty list.</param>
+        /// <returns>List of valid, readable ObjectIds.</returns>
+
+        internal static List<ObjectId> GetAllValidObjectIdsFromSubDictionary(
+            Transaction tr, Database db, DBDictionary subDict)
+        {
+            var validIds = new List<ObjectId>();
+
+            // Missing sub-dictionary is not an error; return empty result
+            if (subDict == null)
+                return validIds;
+
+            foreach (DBDictionaryEntry entry in subDict)
+            {
+                // Attempt to resolve the dictionary key into an ObjectId
+                if (!TryGetObjectIdFromHandleString(db, entry.Key, out ObjectId id))
+                    continue;
+
+                // Verify the ObjectId can be opened and is not erased
+                if (IsValidReadableObject(tr, id))
+                    validIds.Add(id);
+            }
+
+            return validIds;
+        }
+
+        /// <summary>
+        /// Attempts to resolve a handle string into a valid ObjectId in the database.
+        /// Supports hex (with or without "0x") and decimal formats; no transaction required.
+        /// </summary>
+        /// <param name="db">Database in which to resolve the handle.</param>
+        /// <param name="handleStr">String representation of the handle.</param>
+        /// <param name="id">Receives the resolved ObjectId, or ObjectId.Null if unsuccessful.</param>
+        /// <returns>True if parsing and resolution succeed; otherwise false.</returns>
         internal static bool TryGetObjectIdFromHandleString(
             Database db, string handleStr, out ObjectId id)
         {
             id = ObjectId.Null;
 
-            if (string.IsNullOrWhiteSpace(handleStr))
+            // Parse the string into a Handle structure
+            if (!TryParseHandle(handleStr, out Handle handle))
+                return false;
+
+            // Resolve the Handle into an ObjectId
+            return TryGetObjectIdFromHandle(db, handle, out id);
+        }
+
+        /// <summary>
+        /// Attempts to parse a string into an AutoCAD Handle, trying hex first, then decimal as fallback.
+        /// </summary>
+        /// <param name="handleString">String representation of the handle.</param>
+        /// <param name="handle">Receives the parsed Handle if successful.</param>
+        /// <returns>True if parsing succeeds; otherwise false.</returns>
+        internal static bool TryParseHandle(string handleString, out Handle handle)
+        {
+            handle = default;
+
+            if (string.IsNullOrWhiteSpace(handleString))
+                return false;
+
+            string s = handleString.Trim();
+
+            // Remove optional "0x" prefix if present
+            if (s.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+                s = s.Substring(2);
+
+            // 1) Try hexadecimal parsing (canonical AutoCAD format)
+            if (long.TryParse(
+                    s,
+                    System.Globalization.NumberStyles.HexNumber,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out long hexValue))
+            {
+                handle = new Handle(hexValue);
+                return true;
+            }
+
+            // 2) Defensive fallback: decimal parsing
+            if (long.TryParse(
+                    s,
+                    System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out long decValue))
+            {
+                handle = new Handle(decValue);
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Checks if an ObjectId is valid, readable, and not erased within a transaction.
+        /// </summary>
+        /// <param name="tr">Active AutoCAD transaction.</param>
+        /// <param name="id">ObjectId to validate.</param>
+        /// <returns>True if valid and readable; otherwise false.</returns>
+        internal static bool IsValidReadableObject(Transaction tr, ObjectId id)
+        {
+            // Quick structural checks
+            if (id.IsNull || !id.IsValid)
                 return false;
 
             try
             {
-                handleStr = handleStr.Trim();
-                if (handleStr.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
-                    handleStr = handleStr.Substring(2);
+                // Attempt to open the object for read
+                var obj = tr.GetObject(id, OpenMode.ForRead, false);
+                return obj != null && !obj.IsErased;
+            }
+            catch (Autodesk.AutoCAD.Runtime.Exception)
+            {
+                // Covers stale ObjectIds, wrong database, or invalid access
+                return false;
+            }
+        }
 
-                long handleValue;
-                if (!long.TryParse(handleStr, System.Globalization.NumberStyles.HexNumber,
-                    System.Globalization.CultureInfo.InvariantCulture, out handleValue))
-                    return false;
+        /// <summary>
+        /// Resolves an AutoCAD Handle to a valid ObjectId in the database.
+        /// </summary>
+        /// <param name="db">Database in which to resolve the handle.</param>
+        /// <param name="handle">Handle to resolve.</param>
+        /// <param name="id">Receives the resolved ObjectId if successful.</param>
+        /// <returns>True if resolution succeeds; otherwise false.</returns>
+        internal static bool TryGetObjectIdFromHandle(
+            Database db, Handle handle, out ObjectId id)
+        {
+            id = ObjectId.Null;
 
-                Handle h = new Handle(handleValue);
-                id = db.GetObjectId(false, h, 0);
-                return id.IsValid;
+            try
+            {
+                id = db.GetObjectId(false, handle, 0);
+                return id.IsValid && !id.IsNull;
             }
             catch
             {
@@ -850,110 +798,101 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             }
         }
 
-        // --------------------------------------------------------
-        //  Get all valid ObjectIds from a subdictionary
-        // --------------------------------------------------------
-        internal static List<ObjectId> GetValidObjectIds(
-            Transaction tr, Database db, DBDictionary subDict)
+        /// <summary>
+        /// Retrieves the first valid, readable entity from a named sub-dictionary.
+        /// </summary>
+        /// <param name="tr">Active AutoCAD transaction.</param>
+        /// <param name="db">Database containing the sub-dictionary.</param>
+        /// <param name="subDictKey">Key identifying the sub-dictionary.</param>
+        /// <param name="oid">Receives the ObjectId of the first valid entity if found.</param>
+        /// <returns>True if a valid entity is found; otherwise false.</returns>
+        public static bool TryGetFirstEntity(
+            Transaction tr, Database db, string subDictKey, out ObjectId oid)
         {
-            List<ObjectId> validIds = new List<ObjectId>();
-            List<string> handles = GetHandles(tr, subDict);
+            oid = ObjectId.Null;
 
-            foreach (string handleStr in handles)
+            // Retrieve the requested sub-dictionary
+            var subDict = GetSubDictionary(tr, db, subDictKey);
+            if (subDict == null || subDict.Count == 0)
+                return false;
+
+            // Evaluate the first entry only
+            foreach (DBDictionaryEntry entry in subDict)
             {
-                ObjectId id;
-                if (TryGetObjectIdFromHandleString(db, handleStr, out id))
-                {
-                    try
-                    {
-                        DBObject obj = tr.GetObject(id, OpenMode.ForRead, false);
-                        if (obj != null && !obj.IsErased)
-                            validIds.Add(id);
-                    }
-                    catch
-                    {
-                        // ignore invalid objects
-                    }
-                }
-            }
-
-            return validIds;
-        }
-
-        // --------------------------------------------------------
-        //  Get a single ObjectId from a subdictionary (FD_BOUNDARY)
-        // --------------------------------------------------------
-        internal static ObjectId GetSingleObjectId(
-            Transaction tr, Database db, DBDictionary subDict)
-        {
-            List<ObjectId> ids = GetValidObjectIds(tr, db, subDict);
-            if (ids.Count > 0)
-                return ids[0];
-            return ObjectId.Null;
-        }
-
-        internal static bool TryParseHandle(string handleString, out Handle handle)
-        {
-            handle = new Handle(0);
-            if (string.IsNullOrWhiteSpace(handleString)) return false;
-
-            // Try hex (without prefix)
-            if (long.TryParse(handleString, System.Globalization.NumberStyles.HexNumber, null, out long hexValue))
-            {
-                handle = new Handle(hexValue);
-                return true;
-            }
-
-            // Try decimal
-            if (long.TryParse(handleString, out long dec))
-            {
-                handle = new Handle(dec);
-                return true;
-            }
-
-            // Try hex with "0x" prefix
-            try
-            {
-                var trimmed = handleString.Trim();
-                if (trimmed.StartsWith("0x", StringComparison.OrdinalIgnoreCase) &&
-                    long.TryParse(trimmed.Substring(2), System.Globalization.NumberStyles.HexNumber, null, out long prefixed))
-                {
-                    handle = new Handle(prefixed);
+                if (TryGetObjectIdFromHandleString(db, entry.Key, out oid)
+                    && IsValidReadableObject(tr, oid))
                     return true;
-                }
+
+                break;
             }
-            catch { }
 
             return false;
         }
 
-        public static bool TryGetFirstEntity(Transaction tr, Database db, string subDictKey, out ObjectId oid)
+        // ==========================================================
+        // REMOVE SPECIFIC HANDLE (Dynamic Sub-Dictionary)
+        // Using user entered handles.  
+        // ==========================================================
+        [CommandMethod("RemoveNODRecord")]
+        public void RemoveNODRecord()
         {
-            oid = ObjectId.Null;
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            Database db = doc.Database;
+            Editor ed = doc.Editor;
 
-            // Get subdictionary under EE_Foundation
-            DBDictionary subDict = GetSubDictionary(tr, db, subDictKey);
-            if (subDict == null || subDict.Count == 0)
-                return false;
+            // Prompt for sub-dictionary name
+            PromptStringOptions psoSub = new PromptStringOptions("\nEnter sub-dictionary name:");
+            psoSub.AllowSpaces = false;
+            PromptResult resSub = ed.GetString(psoSub);
+            if (resSub.Status != PromptStatus.OK) return;
 
-            // Pick the first handle key
-            string handleStr = null;
-            foreach (DBDictionaryEntry entry in subDict)
+            string subDictName = resSub.StringResult.Trim().ToUpperInvariant();
+
+            // Validate against known sub-dictionaries dynamically
+            if (Array.IndexOf(KNOWN_SUBDIRS, subDictName) < 0)
             {
-                handleStr = entry.Key;
-                break;
+                ed.WriteMessage("\nInvalid sub-dictionary. Must be one of: " + string.Join(", ", KNOWN_SUBDIRS));
+                return;
             }
 
-            if (string.IsNullOrWhiteSpace(handleStr))
-                return false;
+            // Prompt for handle to remove
+            PromptStringOptions psoHandle = new PromptStringOptions("\nEnter handle to remove:");
+            psoHandle.AllowSpaces = false;
+            PromptResult resHandle = ed.GetString(psoHandle);
+            if (resHandle.Status != PromptStatus.OK) return;
 
-            // Convert handle string to ObjectId
-            if (!TryGetObjectIdFromHandleString(db, handleStr, out oid))
-                return false;
+            string handleStr = resHandle.StringResult.Trim();
+            Handle handle;
+            if (!TryParseHandle(handleStr, out handle))
+            {
+                ed.WriteMessage("\nInvalid handle string.");
+                return;
+            }
 
-            return true;
+            using (Transaction tr = db.TransactionManager.StartTransaction())
+            {
+                try
+                {
+                    // Retrieve the sub-dictionary dynamically
+                    DBDictionary subDict = GetSubDictionary(tr, db, subDictName);
+                    if (subDict == null || !subDict.Contains(handleStr))
+                    {
+                        ed.WriteMessage($"\nHandle {handleStr} not found in sub-dictionary {subDictName}.");
+                        return;
+                    }
+
+                    // Erase the Xrecord associated with the handle
+                    Xrecord xr = (Xrecord)tr.GetObject(subDict.GetAt(handleStr), OpenMode.ForWrite);
+                    xr.Erase();
+
+                    tr.Commit();
+                    ed.WriteMessage($"\nHandle {handleStr} successfully removed from {subDictName}.");
+                }
+                catch (System.Exception ex)
+                {
+                    ed.WriteMessage($"\nTransaction failed: {ex.Message}");
+                }
+            }
         }
-
-
     }
 }
