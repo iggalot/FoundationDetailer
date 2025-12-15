@@ -609,6 +609,115 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 tr.AddNewlyCreatedDBObject(xr, true);
             }
         }
+
+        /// <summary>
+        /// Removes a handle from a specified sub-dictionary programmatically.
+        /// </summary>
+        /// <param name="tr">Active transaction.</param>
+        /// <param name="db">Database containing the sub-dictionary.</param>
+        /// <param name="subDictName">Name of the sub-dictionary.</param>
+        /// <param name="handleStr">Handle string of the entry to remove.</param>
+        /// <returns>True if removal succeeded; false if sub-dictionary or handle was not found.</returns>
+        internal static bool RemoveHandleFromSubDictionary(Transaction tr, Database db, string subDictName, string handleStr)
+        {
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+            if (db == null) throw new ArgumentNullException(nameof(db));
+            if (string.IsNullOrWhiteSpace(subDictName)) throw new ArgumentException("Sub-dictionary name required", nameof(subDictName));
+            if (string.IsNullOrWhiteSpace(handleStr)) throw new ArgumentException("Handle string required", nameof(handleStr));
+
+            // Trim and normalize handle
+            handleStr = handleStr.Trim();
+
+            // Attempt to parse handle
+            Handle handle;
+            if (!TryParseHandle(handleStr, out handle))
+                return false;
+
+            // Get sub-dictionary
+            DBDictionary subDict = GetSubDictionary(tr, db, subDictName);
+            if (subDict == null || !subDict.Contains(handleStr))
+                return false;
+
+            // Erase the Xrecord associated with the handle
+            try
+            {
+                Xrecord xr = (Xrecord)tr.GetObject(subDict.GetAt(handleStr), OpenMode.ForWrite);
+                xr.Erase();
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Removes a handle from any known sub-dictionary in the EE_Foundation dictionary if it exists.
+        /// Assumes the transaction is already started.
+        /// </summary>
+        internal static bool RemoveSingleHandleFromKnownSubDictionaries(Transaction tr, Database db, string handleStr)
+        {
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+            if (db == null) throw new ArgumentNullException(nameof(db));
+            if (string.IsNullOrWhiteSpace(handleStr)) throw new ArgumentException("Handle string required", nameof(handleStr));
+
+            handleStr = handleStr.Trim();
+            Handle handle;
+            if (!TryParseHandle(handleStr, out handle))
+                return false;
+
+            foreach (string subDictName in KNOWN_SUBDIRS)
+            {
+                DBDictionary subDict = GetSubDictionary(tr, db, subDictName);
+                if (subDict != null && subDict.Contains(handleStr))
+                {
+                    try
+                    {
+                        Xrecord xr = (Xrecord)tr.GetObject(subDict.GetAt(handleStr), OpenMode.ForWrite);
+                        xr.Erase();
+                        return true;
+                    }
+                    catch
+                    {
+                        // Ignore errors, continue to next sub-dictionary
+                    }
+                }
+            }
+
+            return false; // Not found
+        }
+
+        /// <summary>
+        /// Removes multiple handles from all known sub-dictionaries in a single transaction.
+        /// Leverages RemoveSingleHandleFromKnownSubDictionaries internally.
+        /// </summary>
+        internal static int RemoveMultipleHandlesFromKnownSubDictionaries(Database db, IEnumerable<string> handleStrings)
+        {
+            if (db == null) throw new ArgumentNullException(nameof(db));
+            if (handleStrings == null) throw new ArgumentNullException(nameof(handleStrings));
+
+            int removedCount = 0;
+
+            using (Transaction tr = db.TransactionManager.StartTransaction())
+            {
+                foreach (string handleStr in handleStrings)
+                {
+                    if (!string.IsNullOrWhiteSpace(handleStr))
+                    {
+                        if (RemoveSingleHandleFromKnownSubDictionaries(tr, db, handleStr.Trim()))
+                        {
+                            removedCount++;
+                        }
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            return removedCount;
+        }
+
+
         public class HandleEntry
         {
             public string GroupName;
