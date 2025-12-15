@@ -27,7 +27,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         private static readonly string[] KNOWN_SUBDIRS = { KEY_BOUNDARY,  KEY_GRADEBEAM };
 
 
-
         // ==========================================================
         //  COMMAND: INITIALIZE FOUNDATION STRUCTURE
         // ==========================================================
@@ -134,7 +133,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         }
 
         // ==========================================================
-        //  VIEW QueryNOD CONTENT
+        //  VIEW NOD CONTENT helper function
         // ==========================================================
         [CommandMethod("ViewFoundationNOD")]
         public static void ViewFoundationNOD()
@@ -499,17 +498,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             }
         }
 
-
-
-        // ==========================================================
-        //  CLEAN ALL QueryNOD ENTRIES
-        // ==========================================================
-        [CommandMethod("NODCleaner")]
-        public static void NODCleanAll()
-        {
-            IterateFoundationNod(true);
-        }
-
         // ==========================================================
         //  GET SUBDICTIONARY
         // ==========================================================
@@ -833,8 +821,8 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         // REMOVE SPECIFIC HANDLE (Dynamic Sub-Dictionary)
         // Using user entered handles.  
         // ==========================================================
-        [CommandMethod("RemoveNODRecord")]
-        public void RemoveNODRecord()
+        [CommandMethod("RemoveNODRecordManual")]
+        public void RemoveNODRecordManual()
         {
             Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
             Database db = doc.Database;
