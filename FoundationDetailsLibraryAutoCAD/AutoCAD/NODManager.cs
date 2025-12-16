@@ -320,6 +320,9 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             if (cleanStale && results.Count > 0)
             {
                 CleanupFoundationNod(results);
+
+                // Rescan so results reflect cleaned NOD
+                results = ScanFoundationNod();
             }
 
             return results;
