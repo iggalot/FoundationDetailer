@@ -58,81 +58,268 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             }
         }
 
-        // ==========================================================
-        //  ITERATE AND CLEAN HANDLES
-        // ==========================================================
-        public static List<HandleEntry> IterateFoundationNod(bool cleanStale = false)
+        public static List<HandleEntry> ScanFoundationNod()
         {
-            List<HandleEntry> results = new List<HandleEntry>();
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            var results = new List<HandleEntry>();
+
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application
+                .DocumentManager.MdiActiveDocument;
             Database db = doc.Database;
 
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
                 try
                 {
-                    DBDictionary nod = tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead) as DBDictionary;
-                    if (nod == null || !nod.Contains(ROOT)) return results;
+                    DBDictionary root = GetFoundationRootDictionary(tr, db);
+                    if (root == null)
+                        return results;
 
-                    DBDictionary root = tr.GetObject(nod.GetAt(ROOT), OpenMode.ForRead) as DBDictionary;
-
-                    foreach (DBDictionaryEntry group in root)
+                    foreach (DBDictionaryEntry groupEntry in root)
                     {
-                        DBDictionary sub = tr.GetObject(group.Value, OpenMode.ForRead) as DBDictionary;
-                        if (sub == null) continue;
-
-                        List<string> keys = new List<string>();
-                        foreach (DBDictionaryEntry entry in sub) keys.Add(entry.Key);
-
-                        List<string> keysToRemove = new List<string>();
-
-                        foreach (string handleStr in keys)
-                        {
-                            ObjectId id;
-                            var entryResult = new HandleEntry { GroupName = group.Key, HandleKey = handleStr };
-
-                            try
-                            {
-                                if (!TryGetObjectIdFromHandleString(db, handleStr, out id))
-                                {
-                                    entryResult.Status = "Invalid";
-                                    keysToRemove.Add(handleStr);
-                                }
-                                else
-                                {
-
-                                    Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
-                                    entryResult.Status = (ent == null || ent.IsErased) ? "Missing" : "Valid";
-                                    entryResult.Id = id;
-                                    if (entryResult.Status != "Valid") keysToRemove.Add(handleStr);
-                                }
-                            }
-                            catch
-                            {
-                                entryResult.Status = "Error";
-                                keysToRemove.Add(handleStr);
-                            }
-
-                            results.Add(entryResult);
-                        }
-
-                        
-                        
-                       if (keysToRemove.Count > 0)
-                        {
-                            sub.UpgradeOpen();
-                            foreach (string handle_string in keysToRemove)
-                            {
-                                NODManager.RemoveHandleFromSubDictionary(tr, db, group.Key, handle_string);
-                            }
-                        }
+                        ScanGroupDictionary(
+                            tr,
+                            db,
+                            groupEntry,
+                            results
+                        );
                     }
-                    tr.Commit();
+
+                    tr.Commit(); // read-only but still correct
                 }
-                catch
+                catch (System.Exception ex)
                 {
-                    // transaction auto-aborts on dispose
+                    doc.Editor.WriteMessage(
+                        $"\n[EE_FOUNDATION] Scan failed: {ex.Message}"
+                    );
                 }
+            }
+
+            return results;
+        }
+        private static DBDictionary GetFoundationRootDictionary(
+        Transaction tr,
+        Database db)
+            {
+                var nod = tr.GetObject(
+                    db.NamedObjectsDictionaryId,
+                    OpenMode.ForRead) as DBDictionary;
+
+                if (nod == null || !nod.Contains(ROOT))
+                    return null;
+
+                return tr.GetObject(
+                    nod.GetAt(ROOT),
+                    OpenMode.ForRead) as DBDictionary;
+            }
+
+        private static void ScanGroupDictionary(
+    Transaction tr,
+    Database db,
+    DBDictionaryEntry groupEntry,
+    List<HandleEntry> results)
+        {
+            var subDict = tr.GetObject(
+                groupEntry.Value,
+                OpenMode.ForRead) as DBDictionary;
+
+            if (subDict == null)
+                return;
+
+            foreach (DBDictionaryEntry entry in subDict)
+            {
+                HandleEntry result = ValidateHandle(
+                    tr,
+                    db,
+                    groupEntry.Key,
+                    entry.Key
+                );
+
+                results.Add(result);
+            }
+        }
+
+        public static class HandleStatus
+        {
+            public const string Valid = "Valid";
+            public const string Missing = "Missing";
+            public const string Invalid = "Invalid";
+            public const string Error = "Error";
+        }
+
+
+        private static HandleEntry ValidateHandle(
+            Transaction tr,
+            Database db,
+            string groupName,
+            string handleStr)
+        {
+            var result = new HandleEntry
+            {
+                GroupName = groupName,
+                HandleKey = handleStr
+            };
+
+            // 1. Handle format check (HEX only)
+            if (!IsValidHexHandle(handleStr))
+            {
+                result.Status = HandleStatus.Invalid;
+                return result;
+            }
+
+            // 2. Resolve handle -> ObjectId
+            ObjectId id;
+            try
+            {
+                if (!TryGetObjectIdFromHandleString(db, handleStr, out id))
+                {
+                    result.Status = HandleStatus.Invalid;
+                    return result;
+                }
+            }
+            catch
+            {
+                // Unexpected failure resolving handle
+                result.Status = HandleStatus.Error;
+                return result;
+            }
+
+            result.Id = id;
+
+            // 3. Attempt to open object
+            try
+            {
+                DBObject obj = tr.GetObject(id, OpenMode.ForRead, false);
+
+                if (obj == null || obj.IsErased)
+                {
+                    result.Status = HandleStatus.Missing;
+                    return result;
+                }
+
+                result.Status = HandleStatus.Valid;
+                return result;
+            }
+            catch (Autodesk.AutoCAD.Runtime.Exception)
+            {
+                // Expected AutoCAD case:
+                // hard-erased / purged / zombie ObjectId
+                result.Status = HandleStatus.Missing;
+                return result;
+            }
+            catch
+            {
+                // Unexpected failure (transaction misuse, DB corruption, etc.)
+                result.Status = HandleStatus.Error;
+                return result;
+            }
+        }
+
+
+        private static bool IsValidHexHandle(string handle)
+        {
+            if (string.IsNullOrWhiteSpace(handle))
+                return false;
+
+            for (int i = 0; i < handle.Length; i++)
+            {
+                char c = handle[i];
+
+                bool isHex =
+                    (c >= '0' && c <= '9') ||
+                    (c >= 'A' && c <= 'F') ||
+                    (c >= 'a' && c <= 'f');
+
+                if (!isHex)
+                    return false;
+            }
+
+            return true;
+        }
+
+        public static void CleanupFoundationNod(
+    IEnumerable<HandleEntry> scanResults)
+        {
+            if (scanResults == null)
+                return;
+
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application
+                .DocumentManager.MdiActiveDocument;
+            Database db = doc.Database;
+
+            using (doc.LockDocument()) // 🔐 REQUIRED
+            {
+                using (Transaction tr = db.TransactionManager.StartTransaction())
+                {
+                    try
+                    {
+                        DBDictionary root = GetFoundationRootDictionary(tr, db);
+                        if (root == null)
+                            return;
+
+                        foreach (var group in scanResults
+                            .Where(r => r.Status != "Valid")
+                            .GroupBy(r => r.GroupName))
+                        {
+                            CleanupGroup(
+                                tr,
+                                root,
+                                group.Key,
+                                group.Select(r => r.HandleKey)
+                            );
+                        }
+
+                        tr.Commit();
+                    }
+                    catch (System.Exception ex)
+                    {
+                        doc.Editor.WriteMessage(
+                            $"\n[EE_FOUNDATION] Cleanup failed: {ex.Message}"
+                        );
+                    }
+                }
+            }
+        }
+
+        private static void CleanupGroup(
+            Transaction tr,
+            DBDictionary root,
+            string groupName,
+            IEnumerable<string> handleKeys)
+        {
+            if (!root.Contains(groupName))
+                return;
+
+            var subDict = tr.GetObject(
+                root.GetAt(groupName),
+                OpenMode.ForRead) as DBDictionary;
+
+            if (subDict == null)
+                return;
+
+            subDict.UpgradeOpen();
+
+            foreach (string handle in handleKeys)
+            {
+                if (subDict.Contains(handle))
+                {
+                    subDict.Remove(handle);
+                }
+            }
+        }
+
+
+        // ==========================================================
+        //  ITERATE AND CLEAN HANDLES
+        // ==========================================================
+        public static List<HandleEntry> IterateFoundationNod(bool cleanStale = false)
+        {
+            // PASS 1 — Read-only scan
+            List<HandleEntry> results = ScanFoundationNod();
+
+            // PASS 2 — Explicit cleanup (only if requested)
+            if (cleanStale && results.Count > 0)
+            {
+                CleanupFoundationNod(results);
             }
 
             return results;
@@ -145,7 +332,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         public static void ViewFoundationNOD()
         {
             // Get all entries across all subdictionaries
-            var entries = IterateFoundationNod(cleanStale: false);
+            var entries = IterateFoundationNod(cleanStale: true);
 
             // Group entries by subdictionary name
             var grouped = entries
@@ -182,16 +369,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         public static void CleanFoundationNOD()
         {
             var entries = IterateFoundationNod(cleanStale: true);
-            List<string> removed = new List<string>();
-            foreach (var e in entries)
-                if (e.Status == "Missing" || e.Status == "Invalid" || e.Status == "Error")
-                    removed.Add($"[{e.GroupName}] {e.HandleKey}");
-
-            string msg = removed.Count > 0 ?
-                "Removed stale handle_strings:\n" + string.Join("\n", removed) :
-                "No stale handle_strings found.";
-
-            MessageBox.Show(msg, "CleanFoundationNOD");
+            CleanupFoundationNod(entries);
         }
 
         // ==========================================================
@@ -726,11 +904,12 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 
         public class HandleEntry
         {
-            public string GroupName;
-            public string HandleKey;
-            public ObjectId Id;
-            public string Status; // "Valid", "Missing", "Invalid", "Error"
+            public string GroupName { get; set; }   // FD_BOUNDARY, FD_GRADEBEAM, etc.
+            public string HandleKey { get; set; }   // handle string
+            public string Status { get; set; }      // Valid | Missing | Invalid | Error
+            public ObjectId Id { get; set; }         // only set when valid
         }
+
 
         /// <summary>
         /// Returns all keys from the given AutoCAD sub-dictionary.
