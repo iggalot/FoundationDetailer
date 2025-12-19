@@ -1,4 +1,5 @@
 ﻿using Autodesk.AutoCAD.DatabaseServices;
+using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 
@@ -145,13 +146,12 @@ namespace FoundationDetailsLibraryAutoCAD.Data
             {
                 Name = $"Entity {ent.Handle}",
                 Type = "Entity",
-                Children = ProcessDictionary(tr, dict)
+                Children = ProcessDictionary(tr, dict, ent.Database)
             };
 
             return rootItem;
         }
-
-        private static ObservableCollection<ExtensionDataItem> ProcessDictionary(Transaction tr, DBDictionary dict)
+        private static ObservableCollection<ExtensionDataItem> ProcessDictionary(Transaction tr, DBDictionary dict, Database db)
         {
             var items = new ObservableCollection<ExtensionDataItem>();
 
@@ -165,7 +165,7 @@ namespace FoundationDetailsLibraryAutoCAD.Data
                     {
                         Name = entry.Key,
                         Type = "Subdictionary",
-                        Children = ProcessDictionary(tr, subDict)
+                        Children = ProcessDictionary(tr, subDict, db)
                     };
                     items.Add(subItem);
                 }
@@ -185,17 +185,27 @@ namespace FoundationDetailsLibraryAutoCAD.Data
                 }
                 else
                 {
+                    // Try to resolve as an entity handle
+                    ObjectId? id = null;
+                    if (NODManager.TryGetObjectIdFromHandleString(db, entry.Key, out ObjectId objId) &&
+                        NODManager.IsValidReadableObject(tr, objId))
+                    {
+                        id = objId;
+                    }
+
                     items.Add(new ExtensionDataItem
                     {
                         Name = entry.Key,
                         Type = obj.GetType().Name,
-                        Value = null
+                        Value = null,
+                        ObjectId = id
                     });
                 }
             }
 
             return items;
         }
+
 
         /// <summary>
         /// Represents an item in an ExtensionDictionary
@@ -206,6 +216,8 @@ namespace FoundationDetailsLibraryAutoCAD.Data
             public string Type { get; set; }          // e.g., XRecord, Subdictionary, etc.
             public object Value { get; set; }         // For XRecord, could be List<TypedValue>
             public ObservableCollection<ExtensionDataItem> Children { get; set; } = new ObservableCollection<ExtensionDataItem>();
+            public ObjectId? ObjectId { get; set; }   // Nullable ObjectId for entities
+
         }
     }
 }
