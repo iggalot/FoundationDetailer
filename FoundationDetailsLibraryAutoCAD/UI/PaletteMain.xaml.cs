@@ -160,6 +160,46 @@ namespace FoundationDetailer.UI
         private void QueryNOD()
         {
             NODManager.ViewFoundationNOD();
+
+
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            var db = doc.Database;
+
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                // Try get the boundary handle from the NOD
+                if (!PolylineBoundaryManager.TryGetBoundaryHandle(tr, out string handleString))
+                {
+                    doc.Editor.WriteMessage("\nNo boundary handle found in NOD.");
+                    tr.Commit();
+                    return;
+                }
+
+                // Parse the handle string
+                if (!NODManager.TryParseHandle(handleString, out Handle handle))
+                {
+                    doc.Editor.WriteMessage($"\nInvalid boundary handle: {handleString}");
+                    tr.Commit();
+                    return;
+                }
+
+                // Get ObjectId from the handle
+                if (!db.TryGetObjectId(handle, out ObjectId boundaryId))
+                {
+                    doc.Editor.WriteMessage($"\nBoundary object not found in drawing: {handleString}");
+                    tr.Commit();
+                    return;
+                }
+
+                // Open the boundary entity and display its ExtensionDictionary data
+                var ent = tr.GetObject(boundaryId, OpenMode.ForRead) as Entity;
+                if (ent != null)
+                {
+                    FoundationEntityData.DisplayExtensionData(ent);
+                }
+
+                tr.Commit();
+            }
         }
 
         /// <summary>
