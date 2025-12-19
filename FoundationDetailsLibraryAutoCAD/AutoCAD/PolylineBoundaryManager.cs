@@ -2,7 +2,9 @@
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
+using FoundationDetailer.Model;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
+using FoundationDetailsLibraryAutoCAD.Data;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -46,6 +48,14 @@ namespace FoundationDetailer.Managers
 
         public static event EventHandler BoundaryChanged;
 
+        /// <summary>
+        /// Raises the BoundaryChanged event to notify subscribers.
+        /// </summary>
+        public static void RaiseBoundaryChanged()
+        {
+            BoundaryChanged?.Invoke(null, EventArgs.Empty);
+        }
+
         static PolylineBoundaryManager()
         {
             Initialize();
@@ -55,34 +65,27 @@ namespace FoundationDetailer.Managers
         /// Function to add a polyline boundary handle to the NOD
         /// </summary>
         /// <param name="id"></param>
-        internal static void AddBoundaryHandleToNOD(ObjectId id)
+        internal static void AddBoundaryHandleToNOD(Transaction tr, ObjectId id)
         {
             Document doc = Autodesk.AutoCAD.ApplicationServices.Application
                                 .DocumentManager.MdiActiveDocument;
             Database db = doc.Database;
 
-            using (doc.LockDocument())
-            {
-                using (Transaction tr = db.TransactionManager.StartTransaction())
-                {
-                    // Ensure NOD structure exists
-                    NODManager.InitFoundationNOD(tr);
+            // Ensure NOD structure exists
+            NODManager.InitFoundationNOD(tr);
 
-                    DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+            DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
 
-                    DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(NODManager.ROOT), OpenMode.ForWrite);
+            DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(NODManager.ROOT), OpenMode.ForWrite);
 
-                    DBDictionary boundaryDict = (DBDictionary)tr.GetObject(root.GetAt(NODManager.KEY_BOUNDARY), OpenMode.ForWrite);
+            DBDictionary boundaryDict = (DBDictionary)tr.GetObject(root.GetAt(NODManager.KEY_BOUNDARY), OpenMode.ForWrite);
 
-                    // Store handle (uppercase, same as everywhere else)
-                    string handleStr = id.Handle.ToString().ToUpperInvariant();
+            // Store handle (uppercase, same as everywhere else)
+            string handleStr = id.Handle.ToString().ToUpperInvariant();
 
-                    // Use your existing helper
-                    NODManager.AddHandleToDictionary(tr, boundaryDict, handleStr);
+            // Use your existing helper
+            NODManager.AddHandleToDictionary(tr, boundaryDict, handleStr);
 
-                    tr.Commit();
-                }
-            }
         }
 
         #region Initialization & Attach/Detach
@@ -230,45 +233,49 @@ namespace FoundationDetailer.Managers
 
             var db = doc.Database;
 
-            try
+
+            using (doc.LockDocument())
             {
-                using (doc.LockDocument())
                 using (var tr = db.TransactionManager.StartTransaction())
                 {
-                    // Validate entity
-                    var ent = tr.GetObject(candidateId, OpenMode.ForRead, false) as Polyline;
-                    if (ent == null)
+                    try
                     {
-                        error = "Selected object is not a polyline.";
+                        // Validate entity
+                        var ent = tr.GetObject(candidateId, OpenMode.ForRead, false) as Polyline;
+                        if (ent == null)
+                        {
+                            error = "Selected object is not a polyline.";
+                            return false;
+                        }
+
+                        // Normalize polyline
+                        ent.UpgradeOpen();
+                        EnsureClosedAndCCW(ent);
+                        ent.DowngradeOpen();
+
+                        // Persist handle via NODManager
+                        FoundationEntityData.Write(tr, ent, NODManager.KEY_BOUNDARY);
+                        AddBoundaryHandleToNOD(tr, candidateId);
+
+                        // Update in-memory map
+                        _docBoundaryIds.AddOrUpdate(doc, candidateId, (d, old) => candidateId);
+
+                        tr.Commit();
+
+                        BoundaryChanged?.Invoke(null, EventArgs.Empty);
+                        return true;
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception ex)
+                    {
+                        error = ex.Message;
                         return false;
                     }
-
-                    // Normalize polyline
-                    ent.UpgradeOpen();
-                    EnsureClosedAndCCW(ent);
-                    ent.DowngradeOpen();
-
-                    // Persist handle via NODManager
-                    AddBoundaryHandleToNOD(candidateId);
-
-                    // Update in-memory map
-                    _docBoundaryIds.AddOrUpdate(doc, candidateId, (d, old) => candidateId);
-
-                    tr.Commit();
+                    catch (Exception ex)
+                    {
+                        error = ex.Message;
+                        return false;
+                    }
                 }
-
-                BoundaryChanged?.Invoke(null, EventArgs.Empty);
-                return true;
-            }
-            catch (Autodesk.AutoCAD.Runtime.Exception ex)
-            {
-                error = ex.Message;
-                return false;
-            }
-            catch (Exception ex)
-            {
-                error = ex.Message;
-                return false;
             }
         }
 
@@ -1281,5 +1288,62 @@ namespace FoundationDetailer.Managers
         }
 
         #endregion
+
+        public static bool TryGetBoundaryHandle(Transaction tr, out string handleString)
+        {
+            handleString = null;
+
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            Database db = doc.Database;
+
+            // Open NOD
+            DBDictionary nod =
+                (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+
+            if (!nod.Contains(NODManager.ROOT))
+                return false;
+
+            DBDictionary root =
+                (DBDictionary)tr.GetObject(nod.GetAt(NODManager.ROOT), OpenMode.ForRead);
+
+            if (!root.Contains(NODManager.KEY_BOUNDARY))
+                return false;
+
+            DBDictionary boundaryDict =
+                (DBDictionary)tr.GetObject(root.GetAt(NODManager.KEY_BOUNDARY), OpenMode.ForRead);
+
+            // Boundary should contain exactly one handle
+            foreach (DBDictionaryEntry entry in boundaryDict)
+            {
+                handleString = entry.Key;
+                return true;
+            }
+
+            return false;
+        }
+
+        public static bool TryRestoreBoundaryFromNOD(Database db, Transaction tr, out ObjectId boundaryId)
+        {
+            boundaryId = ObjectId.Null;
+
+            // Get boundary handle from NOD
+            if (!TryGetBoundaryHandle(tr, out string handleString))
+                return false;
+
+            if (!NODManager.TryParseHandle(handleString, out Handle handle))
+                return false;
+
+            if (!db.TryGetObjectId(handle, out ObjectId id))
+                return false;
+
+            if (!id.IsValid || id.IsErased)
+                return false;
+
+            boundaryId = id;  // return ObjectId
+            return true;
+        }
+
+
+
     }
 }

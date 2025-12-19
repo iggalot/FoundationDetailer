@@ -113,4 +113,14 @@ namespace FoundationDetailer.Model
         public double HeightIn { get; set; } = 6.0;
         public double WidthIn { get; set; } = 6.0;
     }
+
+    public class BeamRebar
+    {
+        public string TopBarSize { get; set; }
+        public string BottomBarSize { get; set; }
+        public int NumTopBars { get; set; }
+        public int NumBottomBars { get; set; }
+        public string StirrupSize { get; set; }
+        public double StirrupSpacing { get; set; }
+    }
 }

@@ -1,7 +1,9 @@
 ﻿using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
+using FoundationDetailer.Model;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
+using FoundationDetailsLibraryAutoCAD.Data;
 using System;
 using System.Collections.Generic;
 
@@ -122,6 +124,7 @@ namespace FoundationDetailer.AutoCAD
             _gradeBeams[doc].Add(pl.ObjectId);
 
             // Store the grade beams in its NOD
+            FoundationEntityData.Write(tr, pl, NODManager.KEY_GRADEBEAM);
             AddGradeBeamHandleToNOD(pl.ObjectId);
         }
 

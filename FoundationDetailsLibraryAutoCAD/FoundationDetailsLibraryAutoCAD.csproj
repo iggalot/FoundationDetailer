@@ -69,10 +69,9 @@
     <Compile Include="AutoCAD\PolylineBoundaryManager.cs" />
     <Compile Include="Commands\FoundationCommands.cs" />
     <Compile Include="Data\CompanyStandards.cs" />
+    <Compile Include="Data\FoundationEntityData.cs" />
     <Compile Include="Data\FoundationModel.cs" />
-    <Compile Include="Data\GradeBeam.cs" />
     <Compile Include="Data\StandardsLoader.cs" />
-    <Compile Include="Data\Strand.cs" />
     <Compile Include="Managers\GridlineManager.cs" />
     <Compile Include="Preview\PreviewManager.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

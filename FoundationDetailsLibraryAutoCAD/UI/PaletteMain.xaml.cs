@@ -8,6 +8,7 @@ using FoundationDetailer.Model;
 using FoundationDetailer.UI.Controls;
 using FoundationDetailer.UI.Converters;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
+using FoundationDetailsLibraryAutoCAD.Data;
 using System;
 using System.Windows;
 using System.Windows.Controls;
@@ -74,6 +75,7 @@ namespace FoundationDetailer.UI
 
             // Load the saved NOD (if available)
             NODManager.ImportFoundationNOD();
+            RestoreBoundaryAfterImport();
         }
 
         private void WireEvents()
@@ -84,7 +86,7 @@ namespace FoundationDetailer.UI
             BtnSelectBoundary.Click += (s, e) => SelectBoundary(); // for selecting the boundary
 
             BtnAddGradeBeams.Click += (s, e) => AddPreliminaryGradeBeams(); // for adding a preliminary gradebeam layout
-            
+
             //BtnAddRebar.Click += (s, e) => AddRebarBars();
             //BtnAddStrands.Click += (s, e) => AddStrands();
             //BtnAddPiers.Click += (s, e) => AddPiers();
@@ -204,7 +206,7 @@ namespace FoundationDetailer.UI
             if (PolylineBoundaryManager.TryGetBoundary(out Polyline pl) && pl.Closed)
             {
                 isValid = true;
-                TxtBoundaryStatus.Text = "Boundary valid - "+ pl.ObjectId.Handle.ToString();
+                TxtBoundaryStatus.Text = "Boundary valid - " + pl.ObjectId.Handle.ToString();
                 TxtBoundaryVertices.Text = pl.NumberOfVertices.ToString();
 
                 double perimeter = 0;
@@ -280,6 +282,7 @@ namespace FoundationDetailer.UI
             if (doc == null) return;
 
             var ed = doc.Editor;
+            var db = doc.Database;
 
             // Prompt for a closed polyline
             PromptEntityOptions options = new PromptEntityOptions("\nSelect a closed polyline: ");
@@ -289,15 +292,45 @@ namespace FoundationDetailer.UI
             var result = ed.GetEntity(options);
             if (result.Status != PromptStatus.OK) return;
 
-            // Try set the boundary
-            if (!PolylineBoundaryManager.TrySetBoundary(result.ObjectId, out string error))
+            using (doc.LockDocument())
+            using (Transaction tr = db.TransactionManager.StartTransaction())
             {
-                ed.WriteMessage($"\nError setting boundary: {error}");
-            }
-            else
-            {
-                PolylineBoundaryManager.AddBoundaryHandleToNOD(result.ObjectId);  // store the boundary handle in the NOD
-                ed.WriteMessage($"\nBoundary selected: {result.ObjectId.Handle}");
+                try
+                {
+                    // Open the selected entity
+                    Polyline boundary = tr.GetObject(
+                        result.ObjectId,
+                        OpenMode.ForWrite) as Polyline;
+
+                    if (boundary == null)
+                    {
+                        ed.WriteMessage("\nSelected object is not a polyline.");
+                        return;
+                    }
+
+                    // Try set the boundary (no DB writes assumed here)
+                    if (!PolylineBoundaryManager.TrySetBoundary(
+                            result.ObjectId, out string error))
+                    {
+                        ed.WriteMessage($"\nError setting boundary: {error}");
+                        return;
+                    }
+
+                    // Attach entity-side metadata
+                    FoundationEntityData.Write(tr, boundary, NODManager.KEY_BOUNDARY);
+
+                    // Register handle in the NOD
+                    PolylineBoundaryManager.AddBoundaryHandleToNOD(tr, boundary.ObjectId);
+
+                    tr.Commit();
+
+                    ed.WriteMessage(
+                        $"\nBoundary selected: {boundary.Handle}");
+                }
+                catch (System.Exception ex)
+                {
+                    ed.WriteMessage($"\nBoundary selection failed: {ex.Message}");
+                }
             }
         }
 
@@ -350,8 +383,8 @@ namespace FoundationDetailer.UI
             {
                 double horizMin = HorzGBMinSpacing;
                 double horizMax = HorzGBMaxSpacing;
-                double vertMin =  VertGBMinSpacing;
-                double vertMax =  VertGBMaxSpacing;
+                double vertMin = VertGBMinSpacing;
+                double vertMax = VertGBMaxSpacing;
 
                 using (doc.LockDocument())
                 {
@@ -382,5 +415,33 @@ namespace FoundationDetailer.UI
         }
 
         #endregion
+
+        private void RestoreBoundaryAfterImport()
+        {
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+
+            using (doc.LockDocument())
+            using (var tr = doc.Database.TransactionManager.StartTransaction())
+            {
+                if (PolylineBoundaryManager.TryRestoreBoundaryFromNOD(doc.Database, tr, out ObjectId boundaryId))
+                {
+                    // Set boundary in PolylineBoundaryManager (this triggers BoundaryChanged event)
+                    if (!PolylineBoundaryManager.TrySetBoundary(boundaryId, out string error))
+                    {
+                        doc.Editor.WriteMessage($"\nFailed to set boundary: {error}");
+                    }
+                    else
+                    {
+                        doc.Editor.WriteMessage("\nBoundary restored from NOD.");
+                    }
+                }
+
+                tr.Commit(); // read-only, but commit for consistency
+            }
+
+            // Update UI immediately
+            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+        }
     }
 }

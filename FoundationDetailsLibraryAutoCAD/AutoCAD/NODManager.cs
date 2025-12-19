@@ -3,6 +3,7 @@ using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Runtime;
+using FoundationDetailsLibraryAutoCAD.Data;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -536,6 +537,8 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         {
             Document doc = Autodesk.AutoCAD.ApplicationServices.Application
                                 .DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+
             Database db = doc.Database;
 
             // Build the JSON file name in the drawing’s folder
@@ -551,8 +554,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 
             // Read and deserialize JSON
             string json = File.ReadAllText(jsonFile);
-            var importData =
-                Newtonsoft.Json.JsonConvert.DeserializeObject<Dictionary<string, List<string>>>(json);
+            var importData = Newtonsoft.Json.JsonConvert.DeserializeObject<Dictionary<string, List<string>>>(json);
             if (importData == null)
             {
                 MessageBox.Show("JSON format invalid.");
@@ -561,28 +563,26 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 
             using (doc.LockDocument())
             {
+                // Ensure the NOD exists
                 using (Transaction tr = db.TransactionManager.StartTransaction())
                 {
                     InitFoundationNOD(tr);
                     tr.Commit();
                 }
 
+                // Import the entities from JSON
                 using (Transaction tr = db.TransactionManager.StartTransaction())
                 {
                     try
                     {
-                        // Open the parent NOD for write
                         DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-
                         DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
 
-                        // Process each group found in the JSON
                         foreach (var kvp in importData)
                         {
                             string subName = kvp.Key;
                             List<string> handle_strings = kvp.Value ?? new List<string>();
 
-                            // Ensure subdictionary exists
                             DBDictionary subDict;
                             if (!root.Contains(subName))
                             {
@@ -595,14 +595,25 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                                 subDict = (DBDictionary)tr.GetObject(root.GetAt(subName), OpenMode.ForWrite);
                             }
 
-                            // Import handle_strings
                             foreach (string handle_string in handle_strings)
                             {
-                                Handle handle;
-                                if (TryParseHandle(handle_string, out handle))
-                                {
-                                    AddHandleToDictionary(tr, subDict, handle_string);
-                                }
+                                if (!TryParseHandle(handle_string, out Handle handle))
+                                    continue;
+
+                                AddHandleToDictionary(tr, subDict, handle_string);
+
+                                if (!TryGetObjectIdFromHandle(db, handle, out ObjectId id))
+                                    continue;
+
+                                if (!IsValidReadableObject(tr, id))
+                                    continue;
+
+                                Entity ent = tr.GetObject(id, OpenMode.ForWrite) as Entity;
+                                if (ent == null)
+                                    continue;
+
+                                // Attach entity-side Foundation data
+                                FoundationEntityData.Write(tr, ent, subName);
                             }
                         }
 
@@ -615,7 +626,8 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                     }
                 }
 
-                CleanFoundationNOD();  // clean up stale handle_strings that don't have an associated drawing object in the drawing.
+                // Clean stale handles
+                CleanFoundationNOD();
             }
         }
 
@@ -660,6 +672,8 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 
                         ms.AppendEntity(boundary);
                         tr.AddNewlyCreatedDBObject(boundary, true);
+
+                        FoundationEntityData.Write(tr, boundary, KEY_BOUNDARY);
                         AddHandleToDictionary(tr, boundaryDict, boundary.Handle.ToString().ToUpperInvariant());
 
                         // Create 4 FD_GRADEBEAM polylines
@@ -1179,5 +1193,8 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 }
             }
         }
+
+
+
     }
 }
