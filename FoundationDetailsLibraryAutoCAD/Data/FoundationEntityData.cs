@@ -1,4 +1,6 @@
 ﻿using Autodesk.AutoCAD.DatabaseServices;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
 
 namespace FoundationDetailsLibraryAutoCAD.Data
 {
@@ -74,44 +76,136 @@ namespace FoundationDetailsLibraryAutoCAD.Data
             return false;
         }
 
+        /// Recursively display all ExtensionDictionary data for an entity.
+        /// </summary>
+        /// <param name="ent">The entity to inspect</param>
         public static void DisplayExtensionData(Entity ent)
         {
+            if (ent == null)
+                return;
+
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            var ed = doc.Editor;
+
             if (ent.ExtensionDictionary.IsNull)
             {
-                Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage(
-                    $"\nEntity {ent.Handle} has no ExtensionDictionary.");
+                ed.WriteMessage($"\nEntity {ent.Handle} has no ExtensionDictionary.");
                 return;
             }
 
-            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            using (var tr = doc.Database.TransactionManager.StartTransaction())
+            using (var tr = doc.TransactionManager.StartTransaction())
             {
-                DBDictionary dict = (DBDictionary)tr.GetObject(ent.ExtensionDictionary, OpenMode.ForRead);
-                foreach (DBDictionaryEntry entry in dict)
-                {
-                    var obj = tr.GetObject(entry.Value, OpenMode.ForRead);
-
-                    if (obj is Xrecord xr)
-                    {
-                        doc.Editor.WriteMessage($"\nXrecord: {entry.Key}");
-                        foreach (TypedValue tv in xr.Data)
-                        {
-                            doc.Editor.WriteMessage($"\n  Type: {tv.TypeCode}, Value: {tv.Value}");
-                        }
-                    }
-                    else if (obj is DBDictionary subDict)
-                    {
-                        doc.Editor.WriteMessage($"\nSubdictionary: {entry.Key}");
-                    }
-                    else
-                    {
-                        doc.Editor.WriteMessage($"\nUnknown object: {entry.Key}, Type: {obj.GetType().Name}");
-                    }
-                }
+                var dict = (DBDictionary)tr.GetObject(ent.ExtensionDictionary, OpenMode.ForRead);
+                ed.WriteMessage($"\nEntity {ent.Handle} ExtensionDictionary contents:");
+                ProcessDictionary(tr, dict, 1);
                 tr.Commit();
             }
         }
 
-    }
+        private static void ProcessDictionary(Transaction tr, DBDictionary dict, int indentLevel)
+        {
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            var ed = doc.Editor;
+            string indent = new string(' ', indentLevel * 2);
 
+            foreach (DBDictionaryEntry entry in dict)
+            {
+                DBObject obj = tr.GetObject(entry.Value, OpenMode.ForRead);
+
+                if (obj is DBDictionary subDict)
+                {
+                    ed.WriteMessage($"\n{indent}Subdictionary: {entry.Key}");
+                    ProcessDictionary(tr, subDict, indentLevel + 1);
+                }
+                else if (obj is Xrecord xr)
+                {
+                    ed.WriteMessage($"\n{indent}Xrecord: {entry.Key} -> ");
+                    foreach (TypedValue tv in xr.Data)
+                    {
+                        ed.WriteMessage($"[{tv.TypeCode}: {tv.Value}] ");
+                    }
+                }
+                else
+                {
+                    ed.WriteMessage($"\n{indent}{entry.Key} -> {obj.GetType().Name}");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets all ExtensionDictionary data for an entity in a structured object.
+        /// </summary>
+        public static ExtensionDataItem GetExtensionData(Entity ent, Transaction tr)
+        {
+            if (ent == null || ent.ExtensionDictionary.IsNull)
+                return null;
+
+            var dict = (DBDictionary)tr.GetObject(ent.ExtensionDictionary, OpenMode.ForRead);
+            var rootItem = new ExtensionDataItem
+            {
+                Name = $"Entity {ent.Handle}",
+                Type = "Entity",
+                Children = ProcessDictionary(tr, dict)
+            };
+
+            return rootItem;
+        }
+
+        private static ObservableCollection<ExtensionDataItem> ProcessDictionary(Transaction tr, DBDictionary dict)
+        {
+            var items = new ObservableCollection<ExtensionDataItem>();
+
+            foreach (DBDictionaryEntry entry in dict)
+            {
+                DBObject obj = tr.GetObject(entry.Value, OpenMode.ForRead);
+
+                if (obj is DBDictionary subDict)
+                {
+                    var subItem = new ExtensionDataItem
+                    {
+                        Name = entry.Key,
+                        Type = "Subdictionary",
+                        Children = ProcessDictionary(tr, subDict)
+                    };
+                    items.Add(subItem);
+                }
+                else if (obj is Xrecord xr)
+                {
+                    var xrValues = new List<string>();
+                    foreach (TypedValue tv in xr.Data)
+                        xrValues.Add($"[{tv.TypeCode}: {tv.Value}]");
+
+                    var xrItem = new ExtensionDataItem
+                    {
+                        Name = entry.Key,
+                        Type = "XRecord",
+                        Value = xrValues
+                    };
+                    items.Add(xrItem);
+                }
+                else
+                {
+                    items.Add(new ExtensionDataItem
+                    {
+                        Name = entry.Key,
+                        Type = obj.GetType().Name,
+                        Value = null
+                    });
+                }
+            }
+
+            return items;
+        }
+
+        /// <summary>
+        /// Represents an item in an ExtensionDictionary
+        /// </summary>
+        public class ExtensionDataItem
+        {
+            public string Name { get; set; }
+            public string Type { get; set; }          // e.g., XRecord, Subdictionary, etc.
+            public object Value { get; set; }         // For XRecord, could be List<TypedValue>
+            public ObservableCollection<ExtensionDataItem> Children { get; set; } = new ObservableCollection<ExtensionDataItem>();
+        }
+    }
 }

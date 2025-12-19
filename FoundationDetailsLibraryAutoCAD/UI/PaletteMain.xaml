@@ -103,7 +103,7 @@
                     <Button x:Name="BtnCommit" Content="Commit to DWG" Margin="0,2"/>-->
                 </StackPanel>
 
-
+                <TreeView Name="TreeViewExtensionData" Margin="5" />
 
             </StackPanel>
         </ScrollViewer>

@@ -1194,7 +1194,43 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             }
         }
 
+        /// <summary>
+        /// Recursively traverses a DBDictionary and its subdictionaries, 
+        /// invoking a callback for each entity found.
+        /// </summary>
+        /// <param name="tr">Active transaction</param>
+        /// <param name="dict">Dictionary to traverse</param>
+        /// <param name="db">Database reference</param>
+        /// <param name="callback">Action to invoke per entity (Entity, handle string)</param>
+        internal static void TraverseDictionary(Transaction tr, DBDictionary dict, Database db, Action<Entity, string> callback)
+        {
+            foreach (DBDictionaryEntry entry in dict)
+            {
+                DBObject obj = tr.GetObject(entry.Value, OpenMode.ForRead);
 
+                if (obj is DBDictionary subDict)
+                {
+                    // Recurse into subdictionary
+                    TraverseDictionary(tr, subDict, db, callback);
+                }
+                else
+                {
+                    // Assume entry.Key is a handle string
+                    if (!TryParseHandle(entry.Key, out Handle handle))
+                        continue;
+
+                    if (!db.TryGetObjectId(handle, out ObjectId id))
+                        continue;
+
+                    if (!id.IsValid || id.IsErased)
+                        continue;
+
+                    Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+                    if (ent != null)
+                        callback(ent, entry.Key);
+                }
+            }
+        }
 
     }
 }

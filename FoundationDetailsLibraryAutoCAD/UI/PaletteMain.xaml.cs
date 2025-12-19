@@ -10,10 +10,12 @@ using FoundationDetailer.UI.Converters;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using FoundationDetailsLibraryAutoCAD.Data;
 using System;
+using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
+using static FoundationDetailsLibraryAutoCAD.Data.FoundationEntityData;
 
 namespace FoundationDetailer.UI
 {
@@ -159,48 +161,74 @@ namespace FoundationDetailer.UI
         /// </summary>
         private void QueryNOD()
         {
-            NODManager.ViewFoundationNOD();
-
+            NODManager.ViewFoundationNOD(); // optional debug in AutoCAD editor
 
             var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+
             var db = doc.Database;
+
+            TreeViewExtensionData.Items.Clear(); // clear previous tree
 
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                // Try get the boundary handle from the NOD
-                if (!PolylineBoundaryManager.TryGetBoundaryHandle(tr, out string handleString))
+                DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+                if (!nod.Contains(NODManager.ROOT))
                 {
-                    doc.Editor.WriteMessage("\nNo boundary handle found in NOD.");
+                    doc.Editor.WriteMessage("\nNo NOD root dictionary found.");
                     tr.Commit();
                     return;
                 }
 
-                // Parse the handle string
-                if (!NODManager.TryParseHandle(handleString, out Handle handle))
+                DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(NODManager.ROOT), OpenMode.ForRead);
+
+                // Recursive helper to add nodes to the TreeView
+                void AddNodeToTree(DBDictionary dict, TreeViewItem parent)
                 {
-                    doc.Editor.WriteMessage($"\nInvalid boundary handle: {handleString}");
-                    tr.Commit();
-                    return;
+                    foreach (DBDictionaryEntry entry in dict)
+                    {
+                        DBObject obj = tr.GetObject(entry.Value, OpenMode.ForRead);
+
+                        TreeViewItem node = new TreeViewItem { Header = entry.Key };
+                        parent.Items.Add(node);
+
+                        if (obj is DBDictionary subDict)
+                        {
+                            // recurse into subdictionary
+                            AddNodeToTree(subDict, node);
+                        }
+                        else
+                        {
+                            // resolve entity if handle
+                            if (NODManager.TryParseHandle(entry.Key, out Handle handle) &&
+                                db.TryGetObjectId(handle, out ObjectId id) &&
+                                id.IsValid && !id.IsErased)
+                            {
+                                Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+                                if (ent != null)
+                                {
+                                    // Display extension data in the node
+                                    node.Tag = ent;
+                                    FoundationEntityData.DisplayExtensionData(ent);
+                                }
+                            }
+                        }
+                    }
                 }
 
-                // Get ObjectId from the handle
-                if (!db.TryGetObjectId(handle, out ObjectId boundaryId))
-                {
-                    doc.Editor.WriteMessage($"\nBoundary object not found in drawing: {handleString}");
-                    tr.Commit();
-                    return;
-                }
+                // Root TreeView node
+                TreeViewItem rootNode = new TreeViewItem { Header = NODManager.ROOT };
+                TreeViewExtensionData.Items.Add(rootNode);
 
-                // Open the boundary entity and display its ExtensionDictionary data
-                var ent = tr.GetObject(boundaryId, OpenMode.ForRead) as Entity;
-                if (ent != null)
-                {
-                    FoundationEntityData.DisplayExtensionData(ent);
-                }
+                AddNodeToTree(root, rootNode);
+
+                rootNode.IsExpanded = true;
 
                 tr.Commit();
             }
         }
+
+
 
         /// <summary>
         /// Cleans the NOD of any stake handles
@@ -483,5 +511,43 @@ namespace FoundationDetailer.UI
             // Update UI immediately
             Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
+
+        private void DisplayInPaletteUI(ExtensionDataItem data)
+        {
+            if (data == null)
+                return;
+
+            // Clear old data
+            TreeViewExtensionData.Items.Clear();
+
+            // Convert to TreeViewItem recursively
+            var rootItem = CreateTreeViewItem(data);
+            TreeViewExtensionData.Items.Add(rootItem);
+        }
+
+        private TreeViewItem CreateTreeViewItem(ExtensionDataItem dataItem)
+        {
+            string headerText = dataItem.Value != null
+                ? $"{dataItem.Name} ({dataItem.Type}): {FormatValue(dataItem.Value)}"
+                : $"{dataItem.Name} ({dataItem.Type})";
+
+            var treeItem = new TreeViewItem { Header = headerText };
+
+            foreach (var child in dataItem.Children)
+            {
+                treeItem.Items.Add(CreateTreeViewItem(child));
+            }
+
+            return treeItem;
+        }
+
+        private string FormatValue(object value)
+        {
+            if (value is IEnumerable<string> list)
+                return string.Join(", ", list);
+
+            return value?.ToString() ?? "";
+        }
+
     }
 }
