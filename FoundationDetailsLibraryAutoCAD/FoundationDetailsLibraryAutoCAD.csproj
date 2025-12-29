@@ -83,6 +83,9 @@
     <Compile Include="UI\PaletteMain.xaml.cs">
       <DependentUpon>PaletteMain.xaml</DependentUpon>
     </Compile>
+    <Compile Include="UI\Windows\ScrollableMessageBox.xaml.cs">
+      <DependentUpon>ScrollableMessageBox.xaml</DependentUpon>
+    </Compile>
   </ItemGroup>
   <ItemGroup>
     <Page Include="UI\Controls\PierControl.xaml">
@@ -92,6 +95,9 @@
     <Page Include="UI\PaletteMain.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
+    </Page>
+    <Page Include="UI\Windows\ScrollableMessageBox.xaml">
+      <Generator>MSBuild:Compile</Generator>
     </Page>
   </ItemGroup>
   <ItemGroup>

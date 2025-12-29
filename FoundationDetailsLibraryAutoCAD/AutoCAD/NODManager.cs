@@ -3,6 +3,7 @@ using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Runtime;
+using FoundationDetailer.UI.Windows;
 using FoundationDetailsLibraryAutoCAD.Data;
 using System;
 using System.Collections.Generic;
@@ -367,7 +368,9 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 }
             }
 
-            MessageBox.Show(sb.ToString(), "EE_Foundation Viewer");
+            //MessageBox.Show(sb.ToString(), "EE_Foundation Viewer");
+            ScrollableMessageBox.Show(sb.ToString());
+
         }
 
         // ==========================================================
