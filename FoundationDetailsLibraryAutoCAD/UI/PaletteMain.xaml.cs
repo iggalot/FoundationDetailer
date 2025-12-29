@@ -13,6 +13,7 @@ using System;
 using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Threading;
 using static FoundationDetailsLibraryAutoCAD.Data.FoundationEntityData;
@@ -201,6 +202,9 @@ namespace FoundationDetailer.UI
                 // Build the foundation tree.
                 NODManager.BuildTree(root, rootNode, tr, nodeMap);
 
+
+                var dictCounts = new Dictionary<string, int>(); // key = subdictionary name, value = count
+
                 // Traverse the Dictionary to check the extension data.
                 NODManager.TraverseDictionary(
                     tr,
@@ -212,8 +216,36 @@ namespace FoundationDetailer.UI
                         {
                             node.Tag = ent;
                             FoundationEntityData.DisplayExtensionData(ent);
+
+                            // Update the count for the parent dictionary
+                            TreeViewItem parentNode = node.Parent as TreeViewItem;
+                            if (parentNode != null)
+                            {
+                                string parentName = parentNode.Header.ToString();
+                                if (dictCounts.ContainsKey(parentName))
+                                    dictCounts[parentName]++;
+                                else
+                                    dictCounts[parentName] = 1;
+                            }
                         }
                     });
+
+                foreach (var kvp in dictCounts)
+                {
+                    TreeViewItem node = NODManager.FindNodeByHeader(TreeViewExtensionData.Items[0] as TreeViewItem, kvp.Key);
+                    if (node != null)
+                    {
+                        TextBlock tb = new TextBlock();
+
+                        // Quantity: bold
+                        tb.Inlines.Add(new Run($" ({kvp.Value})  ") { FontWeight = FontWeights.Bold });
+
+                        // Subdictionary name: normal weight
+                        tb.Inlines.Add(new Run(kvp.Key));
+
+                        node.Header = tb;
+                    }
+                }
 
                 tr.Commit();
             }
