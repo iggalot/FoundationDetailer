@@ -109,7 +109,7 @@ namespace FoundationDetailer.UI
                 var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
                 GradeBeamManager.HighlightGradeBeams(doc);
             };
-            BtnClearGradeBeams.Click += BtnClearGradeBeams_Click;
+            BtnClearGradeBeams.Click += BtnClearAllGradeBeams_Click;
 
             TxtGBHorzMin.TextChanged += Spacing_TextChanged;
             TxtGBHorzMax.TextChanged += Spacing_TextChanged;
@@ -375,9 +375,22 @@ namespace FoundationDetailer.UI
             }
         }
 
-        private void BtnClearGradeBeams_Click(object sender, RoutedEventArgs e)
+        private void BtnClearAllGradeBeams_Click(object sender, RoutedEventArgs e)
         {
-            NODManager.EraseFoundationSubDictionary("FD_GRADEBEAM");
+            Database db = Autodesk.AutoCAD.ApplicationServices.Application
+                .DocumentManager
+                .MdiActiveDocument
+                .Database;
+
+            // Delete the AutoCAD entities
+            NODManager.DeleteEntitiesFromFoundationSubDictionary(
+                Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument.Database,
+                NODManager.KEY_GRADEBEAM
+                );
+
+            // Clear the NOD
+            NODManager.ClearFoundationSubDictionary(db, NODManager.KEY_GRADEBEAM);
+
             TxtStatus.Text = "All grade beams cleared.";
 
             // Update UI immediately
