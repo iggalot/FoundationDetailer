@@ -445,20 +445,38 @@ namespace FoundationDetailer.UI
             {
                 doc.Editor.WriteMessage($"\nError creating grade beams: {ex.Message}");
             }
+
+            // Update UI immediately
+            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
 
-        private void AddRebarBars() => MessageBox.Show("Add rebar bars to model.");
-        private void AddStrands() => MessageBox.Show("Add strands to model.");
+        private void AddRebarBars()
+        {
+            MessageBox.Show("Add rebar bars to model.");
+            // Update UI immediately
+            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
 
+        }
+        private void AddStrands()
+        {
+            MessageBox.Show("Add strands to model.");
+            // Update UI immediately
+            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+
+        }
 
         private void SaveModel()
         {
             NODManager.ExportFoundationNOD();
+            // Update UI immediately
+            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
 
         private void LoadModel()
         {
             NODManager.ImportFoundationNOD();
+            // Update UI immediately
+            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
 
         #endregion
@@ -489,19 +507,6 @@ namespace FoundationDetailer.UI
 
             // Update UI immediately
             Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
-        }
-
-        private void DisplayInPaletteUI(ExtensionDataItem data)
-        {
-            if (data == null)
-                return;
-
-            // Clear old data
-            TreeViewExtensionData.Items.Clear();
-
-            // Convert to TreeViewItem recursively
-            var rootItem = CreateTreeViewItem(data);
-            TreeViewExtensionData.Items.Add(rootItem);
         }
 
         private TreeViewItem CreateTreeViewItem(ExtensionDataItem dataItem)
