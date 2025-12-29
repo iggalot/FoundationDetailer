@@ -11,6 +11,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Windows;
+using System.Windows.Controls;
 
 [assembly: CommandClass(typeof(FoundationDetailsLibraryAutoCAD.AutoCAD.NODManager))]
 
@@ -1231,6 +1232,85 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 }
             }
         }
+
+        internal static DBDictionary GetFoundationRoot(Transaction tr, Database db)
+        {
+            var nod = (DBDictionary)tr.GetObject(
+                db.NamedObjectsDictionaryId,
+                OpenMode.ForRead);
+
+            if (!nod.Contains(NODManager.ROOT))
+                return null;
+
+            return (DBDictionary)tr.GetObject(
+                nod.GetAt(NODManager.ROOT),
+                OpenMode.ForRead);
+        }
+
+        internal static void BuildTree(
+            DBDictionary dict,
+            TreeViewItem parent,
+            Transaction tr,
+            Dictionary<string, TreeViewItem> nodeMap)
+        {
+            foreach (DBDictionaryEntry entry in dict)
+            {
+                TreeViewItem node = new TreeViewItem
+                {
+                    Header = entry.Key
+                };
+
+                parent.Items.Add(node);
+
+                DBObject obj = tr.GetObject(entry.Value, OpenMode.ForRead);
+
+                if (obj is DBDictionary subDict)
+                {
+                    BuildTree(subDict, node, tr, nodeMap);
+                }
+                else
+                {
+                    // Leaf node (handle)
+                    nodeMap[entry.Key] = node;
+                }
+            }
+        }
+
+
+        internal static void AttachEntityToTree(
+            TreeViewItem rootNode,
+            string handleKey,
+            Entity ent)
+        {
+            // Find the node with matching header (handle string)
+            TreeViewItem node = FindNodeByHeader(rootNode, handleKey);
+            if (node == null)
+                return;
+
+            node.Tag = ent;
+            FoundationEntityData.DisplayExtensionData(ent);
+        }
+
+        internal static TreeViewItem FindNodeByHeader(
+            TreeViewItem parent,
+            string header)
+        {
+            foreach (TreeViewItem child in parent.Items)
+            {
+                if (child.Header?.ToString() == header)
+                    return child;
+
+                TreeViewItem found = FindNodeByHeader(child, header);
+                if (found != null)
+                    return found;
+            }
+
+            return null;
+        }
+
+
+
+
 
     }
 }

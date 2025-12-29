@@ -78,6 +78,8 @@ namespace FoundationDetailer.UI
             // Load the saved NOD (if available)
             NODManager.ImportFoundationNOD();
             RestoreBoundaryAfterImport();
+
+            UpdateTreeViewHandleUI();
         }
 
         private void WireEvents()
@@ -161,72 +163,63 @@ namespace FoundationDetailer.UI
         /// </summary>
         private void QueryNOD()
         {
-            NODManager.ViewFoundationNOD(); // optional debug in AutoCAD editor
+            NODManager.ViewFoundationNOD(); // optional debug
 
+            // Updates the TreeView for the handles.
+            UpdateTreeViewHandleUI();
+
+        }
+
+        /// <summary>
+        /// Helper function to update the data in the TreeView for the HANDLES from the NOD.
+        /// </summary>
+        internal void UpdateTreeViewHandleUI()
+        {
             var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
 
             var db = doc.Database;
 
-            TreeViewExtensionData.Items.Clear(); // clear previous tree
+            TreeViewExtensionData.Items.Clear();
 
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-                if (!nod.Contains(NODManager.ROOT))
-                {
-                    doc.Editor.WriteMessage("\nNo NOD root dictionary found.");
-                    tr.Commit();
+                var root = NODManager.GetFoundationRoot(tr, db);
+                if (root == null)
                     return;
-                }
 
-                DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(NODManager.ROOT), OpenMode.ForRead);
+                var nodeMap = new Dictionary<string, TreeViewItem>();
 
-                // Recursive helper to add nodes to the TreeView
-                void AddNodeToTree(DBDictionary dict, TreeViewItem parent)
+                TreeViewItem rootNode = new TreeViewItem
                 {
-                    foreach (DBDictionaryEntry entry in dict)
-                    {
-                        DBObject obj = tr.GetObject(entry.Value, OpenMode.ForRead);
+                    Header = NODManager.ROOT,
+                    IsExpanded = true
+                };
 
-                        TreeViewItem node = new TreeViewItem { Header = entry.Key };
-                        parent.Items.Add(node);
-
-                        if (obj is DBDictionary subDict)
-                        {
-                            // recurse into subdictionary
-                            AddNodeToTree(subDict, node);
-                        }
-                        else
-                        {
-                            // resolve entity if handle
-                            if (NODManager.TryParseHandle(entry.Key, out Handle handle) &&
-                                db.TryGetObjectId(handle, out ObjectId id) &&
-                                id.IsValid && !id.IsErased)
-                            {
-                                Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
-                                if (ent != null)
-                                {
-                                    // Display extension data in the node
-                                    node.Tag = ent;
-                                    FoundationEntityData.DisplayExtensionData(ent);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Root TreeView node
-                TreeViewItem rootNode = new TreeViewItem { Header = NODManager.ROOT };
                 TreeViewExtensionData.Items.Add(rootNode);
 
-                AddNodeToTree(root, rootNode);
+                // Build the foundation tree.
+                NODManager.BuildTree(root, rootNode, tr, nodeMap);
 
-                rootNode.IsExpanded = true;
+                // Traverse the Dictionary to check the extension data.
+                NODManager.TraverseDictionary(
+                    tr,
+                    root,
+                    db,
+                    (ent, handle) =>
+                    {
+                        if (nodeMap.TryGetValue(handle, out var node))
+                        {
+                            node.Tag = ent;
+                            FoundationEntityData.DisplayExtensionData(ent);
+                        }
+                    });
 
                 tr.Commit();
             }
+
         }
+
 
 
 
@@ -239,28 +232,6 @@ namespace FoundationDetailer.UI
         }
 
         #region --- Boundary Selection and UI Updates ---
-
-        private void LoadBoundaryForActiveDocument()
-        {
-            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            if (doc == null) return;
-
-            try
-            {
-                //using (doc.LockDocument())
-                using (var tr = doc.TransactionManager.StartTransaction())
-                {
-                    // Immediately update boundary display for the active document
-                    UpdateBoundaryDisplay();
-                    tr.Commit();
-                }
-            }
-            catch (Exception ex)
-            {
-                Dispatcher.BeginInvoke(new Action(() =>
-                    TxtStatus.Text = $"Error loading boundary: {ex.Message}"));
-            }
-        }
 
         private void OnBoundaryChanged(object sender, EventArgs e)
         {
@@ -308,6 +279,9 @@ namespace FoundationDetailer.UI
 
             // Optionally, change background color of action buttons
             SetActionButtonBackgrounds(ActionButtonsPanel, isValid ? Brushes.LightGreen : Brushes.LightCoral);
+
+            // Update the tree Viewer
+            UpdateTreeViewHandleUI();
         }
 
         private void SetActionButtonBackgrounds(Panel parent, Brush background)
@@ -325,7 +299,6 @@ namespace FoundationDetailer.UI
                 }
             }
         }
-
 
         public static double ComputePolylineArea(Polyline pl)
         {
@@ -406,6 +379,9 @@ namespace FoundationDetailer.UI
         {
             NODManager.EraseFoundationSubDictionary("FD_GRADEBEAM");
             TxtStatus.Text = "All grade beams cleared.";
+
+            // Update UI immediately
+            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
 
 
@@ -461,6 +437,9 @@ namespace FoundationDetailer.UI
 
                     doc.Editor.WriteMessage("\nGrade beams created successfully.");
                 }
+
+                // Update UI immediately
+                Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
             }
             catch (Autodesk.AutoCAD.Runtime.Exception ex)
             {
