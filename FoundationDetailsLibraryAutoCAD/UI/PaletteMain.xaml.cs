@@ -9,6 +9,7 @@ using FoundationDetailer.UI.Controls;
 using FoundationDetailer.UI.Converters;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using FoundationDetailsLibraryAutoCAD.Data;
+using FoundationDetailsLibraryAutoCAD.Managers;
 using System;
 using System.Collections.Generic;
 using System.Windows;
@@ -77,7 +78,10 @@ namespace FoundationDetailer.UI
 
             // Load the saved NOD (if available)
             NODManager.ImportFoundationNOD();
-            RestoreBoundaryAfterImport();
+            PolylineBoundaryManager.RestoreBoundaryAfterImport();
+
+            // Update UI immediately
+            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
 
         private void WireEvents()
@@ -85,7 +89,7 @@ namespace FoundationDetailer.UI
             BtnQuery.Click += (s, e) => QueryNOD();
             BtnSyncNod.Click += (s, e) => SyncNodData();
 
-            BtnSelectBoundary.Click += (s, e) => SelectBoundary(); // for selecting the boundary
+            BtnSelectBoundary.Click += (s, e) => DefineFoundationBoundary(); // for selecting the boundary
 
             BtnAddGradeBeams.Click += (s, e) => AddPreliminaryGradeBeams(); // for adding a preliminary gradebeam layout
 
@@ -96,8 +100,8 @@ namespace FoundationDetailer.UI
             //BtnPreview.Click += (s, e) => ShowPreview();
             //BtnClearPreview.Click += (s, e) => ClearPreview();
             //BtnCommit.Click += (s, e) => CommitModel();
-            BtnSave.Click += (s, e) => SaveModel();
-            BtnLoad.Click += (s, e) => LoadModel();
+            BtnSave.Click += (s, e) => BtnSaveModel_Click();
+            BtnLoad.Click += (s, e) => BtnLoadModel_Click();
 
             BtnShowBoundary.Click += (s, e) => PolylineBoundaryManager.HighlightBoundary();
             BtnZoomBoundary.Click += (s, e) => PolylineBoundaryManager.ZoomToBoundary();
@@ -282,8 +286,7 @@ namespace FoundationDetailer.UI
                     perimeter += pl.GetPoint2dAt(i).GetDistanceTo(pl.GetPoint2dAt((i + 1) % pl.NumberOfVertices));
                 TxtBoundaryPerimeter.Text = perimeter.ToString("F2");
 
-                double area = ComputePolylineArea(pl);
-                TxtBoundaryArea.Text = area.ToString("F2");
+                TxtBoundaryArea.Text = MathHelperManager.ComputePolylineArea(pl).ToString("F2");
 
                 BtnZoomBoundary.IsEnabled = true;
                 BtnShowBoundary.IsEnabled = true;
@@ -327,24 +330,11 @@ namespace FoundationDetailer.UI
         }
 
 
-        public static double ComputePolylineArea(Polyline pl)
-        {
-            if (pl == null || pl.NumberOfVertices < 3)
-                return 0.0;
 
-            double area = 0.0;
 
-            for (int i = 0; i < pl.NumberOfVertices; i++)
-            {
-                Point2d p1 = pl.GetPoint2dAt(i);
-                Point2d p2 = pl.GetPoint2dAt((i + 1) % pl.NumberOfVertices);
-                area += (p1.X * p2.Y) - (p2.X * p1.Y);
-            }
 
-            return Math.Abs(area / 2.0);
-        }
 
-        private void SelectBoundary()
+        private void DefineFoundationBoundary()
         {
             var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
@@ -406,6 +396,16 @@ namespace FoundationDetailer.UI
         {
             NODManager.EraseFoundationSubDictionary("FD_GRADEBEAM");
             TxtStatus.Text = "All grade beams cleared.";
+        }
+
+        private void BtnSaveModel_Click()
+        {
+            NODManager.ExportFoundationNOD();
+        }
+
+        private void BtnLoadModel_Click()
+        {
+            NODManager.ImportFoundationNOD();
         }
 
 
@@ -472,45 +472,10 @@ namespace FoundationDetailer.UI
         private void AddStrands() => MessageBox.Show("Add strands to model.");
 
 
-        private void SaveModel()
-        {
-            NODManager.ExportFoundationNOD();
-        }
-
-        private void LoadModel()
-        {
-            NODManager.ImportFoundationNOD();
-        }
 
         #endregion
 
-        private void RestoreBoundaryAfterImport()
-        {
-            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            if (doc == null) return;
 
-            using (doc.LockDocument())
-            using (var tr = doc.Database.TransactionManager.StartTransaction())
-            {
-                if (PolylineBoundaryManager.TryRestoreBoundaryFromNOD(doc.Database, tr, out ObjectId boundaryId))
-                {
-                    // Set boundary in PolylineBoundaryManager (this triggers BoundaryChanged event)
-                    if (!PolylineBoundaryManager.TrySetBoundary(boundaryId, out string error))
-                    {
-                        doc.Editor.WriteMessage($"\nFailed to set boundary: {error}");
-                    }
-                    else
-                    {
-                        doc.Editor.WriteMessage("\nBoundary restored from NOD.");
-                    }
-                }
-
-                tr.Commit(); // read-only, but commit for consistency
-            }
-
-            // Update UI immediately
-            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
-        }
 
         private void DisplayInPaletteUI(ExtensionDataItem data)
         {
@@ -521,52 +486,8 @@ namespace FoundationDetailer.UI
             TreeViewExtensionData.Items.Clear();
 
             // Convert to TreeViewItem recursively
-            var rootItem = CreateTreeViewItem(data);
+            var rootItem = TreeViewManager.CreateTreeViewItem(data);
             TreeViewExtensionData.Items.Add(rootItem);
         }
-
-        private TreeViewItem CreateTreeViewItem(ExtensionDataItem dataItem)
-        {
-            string headerText = dataItem.Value != null
-                ? $"{dataItem.Name} ({dataItem.Type}): {FormatValue(dataItem.Value)}"
-                : $"{dataItem.Name} ({dataItem.Type})";
-
-            var treeItem = new TreeViewItem { Header = headerText };
-
-            foreach (var child in dataItem.Children)
-            {
-                treeItem.Items.Add(CreateTreeViewItem(child));
             }
-
-            return treeItem;
-        }
-
-        private string FormatValue(object value)
-        {
-            if (value is IEnumerable<string> list)
-                return string.Join(", ", list);
-
-            return value?.ToString() ?? "";
-        }
-
-        private void TreeViewExtensionData_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
-        {
-            if (e.NewValue is TreeViewItem tvi && tvi.Tag is Entity ent)
-            {
-                var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-                var ed = doc.Editor;
-
-                using (doc.LockDocument())
-                using (var tr = doc.Database.TransactionManager.StartTransaction())
-                {
-                    ed.SetImpliedSelection(new ObjectId[] { ent.ObjectId });
-                    ed.UpdateScreen();
-                    tr.Commit();
-                }
-            }
-        }
-
-
-
-    }
 }
