@@ -50,6 +50,7 @@
     <Reference Include="PresentationFramework" />
     <Reference Include="System" />
     <Reference Include="System.Core" />
+    <Reference Include="System.Drawing" />
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Xaml" />
     <Reference Include="System.Xml.Linq" />
@@ -83,6 +84,9 @@
     <Compile Include="UI\PaletteMain.xaml.cs">
       <DependentUpon>PaletteMain.xaml</DependentUpon>
     </Compile>
+    <Compile Include="UI\Windows\ScrollableMessageBox.xaml.cs">
+      <DependentUpon>ScrollableMessageBox.xaml</DependentUpon>
+    </Compile>
   </ItemGroup>
   <ItemGroup>
     <Page Include="UI\Controls\PierControl.xaml">
@@ -92,6 +96,9 @@
     <Page Include="UI\PaletteMain.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
+    </Page>
+    <Page Include="UI\Windows\ScrollableMessageBox.xaml">
+      <Generator>MSBuild:Compile</Generator>
     </Page>
   </ItemGroup>
   <ItemGroup>

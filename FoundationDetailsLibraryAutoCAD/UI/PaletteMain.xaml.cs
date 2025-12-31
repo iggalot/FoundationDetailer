@@ -14,6 +14,7 @@ using System;
 using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Threading;
 using static FoundationDetailsLibraryAutoCAD.Data.FoundationEntityData;
@@ -78,10 +79,9 @@ namespace FoundationDetailer.UI
 
             // Load the saved NOD (if available)
             NODManager.ImportFoundationNOD();
-            PolylineBoundaryManager.RestoreBoundaryAfterImport();
+            RestoreBoundaryAfterImport();
 
-            // Update UI immediately
-            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+            UpdateTreeViewHandleUI();
         }
 
         private void WireEvents()
@@ -111,7 +111,7 @@ namespace FoundationDetailer.UI
                 var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
                 GradeBeamManager.HighlightGradeBeams(doc);
             };
-            BtnClearGradeBeams.Click += BtnClearGradeBeams_Click;
+            BtnClearGradeBeams.Click += BtnClearAllGradeBeams_Click;
 
             TxtGBHorzMin.TextChanged += Spacing_TextChanged;
             TxtGBHorzMax.TextChanged += Spacing_TextChanged;
@@ -165,72 +165,94 @@ namespace FoundationDetailer.UI
         /// </summary>
         private void QueryNOD()
         {
-            NODManager.ViewFoundationNOD(); // optional debug in AutoCAD editor
+            NODManager.ViewFoundationNOD(); // optional debug
 
+            // Updates the TreeView for the handles.
+            UpdateTreeViewHandleUI();
+
+        }
+
+        /// <summary>
+        /// Helper function to update the data in the TreeView for the HANDLES from the NOD.
+        /// </summary>
+        internal void UpdateTreeViewHandleUI()
+        {
             var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
 
             var db = doc.Database;
 
-            TreeViewExtensionData.Items.Clear(); // clear previous tree
+            TreeViewExtensionData.Items.Clear();
 
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-                if (!nod.Contains(NODManager.ROOT))
-                {
-                    doc.Editor.WriteMessage("\nNo NOD root dictionary found.");
-                    tr.Commit();
+                var root = NODManager.GetFoundationRoot(tr, db);
+                if (root == null)
                     return;
-                }
 
-                DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(NODManager.ROOT), OpenMode.ForRead);
+                var nodeMap = new Dictionary<string, TreeViewItem>();
 
-                // Recursive helper to add nodes to the TreeView
-                void AddNodeToTree(DBDictionary dict, TreeViewItem parent)
+                TreeViewItem rootNode = new TreeViewItem
                 {
-                    foreach (DBDictionaryEntry entry in dict)
+                    Header = NODManager.ROOT,
+                    IsExpanded = true
+                };
+
+                TreeViewExtensionData.Items.Add(rootNode);
+
+                // Build the foundation tree.
+                NODManager.BuildTree(root, rootNode, tr, nodeMap);
+
+
+                var dictCounts = new Dictionary<string, int>(); // key = subdictionary name, value = count
+
+                // Traverse the Dictionary to check the extension data.
+                NODManager.TraverseDictionary(
+                    tr,
+                    root,
+                    db,
+                    (ent, handle) =>
                     {
-                        DBObject obj = tr.GetObject(entry.Value, OpenMode.ForRead);
-
-                        TreeViewItem node = new TreeViewItem { Header = entry.Key };
-                        parent.Items.Add(node);
-
-                        if (obj is DBDictionary subDict)
+                        if (nodeMap.TryGetValue(handle, out var node))
                         {
-                            // recurse into subdictionary
-                            AddNodeToTree(subDict, node);
-                        }
-                        else
-                        {
-                            // resolve entity if handle
-                            if (NODManager.TryParseHandle(entry.Key, out Handle handle) &&
-                                db.TryGetObjectId(handle, out ObjectId id) &&
-                                id.IsValid && !id.IsErased)
+                            node.Tag = ent;
+                            FoundationEntityData.DisplayExtensionData(ent);
+
+                            // Update the count for the parent dictionary
+                            TreeViewItem parentNode = node.Parent as TreeViewItem;
+                            if (parentNode != null)
                             {
-                                Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
-                                if (ent != null)
-                                {
-                                    // Display extension data in the node
-                                    node.Tag = ent;
-                                    FoundationEntityData.DisplayExtensionData(ent);
-                                }
+                                string parentName = parentNode.Header.ToString();
+                                if (dictCounts.ContainsKey(parentName))
+                                    dictCounts[parentName]++;
+                                else
+                                    dictCounts[parentName] = 1;
                             }
                         }
+                    });
+
+                foreach (var kvp in dictCounts)
+                {
+                    TreeViewItem node = NODManager.FindNodeByHeader(TreeViewExtensionData.Items[0] as TreeViewItem, kvp.Key);
+                    if (node != null)
+                    {
+                        TextBlock tb = new TextBlock();
+
+                        // Quantity: bold
+                        tb.Inlines.Add(new Run($" ({kvp.Value})  ") { FontWeight = FontWeights.Bold });
+
+                        // Subdictionary name: normal weight
+                        tb.Inlines.Add(new Run(kvp.Key));
+
+                        node.Header = tb;
                     }
                 }
 
-                // Root TreeView node
-                TreeViewItem rootNode = new TreeViewItem { Header = NODManager.ROOT };
-                TreeViewExtensionData.Items.Add(rootNode);
-
-                AddNodeToTree(root, rootNode);
-
-                rootNode.IsExpanded = true;
-
                 tr.Commit();
             }
+
         }
+
 
 
 
@@ -243,28 +265,6 @@ namespace FoundationDetailer.UI
         }
 
         #region --- Boundary Selection and UI Updates ---
-
-        private void LoadBoundaryForActiveDocument()
-        {
-            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            if (doc == null) return;
-
-            try
-            {
-                //using (doc.LockDocument())
-                using (var tr = doc.TransactionManager.StartTransaction())
-                {
-                    // Immediately update boundary display for the active document
-                    UpdateBoundaryDisplay();
-                    tr.Commit();
-                }
-            }
-            catch (Exception ex)
-            {
-                Dispatcher.BeginInvoke(new Action(() =>
-                    TxtStatus.Text = $"Error loading boundary: {ex.Message}"));
-            }
-        }
 
         private void OnBoundaryChanged(object sender, EventArgs e)
         {
@@ -311,6 +311,9 @@ namespace FoundationDetailer.UI
 
             // Optionally, change background color of action buttons
             SetActionButtonBackgrounds(ActionButtonsPanel, isValid ? Brushes.LightGreen : Brushes.LightCoral);
+
+            // Update the tree Viewer
+            UpdateTreeViewHandleUI();
         }
 
         private void SetActionButtonBackgrounds(Panel parent, Brush background)
@@ -329,7 +332,10 @@ namespace FoundationDetailer.UI
             }
         }
 
-
+        public static double ComputePolylineArea(Polyline pl)
+        {
+            if (pl == null || pl.NumberOfVertices < 3)
+                return 0.0;
 
 
 
@@ -392,10 +398,26 @@ namespace FoundationDetailer.UI
             }
         }
 
-        private void BtnClearGradeBeams_Click(object sender, RoutedEventArgs e)
+        private void BtnClearAllGradeBeams_Click(object sender, RoutedEventArgs e)
         {
-            NODManager.EraseFoundationSubDictionary("FD_GRADEBEAM");
+            Database db = Autodesk.AutoCAD.ApplicationServices.Application
+                .DocumentManager
+                .MdiActiveDocument
+                .Database;
+
+            // Delete the AutoCAD entities
+            NODManager.DeleteEntitiesFromFoundationSubDictionary(
+                Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument.Database,
+                NODManager.KEY_GRADEBEAM
+                );
+
+            // Clear the NOD
+            NODManager.ClearFoundationSubDictionary(db, NODManager.KEY_GRADEBEAM);
+
             TxtStatus.Text = "All grade beams cleared.";
+
+            // Update UI immediately
+            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
 
         private void BtnSaveModel_Click()
@@ -461,33 +483,69 @@ namespace FoundationDetailer.UI
 
                     doc.Editor.WriteMessage("\nGrade beams created successfully.");
                 }
+
+                // Update UI immediately
+                Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
             }
             catch (Autodesk.AutoCAD.Runtime.Exception ex)
             {
                 doc.Editor.WriteMessage($"\nError creating grade beams: {ex.Message}");
             }
+
+            // Update UI immediately
+            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
 
-        private void AddRebarBars() => MessageBox.Show("Add rebar bars to model.");
-        private void AddStrands() => MessageBox.Show("Add strands to model.");
+        private void AddRebarBars()
+        {
+            MessageBox.Show("Add rebar bars to model.");
+            // Update UI immediately
+            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
 
+        }
+        private void AddStrands()
+        {
+            MessageBox.Show("Add strands to model.");
+            // Update UI immediately
+            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
 
+        }
+
+        private void SaveModel()
+        {
+            NODManager.ExportFoundationNOD();
+            // Update UI immediately
+            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+        }
+
+        private void LoadModel()
+        {
+            NODManager.ImportFoundationNOD();
+            // Update UI immediately
+            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+        }
 
         #endregion
 
 
 
-        private void DisplayInPaletteUI(ExtensionDataItem data)
-        {
-            if (data == null)
-                return;
+                tr.Commit(); // read-only, but commit for consistency
+            }
 
-            // Clear old data
-            TreeViewExtensionData.Items.Clear();
-
-            // Convert to TreeViewItem recursively
-            var rootItem = TreeViewManager.CreateTreeViewItem(data);
-            TreeViewExtensionData.Items.Add(rootItem);
+            // Update UI immediately
+            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
+
+        private TreeViewItem CreateTreeViewItem(ExtensionDataItem dataItem)
+        {
+            string headerText = dataItem.Value != null
+                ? $"{dataItem.Name} ({dataItem.Type}): {FormatValue(dataItem.Value)}"
+                : $"{dataItem.Name} ({dataItem.Type})";
+
+            var treeItem = new TreeViewItem { Header = headerText };
+
+            foreach (var child in dataItem.Children)
+            {
+                treeItem.Items.Add(CreateTreeViewItem(child));
             }
 }

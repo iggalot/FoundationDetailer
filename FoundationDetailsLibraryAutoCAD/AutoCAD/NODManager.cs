@@ -3,6 +3,7 @@ using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Runtime;
+using FoundationDetailer.UI.Windows;
 using FoundationDetailsLibraryAutoCAD.Data;
 using System;
 using System.Collections.Generic;
@@ -11,6 +12,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Windows;
+using System.Windows.Controls;
 
 [assembly: CommandClass(typeof(FoundationDetailsLibraryAutoCAD.AutoCAD.NODManager))]
 
@@ -24,8 +26,11 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         public const string ROOT = "EE_Foundation";
         public const string KEY_BOUNDARY = "FD_BOUNDARY";
         public const string KEY_GRADEBEAM = "FD_GRADEBEAM";
+        public const string KEY_BEAMSTRAND = "FD_BEAMSTRAND";
+        public const string KEY_SLABSTRAND = "FD_SLABSTRAND";
+        public const string KEY_REBAR = "FD_REBAR";
 
-        private static readonly string[] KNOWN_SUBDIRS = { KEY_BOUNDARY,  KEY_GRADEBEAM };
+        private static readonly string[] KNOWN_SUBDIRS = { KEY_BOUNDARY,  KEY_GRADEBEAM, KEY_BEAMSTRAND, KEY_SLABSTRAND, KEY_REBAR };
 
 
         // ==========================================================
@@ -238,7 +243,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         }
 
         public static void CleanupFoundationNod(
-    IEnumerable<HandleEntry> scanResults)
+            IEnumerable<HandleEntry> scanResults)
         {
             if (scanResults == null)
                 return;
@@ -247,7 +252,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 .DocumentManager.MdiActiveDocument;
             Database db = doc.Database;
 
-            using (doc.LockDocument()) // 🔐 REQUIRED
+            using (doc.LockDocument()) // REQUIRED
             {
                 using (Transaction tr = db.TransactionManager.StartTransaction())
                 {
@@ -363,7 +368,9 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 }
             }
 
-            MessageBox.Show(sb.ToString(), "EE_Foundation Viewer");
+            //MessageBox.Show(sb.ToString(), "EE_Foundation Viewer");
+            ScrollableMessageBox.Show(sb.ToString());
+
         }
 
         // ==========================================================
@@ -918,6 +925,111 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             return removedCount;
         }
 
+        /// <summary>
+        /// Removes all entries from a subdictionary under EE_Foundation
+        /// without deleting the subdictionary itself.
+        /// </summary>
+        internal static bool ClearFoundationSubDictionaryInternal(
+            Transaction tr,
+            Database db,
+            string subDictName)
+        {
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+            if (db == null) throw new ArgumentNullException(nameof(db));
+            if (string.IsNullOrWhiteSpace(subDictName))
+                throw new ArgumentException("Subdictionary name required.", nameof(subDictName));
+
+            // Normalize name
+            subDictName = subDictName.Trim().ToUpperInvariant();
+
+            // Get subdictionary
+            DBDictionary subDict = GetSubDictionary(tr, db, subDictName);
+            if (subDict == null)
+                return false;
+
+            // Must open for write
+            if (!subDict.IsWriteEnabled)
+                subDict.UpgradeOpen();
+
+            // Collect keys first (cannot modify while iterating)
+            var keys = new List<string>();
+            foreach (DBDictionaryEntry entry in subDict)
+            {
+                keys.Add(entry.Key);
+            }
+
+            // Remove each entry
+            foreach (string key in keys)
+            {
+                try
+                {
+                    DBObject obj = tr.GetObject(subDict.GetAt(key), OpenMode.ForWrite);
+                    obj.Erase();
+                }
+                catch
+                {
+                    // Ignore individual failures, continue clearing
+                }
+            }
+
+            return true;
+        }
+
+        internal static bool ClearFoundationSubDictionary(
+            Database db,
+            string subDictName)
+        {
+            if (db == null) throw new ArgumentNullException(nameof(db));
+
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+
+            using (doc.LockDocument())
+            using (Transaction tr = db.TransactionManager.StartTransaction())
+            {
+                bool result =
+                    ClearFoundationSubDictionaryInternal(tr, db, subDictName);
+
+                tr.Commit();
+                return result;
+            }
+        }
+
+        [CommandMethod("ClearFoundationSubDict")]
+        public static void ClearFoundationSubDictCommand()
+        {
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            Editor ed = doc.Editor;
+            Database db = doc.Database;
+
+            PromptStringOptions pso =
+                new PromptStringOptions("\nEnter sub-dictionary to clear:");
+            pso.AllowSpaces = false;
+
+            PromptResult res = ed.GetString(pso);
+            if (res.Status != PromptStatus.OK)
+                return;
+
+            string subName = res.StringResult.Trim().ToUpperInvariant();
+
+            using (doc.LockDocument())
+            using (Transaction tr = db.TransactionManager.StartTransaction())
+            {
+                if (ClearFoundationSubDictionaryInternal(tr, db, subName))
+                {
+                    ed.WriteMessage($"\nSubdictionary {subName} cleared.");
+                }
+                else
+                {
+                    ed.WriteMessage($"\nSubdictionary {subName} not found.");
+                }
+
+                tr.Commit();
+            }
+        }
+
+
+
+
 
         public class HandleEntry
         {
@@ -1231,6 +1343,190 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 }
             }
         }
+
+        internal static DBDictionary GetFoundationRoot(Transaction tr, Database db)
+        {
+            var nod = (DBDictionary)tr.GetObject(
+                db.NamedObjectsDictionaryId,
+                OpenMode.ForRead);
+
+            if (!nod.Contains(NODManager.ROOT))
+                return null;
+
+            return (DBDictionary)tr.GetObject(
+                nod.GetAt(NODManager.ROOT),
+                OpenMode.ForRead);
+        }
+
+        internal static void BuildTree(
+            DBDictionary dict,
+            TreeViewItem parent,
+            Transaction tr,
+            Dictionary<string, TreeViewItem> nodeMap)
+        {
+            foreach (DBDictionaryEntry entry in dict)
+            {
+                TreeViewItem node = new TreeViewItem
+                {
+                    Header = entry.Key
+                };
+
+                parent.Items.Add(node);
+
+                DBObject obj = tr.GetObject(entry.Value, OpenMode.ForRead);
+
+                if (obj is DBDictionary subDict)
+                {
+                    BuildTree(subDict, node, tr, nodeMap);
+                }
+                else
+                {
+                    // Leaf node (handle)
+                    nodeMap[entry.Key] = node;
+                }
+            }
+        }
+
+        internal static void AttachEntityToTree(
+            TreeViewItem rootNode,
+            string handleKey,
+            Entity ent)
+        {
+            // Find the node with matching header (handle string)
+            TreeViewItem node = FindNodeByHeader(rootNode, handleKey);
+            if (node == null)
+                return;
+
+            node.Tag = ent;
+            FoundationEntityData.DisplayExtensionData(ent);
+        }
+
+        internal static TreeViewItem FindNodeByHeader(
+            TreeViewItem parent,
+            string header)
+        {
+            foreach (TreeViewItem child in parent.Items)
+            {
+                if (child.Header?.ToString() == header)
+                    return child;
+
+                TreeViewItem found = FindNodeByHeader(child, header);
+                if (found != null)
+                    return found;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Deletes all entities referenced by a foundation subdictionary.
+        /// Optionally removes the handle records from the dictionary as well.
+        /// </summary>
+        internal static int DeleteEntitiesFromFoundationSubDictionary(
+            Transaction tr,
+            Database db,
+            string subDictName,
+            bool removeHandlesFromNod = true)
+        {
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+            if (db == null) throw new ArgumentNullException(nameof(db));
+            if (string.IsNullOrWhiteSpace(subDictName))
+                throw new ArgumentException(nameof(subDictName));
+
+            int deletedCount = 0;
+
+            DBDictionary subDict = GetSubDictionary(tr, db, subDictName);
+            if (subDict == null)
+                return 0;
+
+            // Collect handle keys first (safe iteration)
+            var handles = new List<string>();
+            foreach (DBDictionaryEntry entry in subDict)
+                handles.Add(entry.Key);
+
+            foreach (string handleStr in handles)
+            {
+                if (!TryGetObjectIdFromHandleString(db, handleStr, out ObjectId id))
+                    continue;
+
+                if (!IsValidReadableObject(tr, id))
+                    continue;
+
+                try
+                {
+                    Entity ent = tr.GetObject(id, OpenMode.ForWrite) as Entity;
+                    if (ent == null)
+                        continue;
+
+                    ent.Erase();
+                    deletedCount++;
+
+                    // Remove NOD record if requested
+                    if (removeHandlesFromNod && subDict.Contains(handleStr))
+                    {
+                        DBObject xr =
+                            tr.GetObject(subDict.GetAt(handleStr), OpenMode.ForWrite);
+                        xr.Erase();
+                    }
+                }
+                catch
+                {
+                    // Ignore individual failures and continue
+                }
+            }
+
+            return deletedCount;
+        }
+
+        internal static int DeleteEntitiesFromFoundationSubDictionary(
+            Database db,
+            string subDictName,
+            bool removeHandlesFromNod = true)
+        {
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+
+            using (doc.LockDocument())
+            using (Transaction tr = db.TransactionManager.StartTransaction())
+            {
+                int count = DeleteEntitiesFromFoundationSubDictionary(
+                    tr,
+                    db,
+                    subDictName,
+                    removeHandlesFromNod);
+
+                tr.Commit();
+                return count;
+            }
+        }
+
+        [CommandMethod("DeleteFoundationEntities")]
+        public static void DeleteFoundationEntitiesCommand()
+        {
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            Editor ed = doc.Editor;
+
+            PromptStringOptions pso =
+                new PromptStringOptions("\nEnter foundation sub-dictionary:");
+            pso.AllowSpaces = false;
+
+            var res = ed.GetString(pso);
+            if (res.Status != PromptStatus.OK)
+                return;
+
+            string sub = res.StringResult.Trim().ToUpperInvariant();
+
+            int count = DeleteEntitiesFromFoundationSubDictionary(
+                doc.Database,
+                sub,
+                removeHandlesFromNod: true);
+
+            ed.WriteMessage($"\nDeleted {count} entities from {sub}.");
+        }
+
+
+
+
+
 
     }
 }
