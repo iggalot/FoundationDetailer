@@ -32,22 +32,7 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
             return value?.ToString() ?? "";
         }
 
-        private static void TreeViewExtensionData_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
-        {
-            if (e.NewValue is TreeViewItem tvi && tvi.Tag is Entity ent)
-            {
-                var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-                var ed = doc.Editor;
 
-                using (doc.LockDocument())
-                using (var tr = doc.Database.TransactionManager.StartTransaction())
-                {
-                    ed.SetImpliedSelection(new ObjectId[] { ent.ObjectId });
-                    ed.UpdateScreen();
-                    tr.Commit();
-                }
-            }
-        }
 
     }
 }

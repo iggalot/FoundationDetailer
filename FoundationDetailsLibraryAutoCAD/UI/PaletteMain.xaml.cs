@@ -79,7 +79,10 @@ namespace FoundationDetailer.UI
 
             // Load the saved NOD (if available)
             NODManager.ImportFoundationNOD();
-            RestoreBoundaryAfterImport();
+            PolylineBoundaryManager.RestoreBoundaryAfterImport();
+
+            // Update UI immediately
+            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
 
             UpdateTreeViewHandleUI();
         }
@@ -332,14 +335,6 @@ namespace FoundationDetailer.UI
             }
         }
 
-        public static double ComputePolylineArea(Polyline pl)
-        {
-            if (pl == null || pl.NumberOfVertices < 3)
-                return 0.0;
-
-
-
-
         private void DefineFoundationBoundary()
         {
             var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
@@ -527,25 +522,21 @@ namespace FoundationDetailer.UI
 
         #endregion
 
-
-
-                tr.Commit(); // read-only, but commit for consistency
-            }
-
-            // Update UI immediately
-            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
-        }
-
-        private TreeViewItem CreateTreeViewItem(ExtensionDataItem dataItem)
+        private void TreeViewExtensionData_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
         {
-            string headerText = dataItem.Value != null
-                ? $"{dataItem.Name} ({dataItem.Type}): {FormatValue(dataItem.Value)}"
-                : $"{dataItem.Name} ({dataItem.Type})";
-
-            var treeItem = new TreeViewItem { Header = headerText };
-
-            foreach (var child in dataItem.Children)
+            if (e.NewValue is TreeViewItem tvi && tvi.Tag is Entity ent)
             {
-                treeItem.Items.Add(CreateTreeViewItem(child));
+                var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+                var ed = doc.Editor;
+
+                using (doc.LockDocument())
+                using (var tr = doc.Database.TransactionManager.StartTransaction())
+                {
+                    ed.SetImpliedSelection(new ObjectId[] { ent.ObjectId });
+                    ed.UpdateScreen();
+                    tr.Commit();
+                }
             }
+        }
+    }
 }

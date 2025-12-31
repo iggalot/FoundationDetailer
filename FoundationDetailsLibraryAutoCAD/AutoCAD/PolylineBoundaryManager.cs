@@ -9,6 +9,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Windows.Threading;
 
 namespace FoundationDetailer.Managers
 {
@@ -1342,6 +1343,32 @@ namespace FoundationDetailer.Managers
             boundaryId = id;  // return ObjectId
             return true;
         }
+
+        internal static void RestoreBoundaryAfterImport()
+        {
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+
+            using (doc.LockDocument())
+            using (var tr = doc.Database.TransactionManager.StartTransaction())
+            {
+                if (PolylineBoundaryManager.TryRestoreBoundaryFromNOD(doc.Database, tr, out ObjectId boundaryId))
+                {
+                    // Set boundary in PolylineBoundaryManager (this triggers BoundaryChanged event)
+                    if (!PolylineBoundaryManager.TrySetBoundary(boundaryId, out string error))
+                    {
+                        doc.Editor.WriteMessage($"\nFailed to set boundary: {error}");
+                    }
+                    else
+                    {
+                        doc.Editor.WriteMessage("\nBoundary restored from NOD.");
+                    }
+                }
+
+                tr.Commit(); // read-only, but commit for consistency
+            }
+        }
+
 
 
 

@@ -74,6 +74,8 @@
     <Compile Include="Data\FoundationModel.cs" />
     <Compile Include="Data\StandardsLoader.cs" />
     <Compile Include="Managers\GridlineManager.cs" />
+    <Compile Include="Managers\MathHelperManager.cs" />
+    <Compile Include="Managers\TreeViewManager.cs" />
     <Compile Include="Preview\PreviewManager.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Tools\XDataViewer.cs" />
