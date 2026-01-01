@@ -23,12 +23,15 @@ namespace FoundationDetailer.UI
 {
     public partial class PaletteMain : UserControl
     {
-        private FoundationModel _currentModel = new FoundationModel();
+
         private PierControl PierUI;
 
         private readonly PolylineBoundaryManager _boundaryService = new PolylineBoundaryManager();
         private readonly GradeBeamManager _gradeBeamService = new GradeBeamManager();
         private readonly FoundationPersistenceManager _persistenceService = new FoundationPersistenceManager();
+
+        private FoundationContext CurrentContext => FoundationContext.For(Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument);
+
 
 
         public double HorzGBMinSpacing => ParseDoubleOrDefault(TxtGBHorzMin.Text, 5.0);
@@ -48,27 +51,9 @@ namespace FoundationDetailer.UI
         }
 
 
-
-        public FoundationModel CurrentModel
-        {
-            get => _currentModel;
-            set => _currentModel = value;
-        }
-
         public PaletteMain()
         {
             InitializeComponent();
-
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            Database db = doc.Database;
-            Editor ed = doc.Editor;
-
-            // Create the btnQueryNOD_Click dictionaries
-            using (Transaction tr = db.TransactionManager.StartTransaction())
-            {
-                NODManager.InitFoundationNOD(tr);  // initialize the NOD for our application
-                tr.Commit();
-            }
 
             PolylineBoundaryManager.BoundaryChanged += OnBoundaryChanged;  // subscribe for the boundary changed event
 
@@ -82,43 +67,38 @@ namespace FoundationDetailer.UI
 
             WireEvents();
 
-            // Load the saved NOD (if available)
-            NODManager.ImportFoundationNOD();
-            PolylineBoundaryManager.RestoreBoundaryAfterImport();
+            // Initialize NOD for current document
+            var context = CurrentContext;
+            using (var tr = context.Document.Database.TransactionManager.StartTransaction())
+            {
+                NODManager.InitFoundationNOD(context, tr);
+                tr.Commit();
+            }
 
-            // Update UI immediately
+            // Load saved NOD
+            _persistenceService.Load(context);
+
+            // Initial UI update
             Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
 
             UpdateTreeViewUI();
+
+            // Optional: auto-refresh on document switch
+            Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.DocumentActivated += OnDocumentActivated;
+
         }
 
         private void WireEvents()
         {
             BtnQuery.Click += (s, e) => btnQueryNOD_Click();
-
-            BtnSelectBoundary.Click += (s, e) => btnDefineFoundationBoundary_Click(); // for selecting the boundary
-
-            BtnAddGradeBeams.Click += (s, e) => btnAddPreliminaryGradeBeams_Click(); // for adding a preliminary gradebeam layout
-
-            //BtnAddRebar.Click += (s, e) => btnAddRebarBars_Click();
-            //BtnAddStrands.Click += (s, e) => btnAddStrands_Click();
-            //BtnAddPiers.Click += (s, e) => btnAddPiers_Click();
-
-            //BtnPreview.Click += (s, e) => ShowPreview();
-            //BtnClearPreview.Click += (s, e) => ClearPreview();
-            //BtnCommit.Click += (s, e) => CommitModel();
+            BtnSelectBoundary.Click += (s, e) => btnDefineFoundationBoundary_Click();
+            BtnAddGradeBeams.Click += (s, e) => btnAddPreliminaryGradeBeams_Click();
+            BtnClearGradeBeams.Click += btnClearAllGradeBeams_Click;
             BtnSave.Click += (s, e) => btnSaveModel_Click();
             BtnLoad.Click += (s, e) => btnLoadModel_Click();
 
             BtnShowBoundary.Click += (s, e) => PolylineBoundaryManager.HighlightBoundary();
             BtnZoomBoundary.Click += (s, e) => PolylineBoundaryManager.ZoomToBoundary();
-
-            BtnHighlightGradeBeams.Click += (s, e) =>
-            {
-                var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-                GradeBeamManager.HighlightGradeBeams(doc);
-            };
-            BtnClearGradeBeams.Click += btnClearAllGradeBeams_Click;
 
             TxtGBHorzMin.TextChanged += Spacing_TextChanged;
             TxtGBHorzMax.TextChanged += Spacing_TextChanged;
@@ -126,8 +106,11 @@ namespace FoundationDetailer.UI
             TxtGBVertMax.TextChanged += Spacing_TextChanged;
         }
 
+        #region --- UI Updates ---
+
         private void UpdateBoundaryDisplay()
         {
+            var context = CurrentContext;
             bool isValid = false;
 
             if (PolylineBoundaryManager.TryGetBoundary(out Polyline pl) && pl.Closed)
@@ -187,6 +170,32 @@ namespace FoundationDetailer.UI
             }
         }
 
+        private void TreeViewExtensionData_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
+        {
+            if (!(e.NewValue is TreeViewItem tvi && tvi.Tag is Entity ent))
+                return;
+
+            var context = CurrentContext;
+            var doc = context.Document;
+            var ed = doc.Editor;
+
+            using (doc.LockDocument())
+            using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
+            {
+                try
+                {
+                    // Select the entity in the AutoCAD drawing
+                    ed.SetImpliedSelection(new ObjectId[] { ent.ObjectId });
+                    ed.UpdateScreen();
+
+                    tr.Commit();
+                }
+                catch (Autodesk.AutoCAD.Runtime.Exception ex)
+                {
+                    ed.WriteMessage($"\nError selecting entity: {ex.Message}");
+                }
+            }
+        }
 
         private void Spacing_TextChanged(object sender, TextChangedEventArgs e)
         {
@@ -212,24 +221,9 @@ namespace FoundationDetailer.UI
             }
         }
 
-        private void TreeViewExtensionData_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
-        {
-            if (e.NewValue is TreeViewItem tvi && tvi.Tag is Entity ent)
-            {
-                var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-                var ed = doc.Editor;
+        #endregion
 
-                using (doc.LockDocument())
-                using (var tr = doc.Database.TransactionManager.StartTransaction())
-                {
-                    ed.SetImpliedSelection(new ObjectId[] { ent.ObjectId });
-                    ed.UpdateScreen();
-                    tr.Commit();
-                }
-            }
-        }
-
-
+        #region --- NOD / TreeView ---
 
 
         /// <summary>
@@ -237,87 +231,62 @@ namespace FoundationDetailer.UI
         /// </summary>
         internal void UpdateTreeViewUI()
         {
-            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            var context = CurrentContext;
+            var doc = context.Document;
             if (doc == null) return;
-
-            var db = doc.Database;
 
             TreeViewExtensionData.Items.Clear();
 
-            using (var tr = db.TransactionManager.StartTransaction())
+            using (var tr = doc.Database.TransactionManager.StartTransaction())
             {
-                var root = NODManager.GetFoundationRoot(tr, db);
-                if (root == null)
-                    return;
+                var root = NODManager.GetFoundationRoot(context, tr);
+                if (root == null) return;
 
                 var nodeMap = new Dictionary<string, TreeViewItem>();
-
-                TreeViewItem rootNode = new TreeViewItem
-                {
-                    Header = NODManager.ROOT,
-                    IsExpanded = true
-                };
-
+                var rootNode = new TreeViewItem { Header = NODManager.ROOT, IsExpanded = true };
                 TreeViewExtensionData.Items.Add(rootNode);
 
-                // Build the foundation tree.
                 NODManager.BuildTree(root, rootNode, tr, nodeMap);
 
-
-                var dictCounts = new Dictionary<string, int>(); // key = subdictionary name, value = count
-
-                // Traverse the Dictionary to check the extension data.
-                NODManager.TraverseDictionary(
-                    tr,
-                    root,
-                    db,
-                    (ent, handle) =>
+                var dictCounts = new Dictionary<string, int>();
+                NODManager.TraverseDictionary(tr, root, doc.Database, (ent, handle) =>
+                {
+                    if (nodeMap.TryGetValue(handle, out var node))
                     {
-                        if (nodeMap.TryGetValue(handle, out var node))
-                        {
-                            node.Tag = ent;
-                            FoundationEntityData.DisplayExtensionData(ent);
+                        node.Tag = ent;
+                        FoundationEntityData.DisplayExtensionData(ent);
 
-                            // Update the count for the parent dictionary
-                            TreeViewItem parentNode = node.Parent as TreeViewItem;
-                            if (parentNode != null)
-                            {
-                                string parentName = parentNode.Header.ToString();
-                                if (dictCounts.ContainsKey(parentName))
-                                    dictCounts[parentName]++;
-                                else
-                                    dictCounts[parentName] = 1;
-                            }
+                        if (node.Parent is TreeViewItem parentNode)
+                        {
+                            string parentName = parentNode.Header.ToString();
+                            dictCounts[parentName] = dictCounts.ContainsKey(parentName) ? dictCounts[parentName] + 1 : 1;
                         }
-                    });
+                    }
+                });
 
                 foreach (var kvp in dictCounts)
                 {
-                    TreeViewItem node = NODManager.FindNodeByHeader(TreeViewExtensionData.Items[0] as TreeViewItem, kvp.Key);
+                    var node = NODManager.FindNodeByHeader(rootNode, kvp.Key);
                     if (node != null)
                     {
-                        TextBlock tb = new TextBlock();
-
-                        // Quantity: bold
+                        var tb = new TextBlock();
                         tb.Inlines.Add(new Run($" ({kvp.Value})  ") { FontWeight = FontWeights.Bold });
-
-                        // Subdictionary name: normal weight
                         tb.Inlines.Add(new Run(kvp.Key));
-
                         node.Header = tb;
                     }
                 }
 
                 tr.Commit();
             }
-
         }
+        #endregion
 
 
         #region --- UI Button Click Handlers ---
         private void btnDefineFoundationBoundary_Click()
         {
-            if (_boundaryService.SelectBoundary(out string error))
+            var context = CurrentContext;
+            if (_boundaryService.SelectBoundary(context, out string error))
                 Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
             else if (!string.IsNullOrEmpty(error))
                 TxtStatus.Text = error;
@@ -328,8 +297,9 @@ namespace FoundationDetailer.UI
         /// </summary>
         private void btnQueryNOD_Click()
         {
-            NODManager.CleanFoundationNOD();
-            NODManager.ViewFoundationNOD(); // optional debug
+            var context = CurrentContext;
+            NODManager.CleanFoundationNOD(context);
+            NODManager.ViewFoundationNOD(context); // optional debug
 
             // Updates the TreeView for the handles.
             UpdateTreeViewUI();
@@ -338,76 +308,59 @@ namespace FoundationDetailer.UI
 
         private void btnAddPreliminaryGradeBeams_Click()
         {
+            var context = CurrentContext;
             if (!PolylineBoundaryManager.TryGetBoundary(out Polyline boundary))
             {
                 TxtStatus.Text = "No boundary selected.";
                 return;
             }
 
-            _gradeBeamService.CreatePreliminary(
-                boundary,
+            _gradeBeamService.CreatePreliminary(context, boundary,
                 HorzGBMinSpacing, HorzGBMaxSpacing,
                 VertGBMinSpacing, VertGBMaxSpacing);
 
             Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
+
         private void btnClearAllGradeBeams_Click(object sender, RoutedEventArgs e)
         {
-            _gradeBeamService.ClearAll();   
+            var context = CurrentContext;
+            _gradeBeamService.ClearAll(context);
             TxtStatus.Text = "All grade beams cleared.";
-
-            // Update UI immediately
             Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
-        private void btnAddPiers_Click() => MessageBox.Show("Add piers to model.");
-        private void btnAddRebarBars_Click()
-        {
-            MessageBox.Show("Add rebar bars to model.");
-            // Update UI immediately
-            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
 
-        }
-        private void btnAddStrands_Click()
-        {
-            MessageBox.Show("Add strands to model.");
-            // Update UI immediately
-            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
-
-        }
         private void btnSaveModel_Click()
         {
-            _persistenceService.Save();
+            var context = CurrentContext;
+            _persistenceService.Save(context);
         }
         private void btnLoadModel_Click()
         {
-            _persistenceService.Load();
-        }
-        private void btnPickPierLocation_Click()
-        {
-            MessageBox.Show("Pick pier location in AutoCAD.");
+            var context = CurrentContext;
+            _persistenceService.Load(context);
+            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
         #endregion
 
 
         #region --- UI Events Handlers ---
 
-        private void OnPierAdded(PierData data)
-        {
-            Pier pier = PierConverter.ToModelPier(data);
-            CurrentModel.Piers.Add(pier);
-            Dispatcher.BeginInvoke(new Action(() =>
-                TxtStatus.Text = $"Pier added at ({pier.Location.X:F2}, {pier.Location.Y:F2})"));
-        }
-
         private void OnBoundaryChanged(object sender, EventArgs e)
         {
             Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
 
+        private void OnDocumentActivated(object sender, DocumentCollectionEventArgs e)
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                UpdateBoundaryDisplay();
+                UpdateTreeViewUI();
+                TxtStatus.Text = $"Active document: {e.Document.Name}";
+            }));
+        }
 
-
-        
         #endregion
-
     }
 }

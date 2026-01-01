@@ -13,20 +13,23 @@ namespace FoundationDetailer.AutoCAD
     public class GradeBeamManager
     {
         // Track grade beams per document
-        private static readonly Dictionary<Document, List<ObjectId>> _gradeBeams = new Dictionary<Document, List<ObjectId>>();
+        private readonly Dictionary<Document, List<ObjectId>> _gradeBeams = new Dictionary<Document, List<ObjectId>>();
 
         // Track which documents have already registered the RegApp
-        private static readonly HashSet<Document> _regAppRegistered = new HashSet<Document>();
+        private readonly HashSet<Document> _regAppRegistered = new HashSet<Document>();
 
         /// <summary>
         /// Creates horizontal and vertical grade beams for a closed boundary polyline.
         /// </summary>
-        public static void CreateBothGridlines(Polyline boundary, double horiz_min, double horiz_max, double vert_min, double vert_max, int vertexCount)
+        public void CreateBothGridlines(FoundationContext context, Polyline boundary, double horiz_min, double horiz_max, double vert_min, double vert_max, int vertexCount)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
             if (boundary == null) return;
 
-            var doc = Application.DocumentManager.MdiActiveDocument;
+            var doc = context.Document;
+            var model = context.Model;
             var db = doc.Database;
+
             int horiz_count = 0;
             int vert_count = 0;
 
@@ -44,13 +47,13 @@ namespace FoundationDetailer.AutoCAD
                     // Create DB polylines with XData
                     foreach (var pts in horizontalLines)
                     {
-                        CreateDbLine(doc, pts, tr);
+                        CreateDbLine(context, pts, tr);
                         horiz_count++;
                     }
 
                     foreach (var pts in verticalLines)
                     {
-                        CreateDbLine(doc, pts, tr);
+                        CreateDbLine(context, pts, tr);
                         vert_count++;
                     }
 
@@ -69,8 +72,9 @@ namespace FoundationDetailer.AutoCAD
         /// <summary>
         /// Highlight all grade beams in the current document.
         /// </summary>
-        public static void HighlightGradeBeams(Document doc)
+        public void HighlightGradeBeams(FoundationContext context)
         {
+            var doc = context.Document;
             if (!_gradeBeams.ContainsKey(doc) || _gradeBeams[doc].Count == 0) return;
             doc.Editor.SetImpliedSelection(_gradeBeams[doc].ToArray());
         }
@@ -82,7 +86,7 @@ namespace FoundationDetailer.AutoCAD
         /// <summary>
         /// Registers the FD_GRADEBEAM RegApp if not already registered for this document.
         /// </summary>
-        public static void RegisterGradeBeamRegApp(Document doc, Transaction tr)
+        public void RegisterGradeBeamRegApp(Document doc, Transaction tr)
         {
             if (_regAppRegistered.Contains(doc)) return;
 
@@ -98,11 +102,15 @@ namespace FoundationDetailer.AutoCAD
             _regAppRegistered.Add(doc);
         }
 
-        public static void CreateDbLine(Document doc, List<Point3d> points, Transaction tr)
+        public void CreateDbLine(FoundationContext context, List<Point3d> points, Transaction tr)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
             if (points == null || points.Count < 2) return;
 
+            var doc = context.Document;
+            var model = context.Model;
             var db = doc.Database;
+
             var pl = new Polyline();
 
             for (int i = 0; i < points.Count; i++)
@@ -126,10 +134,10 @@ namespace FoundationDetailer.AutoCAD
 
             // Store the grade beams in its NOD
             FoundationEntityData.Write(tr, pl, NODManager.KEY_GRADEBEAM);
-            AddGradeBeamHandleToNOD(pl.ObjectId);
+            AddGradeBeamHandleToNOD(context, pl.ObjectId, tr);
         }
 
-        private static void SetGradeBeamXData(ObjectId id, Transaction tr)
+        private void SetGradeBeamXData(ObjectId id, Transaction tr)
         {
             if (id.IsNull) return;
 
@@ -141,71 +149,47 @@ namespace FoundationDetailer.AutoCAD
         /// Adds a grade beam polyline handle to the EE_Foundation NOD under FD_GRADEBEAM.
         /// </summary>
         /// <param name="id">The ObjectId of the grade beam polyline.</param>
-        private static void AddGradeBeamHandleToNOD(ObjectId id)
+        private void AddGradeBeamHandleToNOD(FoundationContext context, ObjectId id, Transaction tr)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
             if (id.IsNull || !id.IsValid) return;
 
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            if (doc == null) return;
+            var doc = context.Document;
+            var db = doc.Database;
 
-            Database db = doc.Database;
+            // Ensure EE_Foundation NOD and subdictionaries exist
+            NODManager.InitFoundationNOD(context, tr);
 
-            using (doc.LockDocument())
-            {
-                using (Transaction tr = db.TransactionManager.StartTransaction())
-                {
-                    // Ensure EE_Foundation NOD and subdictionaries exist
-                    NODManager.InitFoundationNOD(tr);
+            DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+            DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(NODManager.ROOT), OpenMode.ForWrite);
+            DBDictionary gradebeamDict = (DBDictionary)tr.GetObject(root.GetAt(NODManager.KEY_GRADEBEAM), OpenMode.ForWrite);
 
-                    DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-                    DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(NODManager.ROOT), OpenMode.ForWrite);
-                    DBDictionary gradebeamDict = (DBDictionary)tr.GetObject(root.GetAt(NODManager.KEY_GRADEBEAM), OpenMode.ForWrite);
+            // Convert ObjectId handle to uppercase string
+            string handleStr = id.Handle.ToString().ToUpperInvariant();
 
-                    // Convert ObjectId handle to uppercase string
-                    string handleStr = id.Handle.ToString().ToUpperInvariant();
-
-                    // Add to NOD using existing helper
-                    NODManager.AddHandleToDictionary(tr, gradebeamDict, handleStr);
-
-                    tr.Commit();
-                }
-            }
+            // Add to NOD using existing helper
+            NODManager.AddHandleToDictionary(tr, gradebeamDict, handleStr);
         }
 
-        public void CreatePreliminary(
-        Polyline boundary,
-        double hMin, double hMax,
-        double vMin, double vMax,
-        int vertexCount = 5)
+        public void CreatePreliminary(FoundationContext context, Polyline boundary, double hMin, double hMax, double vMin, double vMax, int vertexCount = 5)
         {
             if (boundary == null)
                 throw new ArgumentNullException(nameof(boundary));
 
-            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            if (doc == null) return;
-
             try
             {
-                using (doc.LockDocument())
-                {
-                    GradeBeamManager.CreateBothGridlines(
-                        boundary,
-                        hMin, hMax,
-                        vMin, vMax,
-                        vertexCount);
-
-                    doc.Editor.WriteMessage("\nGrade beams created successfully.");
-                }
+                CreateBothGridlines(context, boundary, hMin, hMax, vMin, vMax, vertexCount);
+                context.Document.Editor.WriteMessage("\nGrade beams created successfully.");
             }
             catch (Autodesk.AutoCAD.Runtime.Exception ex)
             {
-                doc.Editor.WriteMessage($"\nError creating grade beams: {ex.Message}");
+                context.Document.Editor.WriteMessage($"\nError creating grade beams: {ex.Message}");
             }
         }
 
-        public void ClearAll()
+        public void ClearAll(FoundationContext context)
         {
-            var db = Application.DocumentManager.MdiActiveDocument.Database;
+            var db = context.Document.Database;
 
             NODManager.DeleteEntitiesFromFoundationSubDictionary(db, NODManager.KEY_GRADEBEAM);
             NODManager.ClearFoundationSubDictionary(db, NODManager.KEY_GRADEBEAM);

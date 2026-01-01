@@ -3,6 +3,7 @@ using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Runtime;
+using FoundationDetailer.Model;
 using FoundationDetailer.UI.Windows;
 using FoundationDetailsLibraryAutoCAD.Data;
 using System;
@@ -37,11 +38,17 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         //  COMMAND: INITIALIZE FOUNDATION STRUCTURE
         // ==========================================================
         [CommandMethod("InitFoundationNOD")]
-        public static void InitFoundationNOD(Transaction tr)
+        public static void InitFoundationNOD(FoundationContext context, Transaction tr)
         {
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            Database db = doc.Database;
-            Editor ed = doc.Editor;
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+
+            var doc = context.Document;
+            var model = context.Model;
+            var db = doc.Database;
+            var ed = doc.Editor;
 
             if (tr == null) return;
 
@@ -64,13 +71,15 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             }
         }
 
-        public static List<HandleEntry> ScanFoundationNod()
+        public static List<HandleEntry> ScanFoundationNod(FoundationContext context)
         {
-            var results = new List<HandleEntry>();
+            if (context == null) throw new ArgumentNullException(nameof(context));
 
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application
-                .DocumentManager.MdiActiveDocument;
-            Database db = doc.Database;
+            var doc = context.Document;
+            var model = context.Model;
+            var db = doc.Database;
+
+            var results = new List<HandleEntry>();
 
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
@@ -243,14 +252,17 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         }
 
         public static void CleanupFoundationNod(
+            FoundationContext context, 
             IEnumerable<HandleEntry> scanResults)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var model = context.Model;
+            var db = doc.Database;
+
             if (scanResults == null)
                 return;
-
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application
-                .DocumentManager.MdiActiveDocument;
-            Database db = doc.Database;
 
             using (doc.LockDocument()) // REQUIRED
             {
@@ -317,18 +329,18 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         // ==========================================================
         //  ITERATE AND CLEAN HANDLES
         // ==========================================================
-        public static List<HandleEntry> IterateFoundationNod(bool cleanStale = false)
+        public static List<HandleEntry> IterateFoundationNod(FoundationContext context, bool cleanStale = false)
         {
             // PASS 1 — Read-only scan
-            List<HandleEntry> results = ScanFoundationNod();
+            List<HandleEntry> results = ScanFoundationNod(context);
 
             // PASS 2 — Explicit cleanup (only if requested)
             if (cleanStale && results.Count > 0)
             {
-                CleanupFoundationNod(results);
+                CleanupFoundationNod(context, results);
 
                 // Rescan so results reflect cleaned NOD
-                results = ScanFoundationNod();
+                results = ScanFoundationNod(context);
             }
 
             return results;
@@ -338,10 +350,16 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         //  VIEW NOD CONTENT helper function
         // ==========================================================
         [CommandMethod("ViewFoundationNOD")]
-        public static void ViewFoundationNOD()
+        public static void ViewFoundationNOD(FoundationContext context)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var model = context.Model;
+            var db = doc.Database;
+
             // Get all entries across all subdictionaries
-            var entries = IterateFoundationNod(cleanStale: true);
+            var entries = IterateFoundationNod(context, cleanStale: true);
 
             // Group entries by subdictionary name
             var grouped = entries
@@ -377,10 +395,16 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         //  CLEAN STALE HANDLES
         // ==========================================================
         [CommandMethod("CleanFoundationNOD")]
-        public static void CleanFoundationNOD()
+        public static void CleanFoundationNOD(FoundationContext context)
         {
-            var entries = IterateFoundationNod(cleanStale: true);
-            CleanupFoundationNod(entries);
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var model = context.Model;
+            var db = doc.Database;
+
+            var entries = IterateFoundationNod(context, cleanStale: true);
+            CleanupFoundationNod(context, entries);
         }
 
         // ==========================================================
@@ -463,11 +487,13 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         //  EXPORT / IMPORT JSON
         // ==========================================================
         [CommandMethod("ExportFoundationNOD")]
-        public static void ExportFoundationNOD()
+        public static void ExportFoundationNOD(FoundationContext context)
         {
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application
-                                .DocumentManager.MdiActiveDocument;
-            Database db = doc.Database;
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var model = context.Model;
+            var db = doc.Database;
 
             // Build filename in same folder as drawing
             string drawingFolder = Path.GetDirectoryName(doc.Name);
@@ -540,13 +566,13 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         /// A function that loads the associated JSON file with the NOD data.
         /// </summary>
         [CommandMethod("ImportFoundationNOD")]
-        public static void ImportFoundationNOD()
+        public static void ImportFoundationNOD(FoundationContext context)
         {
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application
-                                .DocumentManager.MdiActiveDocument;
-            if (doc == null) return;
+            if (context == null) throw new ArgumentNullException(nameof(context));
 
-            Database db = doc.Database;
+            var doc = context.Document;
+            var model = context.Model;
+            var db = doc.Database;
 
             // Build the JSON file name in the drawing’s folder
             string drawingFolder = Path.GetDirectoryName(doc.Name);
@@ -573,7 +599,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 // Ensure the NOD exists
                 using (Transaction tr = db.TransactionManager.StartTransaction())
                 {
-                    InitFoundationNOD(tr);
+                    InitFoundationNOD(context, tr);
                     tr.Commit();
                 }
 
@@ -634,7 +660,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 }
 
                 // Clean stale handles
-                CleanFoundationNOD();
+                CleanFoundationNOD(context);
             }
         }
 
@@ -642,17 +668,20 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         //  SAMPLE DATA CREATION
         // ==========================================================
         [CommandMethod("CreateSampleFoundationForNOD")]
-        public void CreateSampleFoundationForNOD()
+        public void CreateSampleFoundationForNOD(FoundationContext context)
         {
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            Database db = doc.Database;
-            Editor ed = doc.Editor;
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var model = context.Model;
+            var db = doc.Database;
+            var ed = doc.Editor;
 
             using (doc.LockDocument())
             {
                 using (Transaction tr = db.TransactionManager.StartTransaction())
                 {
-                    InitFoundationNOD(tr);
+                    InitFoundationNOD(context, tr);
                     tr.Commit();
                 }
 
@@ -1344,8 +1373,15 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             }
         }
 
-        internal static DBDictionary GetFoundationRoot(Transaction tr, Database db)
+        internal static DBDictionary GetFoundationRoot(FoundationContext context, Transaction tr)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+
+            var doc = context.Document;
+            var model = context.Model;
+            var db = doc.Database;
+
             var nod = (DBDictionary)tr.GetObject(
                 db.NamedObjectsDictionaryId,
                 OpenMode.ForRead);

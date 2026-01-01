@@ -1,21 +1,25 @@
-﻿namespace FoundationDetailsLibraryAutoCAD.AutoCAD
+﻿using Autodesk.AutoCAD.ApplicationServices;
+using FoundationDetailer.Model;
+using FoundationDetailsLibraryAutoCAD.Data;
+
+namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 {
     internal class FoundationPersistenceManager
     {
-        public void Save()
+        public void Save(FoundationContext context)
         {
-            NODManager.ExportFoundationNOD();
+            NODManager.ExportFoundationNOD(context);
         }
 
-        public void Load()
+        public void Load(FoundationContext context)
         {
-            NODManager.ImportFoundationNOD();
+            NODManager.ImportFoundationNOD(context);
         }
 
-        public void Query()
+        public void Query(FoundationContext context)
         {
-            NODManager.CleanFoundationNOD();
-            NODManager.ViewFoundationNOD();
+            NODManager.CleanFoundationNOD(context);
+            NODManager.ViewFoundationNOD(context);
         }
     }
 }

@@ -2,6 +2,7 @@
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
+using FoundationDetailer.Model;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using FoundationDetailsLibraryAutoCAD.Data;
 using System;
@@ -64,14 +65,17 @@ namespace FoundationDetailer.Managers
         /// Function to add a polyline boundary handle to the NOD
         /// </summary>
         /// <param name="id"></param>
-        internal static void AddBoundaryHandleToNOD(Transaction tr, ObjectId id)
+        internal static void AddBoundaryHandleToNOD(FoundationContext context, Transaction tr, ObjectId id)
         {
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application
-                                .DocumentManager.MdiActiveDocument;
-            Database db = doc.Database;
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+
+            var doc = context.Document;
+            var model = context.Model;
+            var db = doc.Database;
 
             // Ensure NOD structure exists
-            NODManager.InitFoundationNOD(tr);
+            NODManager.InitFoundationNOD(context, tr);
 
             DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
 
@@ -224,14 +228,16 @@ namespace FoundationDetailer.Managers
 
         #region Public API (original functionality preserved)
 
-        public static bool TrySetBoundary(ObjectId candidateId, out string error)
+        public static bool TrySetBoundary(FoundationContext context, ObjectId candidateId, out string error)
         {
-            error = string.Empty;
-            var doc = Application.DocumentManager.MdiActiveDocument;
-            if (doc == null) { error = "No active document."; return false; }
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (candidateId == null) throw new ArgumentNullException(nameof(candidateId));
 
+            var doc = context.Document;
+            var model = context.Model;
             var db = doc.Database;
 
+            error = string.Empty;
 
             using (doc.LockDocument())
             {
@@ -254,7 +260,7 @@ namespace FoundationDetailer.Managers
 
                         // Persist handle via NODManager
                         FoundationEntityData.Write(tr, ent, NODManager.KEY_BOUNDARY);
-                        AddBoundaryHandleToNOD(tr, candidateId);
+                        AddBoundaryHandleToNOD(context, tr, candidateId);
 
                         // Update in-memory map
                         _docBoundaryIds.AddOrUpdate(doc, candidateId, (d, old) => candidateId);
@@ -1342,18 +1348,21 @@ namespace FoundationDetailer.Managers
             return true;
         }
 
-        internal static void RestoreBoundaryAfterImport()
+        internal static void RestoreBoundaryAfterImport(FoundationContext context)
         {
-            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            if (doc == null) return;
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var model = context.Model;
+            var db = doc.Database;
 
             using (doc.LockDocument())
             using (var tr = doc.Database.TransactionManager.StartTransaction())
             {
-                if (PolylineBoundaryManager.TryRestoreBoundaryFromNOD(doc.Database, tr, out ObjectId boundaryId))
+                if (PolylineBoundaryManager.TryRestoreBoundaryFromNOD(db, tr, out ObjectId boundaryId))
                 {
                     // Set boundary in PolylineBoundaryManager (this triggers BoundaryChanged event)
-                    if (!PolylineBoundaryManager.TrySetBoundary(boundaryId, out string error))
+                    if (!PolylineBoundaryManager.TrySetBoundary(context, boundaryId, out string error))
                     {
                         doc.Editor.WriteMessage($"\nFailed to set boundary: {error}");
                     }
@@ -1367,16 +1376,19 @@ namespace FoundationDetailer.Managers
             }
         }
 
-        public bool SelectBoundary(out string error)
+        public bool SelectBoundary(FoundationContext context, out string error)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var model = context.Model;
+
             error = null;
 
-
-            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return false;
-
-            var ed = doc.Editor;
             var db = doc.Database;
+            var ed = doc.Editor;
+
 
             // Prompt for a closed polyline
             PromptEntityOptions options = new PromptEntityOptions("\nSelect a closed polyline: ");
@@ -1403,8 +1415,7 @@ namespace FoundationDetailer.Managers
                     }
 
                     // Try set the boundary (no DB writes assumed here)
-                    if (!PolylineBoundaryManager.TrySetBoundary(
-                            result.ObjectId, out string boundaryError))
+                    if (!PolylineBoundaryManager.TrySetBoundary(context, result.ObjectId, out string boundaryError))
                     {
                         error = boundaryError;
                         ed.WriteMessage($"\nError setting boundary: {boundaryError}");
@@ -1415,20 +1426,20 @@ namespace FoundationDetailer.Managers
                     FoundationEntityData.Write(tr, boundary, NODManager.KEY_BOUNDARY);
 
                     // Register handle in the NOD
-                    PolylineBoundaryManager.AddBoundaryHandleToNOD(tr, boundary.ObjectId);
+                    PolylineBoundaryManager.AddBoundaryHandleToNOD(context, tr, boundary.ObjectId);
 
                     tr.Commit();
 
                     ed.WriteMessage(
                         $"\nBoundary selected: {boundary.Handle}");
+                    return true;
                 }
                 catch (System.Exception ex)
                 {
                     ed.WriteMessage($"\nBoundary selection failed: {ex.Message}");
+                    return false;
                 }
             }
-
-            return true;
         }
 
 

@@ -2,7 +2,6 @@ using Autodesk.AutoCAD.Runtime;
 using Autodesk.AutoCAD.Windows;
 using FoundationDetailer.UI;
 using System;
-using System.Windows;
 using System.Windows.Forms;
 using System.Windows.Forms.Integration;
 
