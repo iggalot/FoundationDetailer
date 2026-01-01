@@ -75,6 +75,9 @@ namespace FoundationDetailer.UI
                 tr.Commit();
             }
 
+            _boundaryService.Initialize(context);
+            _gradeBeamService.Initialize(context);
+
             // Load saved NOD
             _persistenceService.Load(context);
 
@@ -90,6 +93,8 @@ namespace FoundationDetailer.UI
 
         private void WireEvents()
         {
+            var context = CurrentContext;
+
             BtnQuery.Click += (s, e) => btnQueryNOD_Click();
             BtnSelectBoundary.Click += (s, e) => btnDefineFoundationBoundary_Click();
             BtnAddGradeBeams.Click += (s, e) => btnAddPreliminaryGradeBeams_Click();
@@ -97,8 +102,8 @@ namespace FoundationDetailer.UI
             BtnSave.Click += (s, e) => btnSaveModel_Click();
             BtnLoad.Click += (s, e) => btnLoadModel_Click();
 
-            BtnShowBoundary.Click += (s, e) => PolylineBoundaryManager.HighlightBoundary();
-            BtnZoomBoundary.Click += (s, e) => PolylineBoundaryManager.ZoomToBoundary();
+            BtnShowBoundary.Click += (s, e) => _boundaryService.HighlightBoundary(context);
+            BtnZoomBoundary.Click += (s, e) => _boundaryService.ZoomToBoundary(context);
 
             TxtGBHorzMin.TextChanged += Spacing_TextChanged;
             TxtGBHorzMax.TextChanged += Spacing_TextChanged;
@@ -111,9 +116,14 @@ namespace FoundationDetailer.UI
         private void UpdateBoundaryDisplay()
         {
             var context = CurrentContext;
+            if ( context == null )
+            {
+                throw new Exception("Un UpdateBoundaryDCurrent context is null.");
+            }
+
             bool isValid = false;
 
-            if (PolylineBoundaryManager.TryGetBoundary(out Polyline pl) && pl.Closed)
+            if (_boundaryService.TryGetBoundary(context, out Polyline pl) && pl.Closed)
             {
                 isValid = true;
                 TxtBoundaryStatus.Text = "Boundary valid - " + pl.ObjectId.Handle.ToString();
@@ -309,7 +319,8 @@ namespace FoundationDetailer.UI
         private void btnAddPreliminaryGradeBeams_Click()
         {
             var context = CurrentContext;
-            if (!PolylineBoundaryManager.TryGetBoundary(out Polyline boundary))
+
+            if (!_boundaryService.TryGetBoundary(context, out Polyline boundary))
             {
                 TxtStatus.Text = "No boundary selected.";
                 return;

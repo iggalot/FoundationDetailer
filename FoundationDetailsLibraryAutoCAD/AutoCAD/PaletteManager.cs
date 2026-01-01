@@ -10,38 +10,6 @@ namespace FoundationDetailer
     {
         private static PaletteSet _paletteSet;
 
-        // Call this once at startup
-        public static void Initialize()
-        {
-            Document document = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            Database db = document.Database;
-            Editor ed = document.Editor;
-
-            try
-            {
-                // Create the btnQueryNOD_Click dictionaries
-                using (Transaction tr = db.TransactionManager.StartTransaction())
-                {
-                    NODManager.InitFoundationNOD(tr);
-                    tr.Commit();
-                }
-
-                // Attach to existing documents
-                foreach (Document doc in Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager)
-                    AttachDocumentEvents(doc);
-
-                // Listen for new documents
-                Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.DocumentCreated -= DocManager_DocumentCreated;
-                Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.DocumentCreated += DocManager_DocumentCreated;
-
-                // Create palette set
-                CreatePalette();
-            } catch
-            {
-                ed.WriteMessage("\nError initializing PalleteManager.");
-            }
-        }
-
         private static void DocManager_DocumentCreated(object sender, DocumentCollectionEventArgs e)
         {
             AttachDocumentEvents(e.Document);

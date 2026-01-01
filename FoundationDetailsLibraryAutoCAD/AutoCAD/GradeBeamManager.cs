@@ -18,6 +18,11 @@ namespace FoundationDetailer.AutoCAD
         // Track which documents have already registered the RegApp
         private readonly HashSet<Document> _regAppRegistered = new HashSet<Document>();
 
+        public void Initialize(FoundationContext context)
+        {
+
+        }
+
         /// <summary>
         /// Creates horizontal and vertical grade beams for a closed boundary polyline.
         /// </summary>

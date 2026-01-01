@@ -56,11 +56,11 @@ namespace FoundationDetailer.Managers
             BoundaryChanged?.Invoke(null, EventArgs.Empty);
         }
 
-        static PolylineBoundaryManager()
+        public PolylineBoundaryManager()
         {
-            Initialize();
         }
 
+        #region NOD Helpers
         /// <summary>
         /// Function to add a polyline boundary handle to the NOD
         /// </summary>
@@ -69,64 +69,67 @@ namespace FoundationDetailer.Managers
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
             if (tr == null) throw new ArgumentNullException(nameof(tr));
+            if (id.IsNull) return;
 
             var doc = context.Document;
-            var model = context.Model;
             var db = doc.Database;
 
             // Ensure NOD structure exists
             NODManager.InitFoundationNOD(context, tr);
 
-            DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+            var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+            var root = (DBDictionary)tr.GetObject(nod.GetAt(NODManager.ROOT), OpenMode.ForWrite);
+            var boundaryDict = (DBDictionary)tr.GetObject(root.GetAt(NODManager.KEY_BOUNDARY), OpenMode.ForWrite);
 
-            DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(NODManager.ROOT), OpenMode.ForWrite);
-
-            DBDictionary boundaryDict = (DBDictionary)tr.GetObject(root.GetAt(NODManager.KEY_BOUNDARY), OpenMode.ForWrite);
-
-            // Store handle (uppercase, same as everywhere else)
             string handleStr = id.Handle.ToString().ToUpperInvariant();
-
-            // Use your existing helper
             NODManager.AddHandleToDictionary(tr, boundaryDict, handleStr);
 
         }
 
+        #endregion
+
         #region Initialization & Attach/Detach
 
-        public static void Initialize()
+        public void Initialize(FoundationContext context)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+
+
             // Attach to existing documents
-            foreach (Document doc in Application.DocumentManager)
-            {
-                AttachDocumentEvents(doc);
-            }
+            AttachDocumentEvents(context);
 
             // Document lifecycle events
             var dm = Application.DocumentManager;
-            dm.DocumentCreated -= DocManager_DocumentCreated;
-            dm.DocumentCreated += DocManager_DocumentCreated;
+            dm.DocumentCreated -= (s, e) => DocManager_DocumentCreated(s, e, context);
+            dm.DocumentCreated += (s, e) => DocManager_DocumentCreated(s, e, context);
 
-            dm.DocumentToBeDestroyed -= DocManager_DocumentToBeDestroyed;
-            dm.DocumentToBeDestroyed += DocManager_DocumentToBeDestroyed;
+            dm.DocumentToBeDestroyed -= (s, e) => DocManager_DocumentToBeDestroyed(s, e, context);
+            dm.DocumentToBeDestroyed += (s, e) => DocManager_DocumentToBeDestroyed(s, e, context);
 
-            dm.DocumentActivated -= DocManager_DocumentActivated;
-            dm.DocumentActivated += DocManager_DocumentActivated;
+            dm.DocumentActivated -= (s, e) => DocManager_DocumentActivated(s, e, context);
+            dm.DocumentActivated += (s, e) => DocManager_DocumentActivated(s, e, context);
 
             // Load for active document (deferred to be safe)
-            LoadBoundaryForActiveDocument();
+            LoadBoundaryForActiveDocument(context);
         }
 
-        private static void DocManager_DocumentCreated(object sender, DocumentCollectionEventArgs e)
+        private static void DocManager_DocumentCreated(object sender, DocumentCollectionEventArgs e, FoundationContext context)
         {
-            AttachDocumentEvents(e.Document);
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            AttachDocumentEvents(context);
         }
 
-        private static void DocManager_DocumentToBeDestroyed(object sender, DocumentCollectionEventArgs e)
+        private static void DocManager_DocumentToBeDestroyed(object sender, DocumentCollectionEventArgs e, FoundationContext context)
         {
-            DetachDocumentEvents(e.Document);
-            _docBoundaryIds.TryRemove(e.Document, out _);
-            _lastSnapshots.TryRemove(e.Document, out _);
-            _docCommandStates.TryRemove(e.Document, out _);
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            DetachDocumentEvents(context);
+            _docBoundaryIds.TryRemove(context.Document, out _);
+            _lastSnapshots.TryRemove(context.Document, out _);
+            _docCommandStates.TryRemove(context.Document, out _);
 
             if (_deferredIdleHandlers.TryRemove(e.Document, out var existing))
             {
@@ -134,21 +137,29 @@ namespace FoundationDetailer.Managers
             }
         }
 
-        private static void DocManager_DocumentActivated(object sender, DocumentCollectionEventArgs e)
+        private static void DocManager_DocumentActivated(object sender, DocumentCollectionEventArgs e, FoundationContext context)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
             // Defer loading to idle so we don't start transactions inside activation handlers
-            DeferActionForDocument(e.Document, () =>
+            DeferActionForDocument(context.Document, () =>
             {
-                LoadBoundary(e.Document);
+                LoadBoundary(context.Document);
                 BoundaryChanged?.Invoke(null, EventArgs.Empty);
             });
         }
 
-        private static void AttachDocumentEvents(Document doc)
+        private static void AttachDocumentEvents(FoundationContext context)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var model = context.Model;
+
             if (doc == null) return;
 
             var db = doc.Database;
+            var ed = doc.Editor;
 
             // Defensive: remove then add to avoid duplicates
             db.ObjectErased -= Db_ObjectErased;
@@ -181,14 +192,20 @@ namespace FoundationDetailer.Managers
             _docCommandStates.AddOrUpdate(doc, new CommandState(), (d, old) => { old.Clear(); return old; });
 
             // If this doc is active, attempt to load its stored boundary now (deferred)
-            if (doc == Application.DocumentManager.MdiActiveDocument)
-                DeferActionForDocument(doc, () => LoadBoundary(doc));
+            DeferActionForDocument(doc, () => LoadBoundary(doc));
         }
 
-        private static void DetachDocumentEvents(Document doc)
+        private static void DetachDocumentEvents(FoundationContext context)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var model = context.Model;
+
             if (doc == null) return;
+
             var db = doc.Database;
+            var ed = doc.Editor;
 
             db.ObjectErased -= Db_ObjectErased;
             db.ObjectAppended -= Db_ObjectAppended;
@@ -206,29 +223,11 @@ namespace FoundationDetailer.Managers
             }
         }
 
-        public static void Dispose()
-        {
-            var dm = Application.DocumentManager;
-            dm.DocumentCreated -= DocManager_DocumentCreated;
-            dm.DocumentToBeDestroyed -= DocManager_DocumentToBeDestroyed;
-            dm.DocumentActivated -= DocManager_DocumentActivated;
-
-            foreach (Document doc in Application.DocumentManager)
-            {
-                DetachDocumentEvents(doc);
-            }
-
-            _docBoundaryIds.Clear();
-            _lastSnapshots.Clear();
-            _docCommandStates.Clear();
-            BoundaryChanged = null;
-        }
-
         #endregion
 
         #region Public API (original functionality preserved)
 
-        public static bool TrySetBoundary(FoundationContext context, ObjectId candidateId, out string error)
+        public bool TrySetBoundary(FoundationContext context, ObjectId candidateId, out string error)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
             if (candidateId == null) throw new ArgumentNullException(nameof(candidateId));
@@ -284,11 +283,15 @@ namespace FoundationDetailer.Managers
             }
         }
 
-        public static bool TryGetBoundary(out Polyline pl)
+        public bool TryGetBoundary(FoundationContext context, out Polyline pl)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var model = context.Model;
+
             pl = null;
 
-            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return false;
 
             var db = doc.Database;
@@ -299,7 +302,7 @@ namespace FoundationDetailer.Managers
                 using (var tr = db.TransactionManager.StartTransaction())
                 {
                     // Delegate the dictionary and handle lookup to NODManager
-                    if (!NODManager.TryGetFirstEntity(tr, db, NODManager.KEY_BOUNDARY, out ObjectId oid))
+                    if (!NODManager.TryGetFirstEntity(context, tr, db, NODManager.KEY_BOUNDARY, out ObjectId oid))
                         return false;
 
                     if (oid.IsNull || oid.IsErased || !oid.IsValid)
@@ -316,18 +319,28 @@ namespace FoundationDetailer.Managers
         }
 
 
-        public static void HighlightBoundary()
+        public void HighlightBoundary(FoundationContext context)
         {
-            if (!TryGetBoundary(out Polyline pl)) return;
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            if (!TryGetBoundary(context, out Polyline pl)) return;
             var doc = Application.DocumentManager.MdiActiveDocument;
             doc.Editor.SetImpliedSelection(new ObjectId[] { pl.ObjectId });
         }
 
-        public static void ZoomToBoundary()
+        public void ZoomToBoundary(FoundationContext context)
         {
-            if (!TryGetBoundary(out Polyline pl)) return;
-            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var model = context.Model;
+
+            if (doc == null) return;
+
+            var db = doc.Database;
             var ed = doc.Editor;
+
+            if (!TryGetBoundary(context, out Polyline pl)) return;
 
             try
             {
@@ -358,10 +371,17 @@ namespace FoundationDetailer.Managers
             catch { }
         }
 
-        public static void ClearBoundaryForActiveDocument()
+        public static void ClearBoundaryForActiveDocument(FoundationContext context)
         {
-            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var model = context.Model;
+
             if (doc == null) return;
+
+            var db = doc.Database;
+            var ed = doc.Editor;
 
             try
             {
@@ -751,9 +771,13 @@ namespace FoundationDetailer.Managers
             return null;
         }
 
-        private static void LoadBoundaryForActiveDocument()
+        private static void LoadBoundaryForActiveDocument(FoundationContext context)
         {
-            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var model = context.Model;
+
             if (doc != null)
                 DeferActionForDocument(doc, () => LoadBoundary(doc));
         }
@@ -1348,7 +1372,7 @@ namespace FoundationDetailer.Managers
             return true;
         }
 
-        internal static void RestoreBoundaryAfterImport(FoundationContext context)
+        internal void RestoreBoundaryAfterImport(FoundationContext context)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
 
@@ -1362,7 +1386,7 @@ namespace FoundationDetailer.Managers
                 if (PolylineBoundaryManager.TryRestoreBoundaryFromNOD(db, tr, out ObjectId boundaryId))
                 {
                     // Set boundary in PolylineBoundaryManager (this triggers BoundaryChanged event)
-                    if (!PolylineBoundaryManager.TrySetBoundary(context, boundaryId, out string error))
+                    if (!TrySetBoundary(context, boundaryId, out string error))
                     {
                         doc.Editor.WriteMessage($"\nFailed to set boundary: {error}");
                     }
@@ -1415,7 +1439,7 @@ namespace FoundationDetailer.Managers
                     }
 
                     // Try set the boundary (no DB writes assumed here)
-                    if (!PolylineBoundaryManager.TrySetBoundary(context, result.ObjectId, out string boundaryError))
+                    if (!TrySetBoundary(context, result.ObjectId, out string boundaryError))
                     {
                         error = boundaryError;
                         ed.WriteMessage($"\nError setting boundary: {boundaryError}");

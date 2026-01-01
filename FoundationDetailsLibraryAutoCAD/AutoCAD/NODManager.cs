@@ -3,12 +3,10 @@ using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Runtime;
-using FoundationDetailer.Model;
 using FoundationDetailer.UI.Windows;
 using FoundationDetailsLibraryAutoCAD.Data;
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -1246,9 +1244,12 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         /// <param name="subDictKey">Key identifying the sub-dictionary.</param>
         /// <param name="oid">Receives the ObjectId of the first valid entity if found.</param>
         /// <returns>True if a valid entity is found; otherwise false.</returns>
-        public static bool TryGetFirstEntity(
+        public static bool TryGetFirstEntity(FoundationContext context,
             Transaction tr, Database db, string subDictKey, out ObjectId oid)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+
             oid = ObjectId.Null;
 
             // Retrieve the requested sub-dictionary
