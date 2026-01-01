@@ -2,14 +2,12 @@
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
-using FoundationDetailer.Model;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using FoundationDetailsLibraryAutoCAD.Data;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
-using System.Windows.Threading;
 
 namespace FoundationDetailer.Managers
 {
@@ -18,7 +16,7 @@ namespace FoundationDetailer.Managers
     /// Tracks modifications, erases, undo/redo, append/unappend, and command-based edits.
     /// Adds hybrid handle-change / replacement detection and automatic adoption of replacement polylines.
     /// </summary>
-    public static class PolylineBoundaryManager
+    public class PolylineBoundaryManager
     {
         private const string XrecordKey = "FD_BOUNDARY";
 
@@ -1369,7 +1367,69 @@ namespace FoundationDetailer.Managers
             }
         }
 
+        public bool SelectBoundary(out string error)
+        {
+            error = null;
 
+
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return false;
+
+            var ed = doc.Editor;
+            var db = doc.Database;
+
+            // Prompt for a closed polyline
+            PromptEntityOptions options = new PromptEntityOptions("\nSelect a closed polyline: ");
+            options.SetRejectMessage("\nMust be a closed polyline.");
+            options.AddAllowedClass(typeof(Polyline), false);
+
+            var result = ed.GetEntity(options);
+            if (result.Status != PromptStatus.OK) return false;
+
+            using (doc.LockDocument())
+            using (Transaction tr = db.TransactionManager.StartTransaction())
+            {
+                try
+                {
+                    // Open the selected entity
+                    Polyline boundary = tr.GetObject(
+                        result.ObjectId,
+                        OpenMode.ForWrite) as Polyline;
+
+                    if (boundary == null)
+                    {
+                        ed.WriteMessage("\nSelected object is not a polyline.");
+                        return false;
+                    }
+
+                    // Try set the boundary (no DB writes assumed here)
+                    if (!PolylineBoundaryManager.TrySetBoundary(
+                            result.ObjectId, out string boundaryError))
+                    {
+                        error = boundaryError;
+                        ed.WriteMessage($"\nError setting boundary: {boundaryError}");
+                        return false;
+                    }
+
+                    // Attach entity-side metadata
+                    FoundationEntityData.Write(tr, boundary, NODManager.KEY_BOUNDARY);
+
+                    // Register handle in the NOD
+                    PolylineBoundaryManager.AddBoundaryHandleToNOD(tr, boundary.ObjectId);
+
+                    tr.Commit();
+
+                    ed.WriteMessage(
+                        $"\nBoundary selected: {boundary.Handle}");
+                }
+                catch (System.Exception ex)
+                {
+                    ed.WriteMessage($"\nBoundary selection failed: {ex.Message}");
+                }
+            }
+
+            return true;
+        }
 
 
     }

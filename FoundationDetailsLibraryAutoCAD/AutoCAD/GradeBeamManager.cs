@@ -1,15 +1,16 @@
 ﻿using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
-using FoundationDetailer.Model;
+using FoundationDetailer.Managers;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using FoundationDetailsLibraryAutoCAD.Data;
 using System;
 using System.Collections.Generic;
+using System.Windows.Threading;
 
 namespace FoundationDetailer.AutoCAD
 {
-    public static class GradeBeamManager
+    public class GradeBeamManager
     {
         // Track grade beams per document
         private static readonly Dictionary<Document, List<ObjectId>> _gradeBeams = new Dictionary<Document, List<ObjectId>>();
@@ -169,6 +170,45 @@ namespace FoundationDetailer.AutoCAD
                     tr.Commit();
                 }
             }
+        }
+
+        public void CreatePreliminary(
+        Polyline boundary,
+        double hMin, double hMax,
+        double vMin, double vMax,
+        int vertexCount = 5)
+        {
+            if (boundary == null)
+                throw new ArgumentNullException(nameof(boundary));
+
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+
+            try
+            {
+                using (doc.LockDocument())
+                {
+                    GradeBeamManager.CreateBothGridlines(
+                        boundary,
+                        hMin, hMax,
+                        vMin, vMax,
+                        vertexCount);
+
+                    doc.Editor.WriteMessage("\nGrade beams created successfully.");
+                }
+            }
+            catch (Autodesk.AutoCAD.Runtime.Exception ex)
+            {
+                doc.Editor.WriteMessage($"\nError creating grade beams: {ex.Message}");
+            }
+        }
+
+        public void ClearAll()
+        {
+            var db = Application.DocumentManager.MdiActiveDocument.Database;
+
+            NODManager.DeleteEntitiesFromFoundationSubDictionary(db, NODManager.KEY_GRADEBEAM);
+            NODManager.ClearFoundationSubDictionary(db, NODManager.KEY_GRADEBEAM);
         }
 
     }

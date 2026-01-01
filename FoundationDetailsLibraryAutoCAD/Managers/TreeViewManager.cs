@@ -1,4 +1,6 @@
-﻿using System.Collections.Generic;
+﻿using Autodesk.AutoCAD.DatabaseServices;
+using FoundationDetailsLibraryAutoCAD.AutoCAD;
+using System.Collections.Generic;
 using System.Windows.Controls;
 using static FoundationDetailsLibraryAutoCAD.Data.FoundationEntityData;
 
@@ -30,7 +32,27 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
             return value?.ToString() ?? "";
         }
 
+        public static void Populate(TreeView treeView, Database db)
+        {
+            treeView.Items.Clear();
 
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var root = NODManager.GetFoundationRoot(tr, db);
+                if (root == null) return;
 
+                var nodeMap = new Dictionary<string, TreeViewItem>();
+                TreeViewItem rootNode = new TreeViewItem
+                {
+                    Header = NODManager.ROOT,
+                    IsExpanded = true
+                };
+
+                treeView.Items.Add(rootNode);
+                NODManager.BuildTree(root, rootNode, tr, nodeMap);
+
+                tr.Commit();
+            }
+        }
     }
 }

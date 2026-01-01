@@ -64,6 +64,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="AutoCAD\AutoCADAdapter.cs" />
+    <Compile Include="AutoCAD\FoundationPersistenceManager.cs" />
     <Compile Include="AutoCAD\GradeBeamManager.cs" />
     <Compile Include="AutoCAD\NODManager.cs" />
     <Compile Include="AutoCAD\PaletteManager.cs" />
@@ -107,6 +108,7 @@
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
+    <Folder Include="Services\" />
     <Folder Include="Storage\" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />

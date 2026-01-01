@@ -26,6 +26,11 @@ namespace FoundationDetailer.UI
         private FoundationModel _currentModel = new FoundationModel();
         private PierControl PierUI;
 
+        private readonly PolylineBoundaryManager _boundaryService = new PolylineBoundaryManager();
+        private readonly GradeBeamManager _gradeBeamService = new GradeBeamManager();
+        private readonly FoundationPersistenceManager _persistenceService = new FoundationPersistenceManager();
+
+
         public double HorzGBMinSpacing => ParseDoubleOrDefault(TxtGBHorzMin.Text, 5.0);
         public double HorzGBMaxSpacing => ParseDoubleOrDefault(TxtGBHorzMax.Text, 12.0);
         public double VertGBMinSpacing => ParseDoubleOrDefault(TxtGBVertMin.Text, 5.0);
@@ -121,16 +126,108 @@ namespace FoundationDetailer.UI
             TxtGBVertMax.TextChanged += Spacing_TextChanged;
         }
 
+        private void UpdateBoundaryDisplay()
+        {
+            bool isValid = false;
+
+            if (PolylineBoundaryManager.TryGetBoundary(out Polyline pl) && pl.Closed)
+            {
+                isValid = true;
+                TxtBoundaryStatus.Text = "Boundary valid - " + pl.ObjectId.Handle.ToString();
+                TxtBoundaryVertices.Text = pl.NumberOfVertices.ToString();
+
+                double perimeter = 0;
+                for (int i = 0; i < pl.NumberOfVertices; i++)
+                    perimeter += pl.GetPoint2dAt(i).GetDistanceTo(pl.GetPoint2dAt((i + 1) % pl.NumberOfVertices));
+                TxtBoundaryPerimeter.Text = perimeter.ToString("F2");
+
+                TxtBoundaryArea.Text = MathHelperManager.ComputePolylineArea(pl).ToString("F2");
+
+                BtnZoomBoundary.IsEnabled = true;
+                BtnShowBoundary.IsEnabled = true;
+            }
+            else
+            {
+                TxtBoundaryStatus.Text = "No boundary selected";
+                TxtBoundaryVertices.Text = "-";
+                TxtBoundaryPerimeter.Text = "-";
+                TxtBoundaryArea.Text = "-";
 
 
+                BtnZoomBoundary.IsEnabled = false;
+                BtnShowBoundary.IsEnabled = false;
+            }
+
+            // Update status circle
+            StatusCircle.Fill = isValid ? Brushes.Green : Brushes.Red;
+
+            // Show/hide action buttons
+            ActionButtonsPanel.Visibility = isValid ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
+
+            // Optionally, change background color of action buttons
+            SetActionButtonBackgrounds(ActionButtonsPanel, isValid ? Brushes.LightGreen : Brushes.LightCoral);
+
+            // Update the tree Viewer
+            UpdateTreeViewUI();
+        }
+
+        private void SetActionButtonBackgrounds(Panel parent, Brush background)
+        {
+            foreach (var child in parent.Children)
+            {
+                if (child is Button btn)
+                {
+                    btn.Background = background;
+                }
+                else if (child is Panel panel)
+                {
+                    // Recursive call for nested panels
+                    SetActionButtonBackgrounds(panel, background);
+                }
+            }
+        }
 
 
+        private void Spacing_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (sender is TextBox tb)
+            {
+                if (GridlineManager.IsValidSpacing(tb.Text, out double val))
+                {
+                    tb.Background = _validBrush;
+                    // Optionally store the value somewhere if needed
+                }
+                else
+                {
+                    tb.Background = _invalidBrush;
+                }
+                // Optionally, validate input and store updated spacing values
+                double hMin = HorzGBMinSpacing;
+                double hMax = HorzGBMaxSpacing;
+                double vMin = VertGBMinSpacing;
+                double vMax = VertGBMaxSpacing;
 
+                // For debug or status update
+                TxtStatus.Text = $"H: {hMin}-{hMax}, V: {vMin}-{vMax}";
+            }
+        }
 
+        private void TreeViewExtensionData_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
+        {
+            if (e.NewValue is TreeViewItem tvi && tvi.Tag is Entity ent)
+            {
+                var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+                var ed = doc.Editor;
 
-
-
-
+                using (doc.LockDocument())
+                using (var tr = doc.Database.TransactionManager.StartTransaction())
+                {
+                    ed.SetImpliedSelection(new ObjectId[] { ent.ObjectId });
+                    ed.UpdateScreen();
+                    tr.Commit();
+                }
+            }
+        }
 
 
 
@@ -216,74 +313,15 @@ namespace FoundationDetailer.UI
 
         }
 
-        private void UpdateBoundaryDisplay()
-        {
-            bool isValid = false;
-
-            if (PolylineBoundaryManager.TryGetBoundary(out Polyline pl) && pl.Closed)
-            {
-                isValid = true;
-                TxtBoundaryStatus.Text = "Boundary valid - " + pl.ObjectId.Handle.ToString();
-                TxtBoundaryVertices.Text = pl.NumberOfVertices.ToString();
-
-                double perimeter = 0;
-                for (int i = 0; i < pl.NumberOfVertices; i++)
-                    perimeter += pl.GetPoint2dAt(i).GetDistanceTo(pl.GetPoint2dAt((i + 1) % pl.NumberOfVertices));
-                TxtBoundaryPerimeter.Text = perimeter.ToString("F2");
-
-                TxtBoundaryArea.Text = MathHelperManager.ComputePolylineArea(pl).ToString("F2");
-
-                BtnZoomBoundary.IsEnabled = true;
-                BtnShowBoundary.IsEnabled = true;
-            }
-            else
-            {
-                TxtBoundaryStatus.Text = "No boundary selected";
-                TxtBoundaryVertices.Text = "-";
-                TxtBoundaryPerimeter.Text = "-";
-                TxtBoundaryArea.Text = "-";
-
-
-                BtnZoomBoundary.IsEnabled = false;
-                BtnShowBoundary.IsEnabled = false;
-            }
-
-            // Update status circle
-            StatusCircle.Fill = isValid ? Brushes.Green : Brushes.Red;
-
-            // Show/hide action buttons
-            ActionButtonsPanel.Visibility = isValid ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
-
-            // Optionally, change background color of action buttons
-            SetActionButtonBackgrounds(ActionButtonsPanel, isValid ? Brushes.LightGreen : Brushes.LightCoral);
-
-            // Update the tree Viewer
-            UpdateTreeViewUI();
-        }
-
-        private void SetActionButtonBackgrounds(Panel parent, Brush background)
-        {
-            foreach (var child in parent.Children)
-            {
-                if (child is Button btn)
-                {
-                    btn.Background = background;
-                }
-                else if (child is Panel panel)
-                {
-                    // Recursive call for nested panels
-                    SetActionButtonBackgrounds(panel, background);
-                }
-            }
-        }
-
-
-        #region --- Boundary Selection and UI Updates ---
-
-
-        #endregion
 
         #region --- UI Button Click Handlers ---
+        private void btnDefineFoundationBoundary_Click()
+        {
+            if (_boundaryService.SelectBoundary(out string error))
+                Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+            else if (!string.IsNullOrEmpty(error))
+                TxtStatus.Text = error;
+        }
 
         /// <summary>
         /// Queries the NOD for a list of handles in each subdirectory.
@@ -297,133 +335,31 @@ namespace FoundationDetailer.UI
             UpdateTreeViewUI();
 
         }
-        private void btnDefineFoundationBoundary_Click()
-        {
-            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            if (doc == null) return;
 
-            var ed = doc.Editor;
-            var db = doc.Database;
-
-            // Prompt for a closed polyline
-            PromptEntityOptions options = new PromptEntityOptions("\nSelect a closed polyline: ");
-            options.SetRejectMessage("\nMust be a closed polyline.");
-            options.AddAllowedClass(typeof(Polyline), false);
-
-            var result = ed.GetEntity(options);
-            if (result.Status != PromptStatus.OK) return;
-
-            using (doc.LockDocument())
-            using (Transaction tr = db.TransactionManager.StartTransaction())
-            {
-                try
-                {
-                    // Open the selected entity
-                    Polyline boundary = tr.GetObject(
-                        result.ObjectId,
-                        OpenMode.ForWrite) as Polyline;
-
-                    if (boundary == null)
-                    {
-                        ed.WriteMessage("\nSelected object is not a polyline.");
-                        return;
-                    }
-
-                    // Try set the boundary (no DB writes assumed here)
-                    if (!PolylineBoundaryManager.TrySetBoundary(
-                            result.ObjectId, out string error))
-                    {
-                        ed.WriteMessage($"\nError setting boundary: {error}");
-                        return;
-                    }
-
-                    // Attach entity-side metadata
-                    FoundationEntityData.Write(tr, boundary, NODManager.KEY_BOUNDARY);
-
-                    // Register handle in the NOD
-                    PolylineBoundaryManager.AddBoundaryHandleToNOD(tr, boundary.ObjectId);
-
-                    tr.Commit();
-
-                    ed.WriteMessage(
-                        $"\nBoundary selected: {boundary.Handle}");
-                }
-                catch (System.Exception ex)
-                {
-                    ed.WriteMessage($"\nBoundary selection failed: {ex.Message}");
-                }
-            }
-        }
         private void btnAddPreliminaryGradeBeams_Click()
         {
-            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            if (doc == null) return;
-
             if (!PolylineBoundaryManager.TryGetBoundary(out Polyline boundary))
             {
-                doc.Editor.WriteMessage("\nNo boundary selected.");
+                TxtStatus.Text = "No boundary selected.";
                 return;
             }
 
-            double maxSpacing = 144.0;
-            int vertexCount = 5;
+            _gradeBeamService.CreatePreliminary(
+                boundary,
+                HorzGBMinSpacing, HorzGBMaxSpacing,
+                VertGBMinSpacing, VertGBMaxSpacing);
 
-            try
-            {
-                double horizMin = HorzGBMinSpacing;
-                double horizMax = HorzGBMaxSpacing;
-                double vertMin = VertGBMinSpacing;
-                double vertMax = VertGBMaxSpacing;
-
-                using (doc.LockDocument())
-                {
-                    // Let GradeBeamManager handle everything internally
-                    GradeBeamManager.CreateBothGridlines(boundary, horizMin, horizMax, vertMin, vertMax, vertexCount);
-
-                    doc.Editor.WriteMessage("\nGrade beams created successfully.");
-                }
-
-                // Update UI immediately
-                Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
-            }
-            catch (Autodesk.AutoCAD.Runtime.Exception ex)
-            {
-                doc.Editor.WriteMessage($"\nError creating grade beams: {ex.Message}");
-            }
-
-            // Update UI immediately
             Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
-
-
         private void btnClearAllGradeBeams_Click(object sender, RoutedEventArgs e)
         {
-            Database db = Autodesk.AutoCAD.ApplicationServices.Application
-                .DocumentManager
-                .MdiActiveDocument
-                .Database;
-
-            // Delete the AutoCAD entities
-            NODManager.DeleteEntitiesFromFoundationSubDictionary(
-                Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument.Database,
-                NODManager.KEY_GRADEBEAM
-                );
-
-            // Clear the NOD
-            NODManager.ClearFoundationSubDictionary(db, NODManager.KEY_GRADEBEAM);
-
+            _gradeBeamService.ClearAll();   
             TxtStatus.Text = "All grade beams cleared.";
 
             // Update UI immediately
             Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
-
-
-
-
         private void btnAddPiers_Click() => MessageBox.Show("Add piers to model.");
-
-
         private void btnAddRebarBars_Click()
         {
             MessageBox.Show("Add rebar bars to model.");
@@ -438,22 +374,18 @@ namespace FoundationDetailer.UI
             Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
 
         }
-
         private void btnSaveModel_Click()
         {
-            NODManager.ExportFoundationNOD();
+            _persistenceService.Save();
         }
-
         private void btnLoadModel_Click()
         {
-            NODManager.ImportFoundationNOD();
+            _persistenceService.Load();
         }
-
         private void btnPickPierLocation_Click()
         {
             MessageBox.Show("Pick pier location in AutoCAD.");
         }
-
         #endregion
 
 
@@ -473,49 +405,8 @@ namespace FoundationDetailer.UI
         }
 
 
-        private void Spacing_TextChanged(object sender, TextChangedEventArgs e)
-        {
-            if (sender is TextBox tb)
-            {
-                if (GridlineManager.IsValidSpacing(tb.Text, out double val))
-                {
-                    tb.Background = _validBrush;
-                    // Optionally store the value somewhere if needed
-                }
-                else
-                {
-                    tb.Background = _invalidBrush;
-                }
-                // Optionally, validate input and store updated spacing values
-                double hMin = HorzGBMinSpacing;
-                double hMax = HorzGBMaxSpacing;
-                double vMin = VertGBMinSpacing;
-                double vMax = VertGBMaxSpacing;
 
-                // For debug or status update
-                TxtStatus.Text = $"H: {hMin}-{hMax}, V: {vMin}-{vMax}";
-            }
-        }
-
-        private void TreeViewExtensionData_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
-        {
-            if (e.NewValue is TreeViewItem tvi && tvi.Tag is Entity ent)
-            {
-                var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-                var ed = doc.Editor;
-
-                using (doc.LockDocument())
-                using (var tr = doc.Database.TransactionManager.StartTransaction())
-                {
-                    ed.SetImpliedSelection(new ObjectId[] { ent.ObjectId });
-                    ed.UpdateScreen();
-                    tr.Commit();
-                }
-            }
-        }
-
-
-
+        
         #endregion
 
     }
