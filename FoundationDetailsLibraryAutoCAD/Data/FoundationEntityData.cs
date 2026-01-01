@@ -1,11 +1,12 @@
 ﻿using Autodesk.AutoCAD.DatabaseServices;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 
 namespace FoundationDetailsLibraryAutoCAD.Data
 {
-    internal static class FoundationEntityData
+    internal class FoundationEntityData
     {
         public class FoundationEntityInfo
         {
@@ -54,7 +55,7 @@ namespace FoundationDetailsLibraryAutoCAD.Data
             return dict.Contains(ROOT);
         }
 
-        internal static bool TryRead(Transaction tr, Entity ent, out string groupName)
+        internal bool TryRead(Transaction tr, Entity ent, out string groupName)
         {
             groupName = null;
             if (ent.ExtensionDictionary.IsNull) return false;
@@ -80,13 +81,20 @@ namespace FoundationDetailsLibraryAutoCAD.Data
         /// Recursively display all ExtensionDictionary data for an entity.
         /// </summary>
         /// <param name="ent">The entity to inspect</param>
-        public static void DisplayExtensionData(Entity ent)
+        public static void DisplayExtensionData(FoundationContext context, Entity ent)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var model = context.Model;
+
+            if (doc == null) return;
+
+            var db = doc.Database;
+            var ed = doc.Editor;
+
             if (ent == null)
                 return;
-
-            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            var ed = doc.Editor;
 
             if (ent.ExtensionDictionary.IsNull)
             {
@@ -98,13 +106,16 @@ namespace FoundationDetailsLibraryAutoCAD.Data
             {
                 var dict = (DBDictionary)tr.GetObject(ent.ExtensionDictionary, OpenMode.ForRead);
                 ed.WriteMessage($"\nEntity {ent.Handle} ExtensionDictionary contents:");
-                ProcessDictionary(tr, dict, 1);
+                ProcessDictionary(context, tr, dict, 1);
                 tr.Commit();
             }
         }
 
-        private static void ProcessDictionary(Transaction tr, DBDictionary dict, int indentLevel)
+        private static void ProcessDictionary(FoundationContext context, Transaction tr, DBDictionary dict, int indentLevel)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+
             var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
             var ed = doc.Editor;
             string indent = new string(' ', indentLevel * 2);
@@ -116,7 +127,7 @@ namespace FoundationDetailsLibraryAutoCAD.Data
                 if (obj is DBDictionary subDict)
                 {
                     ed.WriteMessage($"\n{indent}Subdictionary: {entry.Key}");
-                    ProcessDictionary(tr, subDict, indentLevel + 1);
+                    ProcessDictionary(context, tr, subDict, indentLevel + 1);
                 }
                 else if (obj is Xrecord xr)
                 {
@@ -136,8 +147,10 @@ namespace FoundationDetailsLibraryAutoCAD.Data
         /// <summary>
         /// Gets all ExtensionDictionary data for an entity in a structured object.
         /// </summary>
-        public static ExtensionDataItem GetExtensionData(Entity ent, Transaction tr)
+        public static ExtensionDataItem GetExtensionData(FoundationContext context, Entity ent, Transaction tr)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
             if (ent == null || ent.ExtensionDictionary.IsNull)
                 return null;
 
@@ -146,13 +159,21 @@ namespace FoundationDetailsLibraryAutoCAD.Data
             {
                 Name = $"Entity {ent.Handle}",
                 Type = "Entity",
-                Children = ProcessDictionary(tr, dict, ent.Database)
+                Children = ProcessDictionary(context, tr, dict, ent.Database)
             };
 
             return rootItem;
         }
-        private static ObservableCollection<ExtensionDataItem> ProcessDictionary(Transaction tr, DBDictionary dict, Database db)
+        private static ObservableCollection<ExtensionDataItem> ProcessDictionary(FoundationContext context, Transaction tr, DBDictionary dict, Database db)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+            if (dict == null) throw new ArgumentNullException(nameof(dict));
+            if (db == null) throw new ArgumentNullException(nameof(db));
+
+            var doc = context.Document;
+            var model = context.Model;
+
             var items = new ObservableCollection<ExtensionDataItem>();
 
             foreach (DBDictionaryEntry entry in dict)
@@ -165,7 +186,7 @@ namespace FoundationDetailsLibraryAutoCAD.Data
                     {
                         Name = entry.Key,
                         Type = "Subdictionary",
-                        Children = ProcessDictionary(tr, subDict, db)
+                        Children = ProcessDictionary(context, tr, subDict, db)
                     };
                     items.Add(subItem);
                 }
@@ -187,7 +208,7 @@ namespace FoundationDetailsLibraryAutoCAD.Data
                 {
                     // Try to resolve as an entity handle
                     ObjectId? id = null;
-                    if (NODManager.TryGetObjectIdFromHandleString(db, entry.Key, out ObjectId objId) &&
+                    if (NODManager.TryGetObjectIdFromHandleString(context, db, entry.Key, out ObjectId objId) &&
                         NODManager.IsValidReadableObject(tr, objId))
                     {
                         id = objId;

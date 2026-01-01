@@ -90,6 +90,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                     foreach (DBDictionaryEntry groupEntry in root)
                     {
                         ScanGroupDictionary(
+                            context,
                             tr,
                             db,
                             groupEntry,
@@ -125,12 +126,19 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                     OpenMode.ForRead) as DBDictionary;
             }
 
-        private static void ScanGroupDictionary(
+        private static void ScanGroupDictionary(FoundationContext context,
     Transaction tr,
     Database db,
     DBDictionaryEntry groupEntry,
     List<HandleEntry> results)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var model = context.Model;
+
+            if (doc == null) return;
+
             var subDict = tr.GetObject(
                 groupEntry.Value,
                 OpenMode.ForRead) as DBDictionary;
@@ -141,6 +149,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             foreach (DBDictionaryEntry entry in subDict)
             {
                 HandleEntry result = ValidateHandle(
+                    context,
                     tr,
                     db,
                     groupEntry.Key,
@@ -160,12 +169,14 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         }
 
 
-        private static HandleEntry ValidateHandle(
+        private static HandleEntry ValidateHandle(FoundationContext context,
             Transaction tr,
             Database db,
             string groupName,
             string handleStr)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
             var result = new HandleEntry
             {
                 GroupName = groupName,
@@ -183,7 +194,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             ObjectId id;
             try
             {
-                if (!TryGetObjectIdFromHandleString(db, handleStr, out id))
+                if (!TryGetObjectIdFromHandleString(context, db, handleStr, out id))
                 {
                     result.Status = HandleStatus.Invalid;
                     return result;
@@ -628,7 +639,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 
                             foreach (string handle_string in handle_strings)
                             {
-                                if (!TryParseHandle(handle_string, out Handle handle))
+                                if (!TryParseHandle(context,handle_string, out Handle handle))
                                     continue;
 
                                 AddHandleToDictionary(tr, subDict, handle_string);
@@ -853,8 +864,10 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         /// <param name="subDictName">Name of the sub-dictionary.</param>
         /// <param name="handleStr">Handle string of the entry to remove.</param>
         /// <returns>True if removal succeeded; false if sub-dictionary or handle was not found.</returns>
-        internal static bool RemoveHandleFromSubDictionary(Transaction tr, Database db, string subDictName, string handleStr)
+        internal bool RemoveHandleFromSubDictionary(FoundationContext context, Transaction tr, Database db, string subDictName, string handleStr)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
             if (tr == null) throw new ArgumentNullException(nameof(tr));
             if (db == null) throw new ArgumentNullException(nameof(db));
             if (string.IsNullOrWhiteSpace(subDictName)) throw new ArgumentException("Sub-dictionary name required", nameof(subDictName));
@@ -865,7 +878,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 
             // Attempt to parse handle
             Handle handle;
-            if (!TryParseHandle(handleStr, out handle))
+            if (!TryParseHandle(context, handleStr, out handle))
                 return false;
 
             // Get sub-dictionary
@@ -890,15 +903,17 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         /// Removes a handle from any known sub-dictionary in the EE_Foundation dictionary if it exists.
         /// Assumes the transaction is already started.
         /// </summary>
-        internal static bool RemoveSingleHandleFromKnownSubDictionaries(Transaction tr, Database db, string handleStr)
+        internal bool RemoveSingleHandleFromKnownSubDictionaries(FoundationContext context, Transaction tr, Database db, string handleStr)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
             if (tr == null) throw new ArgumentNullException(nameof(tr));
             if (db == null) throw new ArgumentNullException(nameof(db));
             if (string.IsNullOrWhiteSpace(handleStr)) throw new ArgumentException("Handle string required", nameof(handleStr));
 
             handleStr = handleStr.Trim();
             Handle handle;
-            if (!TryParseHandle(handleStr, out handle))
+            if (!TryParseHandle(context,handleStr, out handle))
                 return false;
 
             foreach (string subDictName in KNOWN_SUBDIRS)
@@ -926,8 +941,15 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         /// Removes multiple handles from all known sub-dictionaries in a single transaction.
         /// Leverages RemoveSingleHandleFromKnownSubDictionaries internally.
         /// </summary>
-        internal static int RemoveMultipleHandlesFromKnownSubDictionaries(Database db, IEnumerable<string> handleStrings)
+        internal int RemoveMultipleHandlesFromKnownSubDictionaries(FoundationContext context, Database db, IEnumerable<string> handleStrings)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var model = context.Model;
+
+            if (doc == null) return 0;
+
             if (db == null) throw new ArgumentNullException(nameof(db));
             if (handleStrings == null) throw new ArgumentNullException(nameof(handleStrings));
 
@@ -939,7 +961,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 {
                     if (!string.IsNullOrWhiteSpace(handleStr))
                     {
-                        if (RemoveSingleHandleFromKnownSubDictionaries(tr, db, handleStr.Trim()))
+                        if (RemoveSingleHandleFromKnownSubDictionaries(context, tr, db, handleStr.Trim()))
                         {
                             removedCount++;
                         }
@@ -1002,13 +1024,13 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             return true;
         }
 
-        internal static bool ClearFoundationSubDictionary(
+        internal static bool ClearFoundationSubDictionary(FoundationContext context,
             Database db,
             string subDictName)
         {
             if (db == null) throw new ArgumentNullException(nameof(db));
 
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            Document doc = context.Document;
 
             using (doc.LockDocument())
             using (Transaction tr = db.TransactionManager.StartTransaction())
@@ -1099,9 +1121,11 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         /// <param name="subDict">Sub-dictionary containing handle strings; null returns empty list.</param>
         /// <returns>List of valid, readable ObjectIds.</returns>
 
-        internal static List<ObjectId> GetAllValidObjectIdsFromSubDictionary(
+        internal List<ObjectId> GetAllValidObjectIdsFromSubDictionary(FoundationContext context,
             Transaction tr, Database db, DBDictionary subDict)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
             var validIds = new List<ObjectId>();
 
             // Missing sub-dictionary is not an error; return empty result
@@ -1111,7 +1135,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             foreach (DBDictionaryEntry entry in subDict)
             {
                 // Attempt to resolve the dictionary key into an ObjectId
-                if (!TryGetObjectIdFromHandleString(db, entry.Key, out ObjectId id))
+                if (!TryGetObjectIdFromHandleString(context, db, entry.Key, out ObjectId id))
                     continue;
 
                 // Verify the ObjectId can be opened and is not erased
@@ -1130,13 +1154,13 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         /// <param name="handleStr">String representation of the handle.</param>
         /// <param name="id">Receives the resolved ObjectId, or ObjectId.Null if unsuccessful.</param>
         /// <returns>True if parsing and resolution succeed; otherwise false.</returns>
-        internal static bool TryGetObjectIdFromHandleString(
+        internal static bool TryGetObjectIdFromHandleString(FoundationContext context,
             Database db, string handleStr, out ObjectId id)
         {
             id = ObjectId.Null;
 
             // Parse the string into a Handle structure
-            if (!TryParseHandle(handleStr, out Handle handle))
+            if (!TryParseHandle(context, handleStr, out Handle handle))
                 return false;
 
             // Resolve the Handle into an ObjectId
@@ -1149,7 +1173,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         /// <param name="handleString">String representation of the handle.</param>
         /// <param name="handle">Receives the parsed Handle if successful.</param>
         /// <returns>True if parsing succeeds; otherwise false.</returns>
-        internal static bool TryParseHandle(string handleString, out Handle handle)
+        internal static bool TryParseHandle(FoundationContext context, string handleString, out Handle handle)
         {
             handle = default;
 
@@ -1260,7 +1284,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             // Evaluate the first entry only
             foreach (DBDictionaryEntry entry in subDict)
             {
-                if (TryGetObjectIdFromHandleString(db, entry.Key, out oid)
+                if (TryGetObjectIdFromHandleString(context, db, entry.Key, out oid)
                     && IsValidReadableObject(tr, oid))
                     return true;
 
@@ -1275,11 +1299,17 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         // Using user entered handles.  
         // ==========================================================
         [CommandMethod("RemoveNODRecordManual")]
-        public void RemoveNODRecordManual()
+        public void RemoveNODRecordManual(FoundationContext context)
         {
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            Database db = doc.Database;
-            Editor ed = doc.Editor;
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var model = context.Model;
+
+            if (doc == null) return;
+
+            var db = doc.Database;
+            var ed = doc.Editor;
 
             // Prompt for sub-dictionary name
             PromptStringOptions psoSub = new PromptStringOptions("\nEnter sub-dictionary name:");
@@ -1304,7 +1334,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 
             string handleStr = resHandle.StringResult.Trim();
             Handle handle;
-            if (!TryParseHandle(handleStr, out handle))
+            if (!TryParseHandle(context, handleStr, out handle))
             {
                 ed.WriteMessage("\nInvalid handle string.");
                 return;
@@ -1344,8 +1374,17 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         /// <param name="dict">Dictionary to traverse</param>
         /// <param name="db">Database reference</param>
         /// <param name="callback">Action to invoke per entity (Entity, handle string)</param>
-        internal static void TraverseDictionary(Transaction tr, DBDictionary dict, Database db, Action<Entity, string> callback)
+        internal static void TraverseDictionary(FoundationContext context, Transaction tr, DBDictionary dict, Database db, Action<Entity, string> callback)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var model = context.Model;
+
+            if (doc == null) return;
+
+            var ed = doc.Editor;
+
             foreach (DBDictionaryEntry entry in dict)
             {
                 DBObject obj = tr.GetObject(entry.Value, OpenMode.ForRead);
@@ -1353,12 +1392,12 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 if (obj is DBDictionary subDict)
                 {
                     // Recurse into subdictionary
-                    TraverseDictionary(tr, subDict, db, callback);
+                    TraverseDictionary(context, tr, subDict, db, callback);
                 }
                 else
                 {
                     // Assume entry.Key is a handle string
-                    if (!TryParseHandle(entry.Key, out Handle handle))
+                    if (!TryParseHandle(context, entry.Key, out Handle handle))
                         continue;
 
                     if (!db.TryGetObjectId(handle, out ObjectId id))
@@ -1424,18 +1463,28 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             }
         }
 
-        internal static void AttachEntityToTree(
+        internal void AttachEntityToTree(FoundationContext context,
             TreeViewItem rootNode,
             string handleKey,
             Entity ent)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var model = context.Model;
+
+            if (doc == null) return;
+
+            var db = doc.Database;
+            var ed = doc.Editor;
+
             // Find the node with matching header (handle string)
             TreeViewItem node = FindNodeByHeader(rootNode, handleKey);
             if (node == null)
                 return;
 
             node.Tag = ent;
-            FoundationEntityData.DisplayExtensionData(ent);
+            FoundationEntityData.DisplayExtensionData(context, ent);
         }
 
         internal static TreeViewItem FindNodeByHeader(
@@ -1459,12 +1508,20 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         /// Deletes all entities referenced by a foundation subdictionary.
         /// Optionally removes the handle records from the dictionary as well.
         /// </summary>
-        internal static int DeleteEntitiesFromFoundationSubDictionary(
+        internal static int DeleteEntitiesFromFoundationSubDictionary(FoundationContext context,
             Transaction tr,
             Database db,
             string subDictName,
             bool removeHandlesFromNod = true)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var model = context.Model;
+
+            var ed = doc.Editor;
+
+
             if (tr == null) throw new ArgumentNullException(nameof(tr));
             if (db == null) throw new ArgumentNullException(nameof(db));
             if (string.IsNullOrWhiteSpace(subDictName))
@@ -1483,7 +1540,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 
             foreach (string handleStr in handles)
             {
-                if (!TryGetObjectIdFromHandleString(db, handleStr, out ObjectId id))
+                if (!TryGetObjectIdFromHandleString(context, db, handleStr, out ObjectId id))
                     continue;
 
                 if (!IsValidReadableObject(tr, id))
@@ -1515,17 +1572,20 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             return deletedCount;
         }
 
-        internal static int DeleteEntitiesFromFoundationSubDictionary(
+        internal int DeleteEntitiesFromFoundationSubDictionary(FoundationContext context,
             Database db,
             string subDictName,
             bool removeHandlesFromNod = true)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
             Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
 
             using (doc.LockDocument())
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
                 int count = DeleteEntitiesFromFoundationSubDictionary(
+                    context,
                     tr,
                     db,
                     subDictName,
@@ -1537,10 +1597,16 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         }
 
         [CommandMethod("DeleteFoundationEntities")]
-        public static void DeleteFoundationEntitiesCommand()
+        public void DeleteFoundationEntitiesCommand(FoundationContext context)
         {
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            Editor ed = doc.Editor;
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            var doc = context.Document;
+            var model = context.Model;
+
+            if (doc == null) return;
+
+            var db = doc.Database;
+            var ed = doc.Editor;
 
             PromptStringOptions pso =
                 new PromptStringOptions("\nEnter foundation sub-dictionary:");
@@ -1553,6 +1619,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             string sub = res.StringResult.Trim().ToUpperInvariant();
 
             int count = DeleteEntitiesFromFoundationSubDictionary(
+                context,
                 doc.Database,
                 sub,
                 removeHandlesFromNod: true);

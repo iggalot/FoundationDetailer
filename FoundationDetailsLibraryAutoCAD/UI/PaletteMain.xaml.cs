@@ -29,6 +29,7 @@ namespace FoundationDetailer.UI
         private readonly PolylineBoundaryManager _boundaryService = new PolylineBoundaryManager();
         private readonly GradeBeamManager _gradeBeamService = new GradeBeamManager();
         private readonly FoundationPersistenceManager _persistenceService = new FoundationPersistenceManager();
+        private readonly NODManager _nodService = new NODManager();
 
         private FoundationContext CurrentContext => FoundationContext.For(Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument);
 
@@ -259,12 +260,12 @@ namespace FoundationDetailer.UI
                 NODManager.BuildTree(root, rootNode, tr, nodeMap);
 
                 var dictCounts = new Dictionary<string, int>();
-                NODManager.TraverseDictionary(tr, root, doc.Database, (ent, handle) =>
+                NODManager.TraverseDictionary(context, tr, root, doc.Database, (ent, handle) =>
                 {
                     if (nodeMap.TryGetValue(handle, out var node))
                     {
                         node.Tag = ent;
-                        FoundationEntityData.DisplayExtensionData(ent);
+                        FoundationEntityData.DisplayExtensionData(context, ent);
 
                         if (node.Parent is TreeViewItem parentNode)
                         {

@@ -1,12 +1,11 @@
 ﻿using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
-using FoundationDetailer.Managers;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using FoundationDetailsLibraryAutoCAD.Data;
 using System;
 using System.Collections.Generic;
-using System.Windows.Threading;
+using System.Windows.Media.Animation;
 
 namespace FoundationDetailer.AutoCAD
 {
@@ -194,10 +193,21 @@ namespace FoundationDetailer.AutoCAD
 
         public void ClearAll(FoundationContext context)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+
             var db = context.Document.Database;
 
-            NODManager.DeleteEntitiesFromFoundationSubDictionary(db, NODManager.KEY_GRADEBEAM);
-            NODManager.ClearFoundationSubDictionary(db, NODManager.KEY_GRADEBEAM);
+            using (doc.LockDocument())
+            {
+                using (Transaction tr = db.TransactionManager.StartTransaction())
+                {
+                    NODManager.DeleteEntitiesFromFoundationSubDictionary(context, tr, db, NODManager.KEY_GRADEBEAM);
+                    NODManager.ClearFoundationSubDictionary(context, db, NODManager.KEY_GRADEBEAM);
+                    tr.Commit();
+                }
+            }
         }
 
     }

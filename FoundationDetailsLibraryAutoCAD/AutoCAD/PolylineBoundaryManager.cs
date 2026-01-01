@@ -115,14 +115,14 @@ namespace FoundationDetailer.Managers
             LoadBoundaryForActiveDocument(context);
         }
 
-        private static void DocManager_DocumentCreated(object sender, DocumentCollectionEventArgs e, FoundationContext context)
+        private void DocManager_DocumentCreated(object sender, DocumentCollectionEventArgs e, FoundationContext context)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
 
             AttachDocumentEvents(context);
         }
 
-        private static void DocManager_DocumentToBeDestroyed(object sender, DocumentCollectionEventArgs e, FoundationContext context)
+        private void DocManager_DocumentToBeDestroyed(object sender, DocumentCollectionEventArgs e, FoundationContext context)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
 
@@ -137,25 +137,21 @@ namespace FoundationDetailer.Managers
             }
         }
 
-        private static void DocManager_DocumentActivated(object sender, DocumentCollectionEventArgs e, FoundationContext context)
+        private void DocManager_DocumentActivated(object sender, DocumentCollectionEventArgs e, FoundationContext context)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
 
             // Defer loading to idle so we don't start transactions inside activation handlers
-            DeferActionForDocument(context.Document, () =>
+            DeferActionForDocument(context, () =>
             {
-                LoadBoundary(context.Document);
+                LoadBoundary(context);
                 BoundaryChanged?.Invoke(null, EventArgs.Empty);
             });
         }
 
-        private static void AttachDocumentEvents(FoundationContext context)
+        private void AttachDocumentEvents(FoundationContext context)
         {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-
             var doc = context.Document;
-            var model = context.Model;
-
             if (doc == null) return;
 
             var db = doc.Database;
@@ -192,7 +188,7 @@ namespace FoundationDetailer.Managers
             _docCommandStates.AddOrUpdate(doc, new CommandState(), (d, old) => { old.Clear(); return old; });
 
             // If this doc is active, attempt to load its stored boundary now (deferred)
-            DeferActionForDocument(doc, () => LoadBoundary(doc));
+            DeferActionForDocument(context, () => LoadBoundary(context));
         }
 
         private static void DetachDocumentEvents(FoundationContext context)
@@ -418,24 +414,41 @@ namespace FoundationDetailer.Managers
         private static void Db_ObjectAppended(object sender, ObjectEventArgs e)
         {
             var db = sender as Database;
-            var doc = TryGetDocumentForDatabase(db) ?? Application.DocumentManager.MdiActiveDocument;
+            if (db == null) return;
+
+            var doc = Application.DocumentManager.GetDocument(db);
             if (doc == null) return;
 
-            DeferActionForDocument(doc, () => CheckBoundaryForDocument(doc));
+            var context = FoundationContext.For(doc);
+            if (context == null) return;
+
+            DeferActionForDocument(context, () => CheckBoundaryForDocument(context));
         }
 
         private static void Db_ObjectErased(object sender, ObjectErasedEventArgs e)
         {
             var db = sender as Database;
-            var doc = TryGetDocumentForDatabase(db) ?? Application.DocumentManager.MdiActiveDocument;
+            if (db == null) return;
+
+            var doc = Application.DocumentManager.GetDocument(db);
             if (doc == null) return;
 
-            DeferActionForDocument(doc, () => CheckBoundaryForDocument(doc));
+            var context = FoundationContext.For(doc);
+            if (context == null) return;
+
+            DeferActionForDocument(context, () => CheckBoundaryForDocument(context));
         }
 
-        private static void CheckBoundaryForDocument(Document doc)
+        private static void CheckBoundaryForDocument(FoundationContext context)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var model = context.Model;
+
             if (doc == null) return;
+
+            var ed = doc.Editor;
 
             try
             {
@@ -484,7 +497,7 @@ namespace FoundationDetailer.Managers
                     // 3. Convert handle → ObjectId
                     // ------------------------------
                     ObjectId boundaryId;
-                    if (!NODManager.TryGetObjectIdFromHandleString(db, handleStr, out boundaryId) ||
+                    if (!NODManager.TryGetObjectIdFromHandleString(context, db, handleStr, out boundaryId) ||
                         boundaryId.IsNull)
                     {
                         tr.Commit();
@@ -530,10 +543,16 @@ namespace FoundationDetailer.Managers
 
         private static void Db_ObjectUnappended(object sender, ObjectEventArgs e)
         {
-            if (e.DBObject == null) return;
             var db = sender as Database;
-            var doc = TryGetDocumentForDatabase(db);
+            if (db == null) return;
+
+            var doc = Application.DocumentManager.GetDocument(db);
             if (doc == null) return;
+
+            var context = FoundationContext.For(doc);
+            if (context == null) return;
+
+            if (e.DBObject == null) return;
 
             // treat as erased (object removed from DB)
             if (_docCommandStates.TryGetValue(doc, out CommandState state))
@@ -551,19 +570,30 @@ namespace FoundationDetailer.Managers
         private static void Db_ObjectModified(object sender, ObjectEventArgs e)
         {
             var db = sender as Database;
-            var doc = TryGetDocumentForDatabase(db) ?? Application.DocumentManager.MdiActiveDocument;
+            if (db == null) return;
+
+            var doc = Application.DocumentManager.GetDocument(db);
             if (doc == null) return;
 
-            DeferActionForDocument(doc, () => CheckBoundaryForDocument(doc));
+            var context = FoundationContext.For(doc);
+            if (context == null) return;
+
+            DeferActionForDocument(context, () => CheckBoundaryForDocument(context));
         }
 
 
         private static void Db_ObjectOpenedForModify(object sender, ObjectEventArgs e)
         {
-            if (e.DBObject == null) return;
             var db = sender as Database;
-            Document doc = TryGetDocumentForDatabase(db);
+            if (db == null) return;
+
+            var doc = Application.DocumentManager.GetDocument(db);
             if (doc == null) return;
+
+            var context = FoundationContext.For(doc);
+            if (context == null) return;
+
+            if (e.DBObject == null) return;
 
             // If the stored boundary is being opened for modify, capture a snapshot for later replacement detection
             if (_docBoundaryIds.TryGetValue(doc, out ObjectId stored) && stored == e.DBObject.ObjectId)
@@ -591,11 +621,18 @@ namespace FoundationDetailer.Managers
 
         private static void Doc_CommandWillStart(object sender, CommandEventArgs e)
         {
+            var db = sender as Database;
+            if (db == null) return;
+
+            var doc = Application.DocumentManager.GetDocument(db);
+            if (doc == null) return;
+
+            var context = FoundationContext.For(doc);
+            if (context == null) return;
+
             if (e == null || string.IsNullOrEmpty(e.GlobalCommandName)) return;
 
             var cmd = e.GlobalCommandName.ToUpperInvariant();
-            var doc = sender as Document ?? Application.DocumentManager.MdiActiveDocument;
-            if (doc == null) return;
 
             // Reset command state for this document (start new command cycle)
             var state = _docCommandStates.GetOrAdd(doc, new CommandState());
@@ -611,18 +648,26 @@ namespace FoundationDetailer.Managers
 
         private static void Doc_CommandEnded(object sender, CommandEventArgs e)
         {
+            var db = sender as Database;
+            if (db == null) return;
+
+            var doc = Application.DocumentManager.GetDocument(db);
+            if (doc == null) return;
+
+            var context = FoundationContext.For(doc);
+            if (context == null) return;
+
+
             if (e == null || string.IsNullOrEmpty(e.GlobalCommandName)) return;
 
             var cmd = e.GlobalCommandName.ToUpperInvariant();
-            var doc = sender as Document ?? Application.DocumentManager.MdiActiveDocument;
-            if (doc == null) return;
 
             // If monitored, reload XRecord and notify (deferred)
             if (_monitoredCommands.Contains(cmd))
             {
-                DeferActionForDocument(doc, () =>
+                DeferActionForDocument(context, () =>
                 {
-                    LoadBoundary(doc);
+                    LoadBoundary(context);
                     BoundaryChanged?.Invoke(null, EventArgs.Empty);
                 });
             }
@@ -637,7 +682,7 @@ namespace FoundationDetailer.Managers
                     // Capture a copy of appended ids NOW (state may be cleared later)
                     var appendedCopy = state.AppendedIds.ToList();
 
-                    DeferActionForDocument(doc, () =>
+                    DeferActionForDocument(context, () =>
                     {
                         bool adopted = false;
 
@@ -704,7 +749,7 @@ namespace FoundationDetailer.Managers
                     // Capture copy of appended ids now
                     var appendedCopy = st.AppendedIds.ToList();
 
-                    DeferActionForDocument(doc, () =>
+                    DeferActionForDocument(context, () =>
                     {
                         try
                         {
@@ -748,13 +793,21 @@ namespace FoundationDetailer.Managers
 
         private static void Doc_CommandCancelled(object sender, CommandEventArgs e)
         {
-            var doc = sender as Document ?? Application.DocumentManager.MdiActiveDocument;
+            var db = sender as Database;
+            if (db == null) return;
+
+            var doc = Application.DocumentManager.GetDocument(db);
+            if (doc == null) return;
+
+            var context = FoundationContext.For(doc);
+            if (context == null) return;
+
             if (doc != null)
             {
-                DeferActionForDocument(doc, () => LoadBoundary(doc));
+                DeferActionForDocument(context, () => LoadBoundary(context));
             }
 
-            DeferActionForDocument(doc, () => BoundaryChanged?.Invoke(null, EventArgs.Empty));
+            DeferActionForDocument(context, () => BoundaryChanged?.Invoke(null, EventArgs.Empty));
         }
 
         #endregion
@@ -771,7 +824,7 @@ namespace FoundationDetailer.Managers
             return null;
         }
 
-        private static void LoadBoundaryForActiveDocument(FoundationContext context)
+        private void LoadBoundaryForActiveDocument(FoundationContext context)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
 
@@ -779,15 +832,18 @@ namespace FoundationDetailer.Managers
             var model = context.Model;
 
             if (doc != null)
-                DeferActionForDocument(doc, () => LoadBoundary(doc));
+                DeferActionForDocument(context, () => LoadBoundary(context));
         }
 
         /// <summary>
         /// Load the boundary for the specific document from the NamedObjectsDictionary XRecord (if exists).
         /// Updates the in-memory stored ObjectId.
         /// </summary>
-        private static void LoadBoundary(Document doc)
+        private static void LoadBoundary(FoundationContext context)
         {
+            var doc = context.Document;
+            var model = context.Model;
+
             if (doc == null) return;
             try
             {
@@ -826,7 +882,7 @@ namespace FoundationDetailer.Managers
                     try
                     {
                         var s = tv.Value as string ?? tv.Value.ToString();
-                        if (NODManager.TryParseHandle(s, out Handle h))
+                        if (NODManager.TryParseHandle(context, s, out Handle h))
                         {
                             oid = doc.Database.GetObjectId(false, h, 0);
                         }
@@ -1185,8 +1241,13 @@ namespace FoundationDetailer.Managers
             return sum < 0;
         }
 
-        private static ObjectId GetBoundaryFromXRecord(Document doc, Transaction tr)
+        private static ObjectId GetBoundaryFromXRecord(FoundationContext context, Transaction tr)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var model = context.Model;
+
             if (doc == null || tr == null) return ObjectId.Null;
 
             try
@@ -1214,7 +1275,7 @@ namespace FoundationDetailer.Managers
                     if (tv.TypeCode == (int)DxfCode.Handle)
                     {
                         var s = tv.Value as string ?? tv.Value.ToString();
-                        if (NODManager.TryParseHandle(s, out Handle h))
+                        if (NODManager.TryParseHandle(context, s, out Handle h))
                         {
                             return db.GetObjectId(false, h, 0);
                         }
@@ -1283,8 +1344,12 @@ namespace FoundationDetailer.Managers
         /// If a previous deferred action exists for the same document it will be replaced.
         /// The action runs without acquiring the document lock — any action that modifies the DB should call LockDocument/transactions itself.
         /// </summary>
-        private static void DeferActionForDocument(Document doc, Action action)
+        private static void DeferActionForDocument(FoundationContext context, Action action)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+
             if (doc == null || action == null) return;
 
             // Remove existing handler for this doc if present
@@ -1351,7 +1416,7 @@ namespace FoundationDetailer.Managers
             return false;
         }
 
-        public static bool TryRestoreBoundaryFromNOD(Database db, Transaction tr, out ObjectId boundaryId)
+        public bool TryRestoreBoundaryFromNOD(FoundationContext context, Database db, Transaction tr, out ObjectId boundaryId)
         {
             boundaryId = ObjectId.Null;
 
@@ -1359,7 +1424,7 @@ namespace FoundationDetailer.Managers
             if (!TryGetBoundaryHandle(tr, out string handleString))
                 return false;
 
-            if (!NODManager.TryParseHandle(handleString, out Handle handle))
+            if (!NODManager.TryParseHandle(context, handleString, out Handle handle))
                 return false;
 
             if (!db.TryGetObjectId(handle, out ObjectId id))
@@ -1383,7 +1448,7 @@ namespace FoundationDetailer.Managers
             using (doc.LockDocument())
             using (var tr = doc.Database.TransactionManager.StartTransaction())
             {
-                if (PolylineBoundaryManager.TryRestoreBoundaryFromNOD(db, tr, out ObjectId boundaryId))
+                if (TryRestoreBoundaryFromNOD(context, db, tr, out ObjectId boundaryId))
                 {
                     // Set boundary in PolylineBoundaryManager (this triggers BoundaryChanged event)
                     if (!TrySetBoundary(context, boundaryId, out string error))
