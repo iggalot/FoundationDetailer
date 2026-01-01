@@ -19,7 +19,7 @@ namespace FoundationDetailer
 
             try
             {
-                // Create the QueryNOD dictionaries
+                // Create the btnQueryNOD_Click dictionaries
                 using (Transaction tr = db.TransactionManager.StartTransaction())
                 {
                     NODManager.InitFoundationNOD(tr);

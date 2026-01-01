@@ -89,7 +89,7 @@ namespace FoundationDetailer.AutoCAD
     }
     public class NodXDataViewer
     {
-        // QueryNOD keys to check for Xrecords
+        // btnQueryNOD_Click keys to check for Xrecords
         private static readonly string[] NodKeysToCheck = { "FD_BOUNDARY", "FD_GRADEBEAM" };
 
         [CommandMethod("ShowNodXData")]
@@ -98,7 +98,7 @@ namespace FoundationDetailer.AutoCAD
             Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
             if (doc == null)
             {
-                MessageBox.Show("No active document.", "QueryNOD XData Viewer", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show("No active document.", "btnQueryNOD_Click XData Viewer", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
@@ -203,14 +203,14 @@ namespace FoundationDetailer.AutoCAD
                         display.AppendLine();
                     }
 
-                    MessageBox.Show(display.ToString(), "QueryNOD XData Viewer", MessageBoxButton.OK, MessageBoxImage.Information);
+                    MessageBox.Show(display.ToString(), "btnQueryNOD_Click XData Viewer", MessageBoxButton.OK, MessageBoxImage.Information);
 
                     tr.Commit();
                 }
             }
             catch (System.Exception ex)
             {
-                MessageBox.Show($"Unexpected error: {ex.Message}", "QueryNOD XData Viewer", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"Unexpected error: {ex.Message}", "btnQueryNOD_Click XData Viewer", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -221,7 +221,7 @@ namespace FoundationDetailer.AutoCAD
             Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
             if (doc == null)
             {
-                MessageBox.Show("No active document.", "QueryNOD Cleanup", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show("No active document.", "btnQueryNOD_Click Cleanup", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
@@ -231,7 +231,7 @@ namespace FoundationDetailer.AutoCAD
             {
                 using (Transaction tr = db.TransactionManager.StartTransaction())
                 {
-                    // Open QueryNOD for read
+                    // Open btnQueryNOD_Click for read
                     DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
 
                     int removedHandles = 0;
@@ -300,7 +300,7 @@ namespace FoundationDetailer.AutoCAD
                         }
                         else
                         {
-                            // Only upgrade QueryNOD when actually removing an Xrecord
+                            // Only upgrade btnQueryNOD_Click when actually removing an Xrecord
                             if (!nod.IsWriteEnabled)
                                 nod.UpgradeOpen();
 
@@ -312,13 +312,13 @@ namespace FoundationDetailer.AutoCAD
                     tr.Commit();
 
                     MessageBox.Show(
-                        string.Format("QueryNOD cleanup complete.\nRemoved handles: {0}\nRemoved Xrecords: {1}", removedHandles, removedXrecords),
-                        "QueryNOD Cleanup", MessageBoxButton.OK, MessageBoxImage.Information);
+                        string.Format("btnQueryNOD_Click cleanup complete.\nRemoved handles: {0}\nRemoved Xrecords: {1}", removedHandles, removedXrecords),
+                        "btnQueryNOD_Click Cleanup", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
             }
             catch (System.Exception ex)
             {
-                MessageBox.Show("Error during QueryNOD cleanup: " + ex.Message, "QueryNOD Cleanup", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show("Error during btnQueryNOD_Click cleanup: " + ex.Message, "btnQueryNOD_Click Cleanup", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 

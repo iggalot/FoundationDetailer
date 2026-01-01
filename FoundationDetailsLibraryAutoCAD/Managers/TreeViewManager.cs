@@ -1,6 +1,4 @@
-﻿using Autodesk.AutoCAD.DatabaseServices;
-using System.Collections.Generic;
-using System.Windows;
+﻿using System.Collections.Generic;
 using System.Windows.Controls;
 using static FoundationDetailsLibraryAutoCAD.Data.FoundationEntityData;
 

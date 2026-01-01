@@ -83,5 +83,21 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
 
             return pts;
         }
+
+        internal static bool IsValidSpacing(string text, out double value)
+        {
+            value = 0;
+
+            // Must parse as double
+            if (!double.TryParse(text, out value))
+                return false;
+
+            // Must be non-negative
+            if (value < 0)
+                return false;
+
+            // Optionally, you could check for min <= max if you have both values
+            return true;
+        }
     }
 }

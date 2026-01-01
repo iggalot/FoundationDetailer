@@ -58,7 +58,7 @@ namespace FoundationDetailer.UI
             Database db = doc.Database;
             Editor ed = doc.Editor;
 
-            // Create the QueryNOD dictionaries
+            // Create the btnQueryNOD_Click dictionaries
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
                 NODManager.InitFoundationNOD(tr);  // initialize the NOD for our application
@@ -70,7 +70,7 @@ namespace FoundationDetailer.UI
             // Initialize PierControl
             //PierUI = new PierControl();
             //PierUI.PierAdded += OnPierAdded;
-            //PierUI.RequestPierLocationPick += PickPierLocation;
+            //PierUI.RequestPierLocationPick += btnPickPierLocation_Click;
 
             //PierContainer.Children.Clear();
             //PierContainer.Children.Add(PierUI);
@@ -84,27 +84,26 @@ namespace FoundationDetailer.UI
             // Update UI immediately
             Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
 
-            UpdateTreeViewHandleUI();
+            UpdateTreeViewUI();
         }
 
         private void WireEvents()
         {
-            BtnQuery.Click += (s, e) => QueryNOD();
-            BtnSyncNod.Click += (s, e) => SyncNodData();
+            BtnQuery.Click += (s, e) => btnQueryNOD_Click();
 
-            BtnSelectBoundary.Click += (s, e) => DefineFoundationBoundary(); // for selecting the boundary
+            BtnSelectBoundary.Click += (s, e) => btnDefineFoundationBoundary_Click(); // for selecting the boundary
 
-            BtnAddGradeBeams.Click += (s, e) => AddPreliminaryGradeBeams(); // for adding a preliminary gradebeam layout
+            BtnAddGradeBeams.Click += (s, e) => btnAddPreliminaryGradeBeams_Click(); // for adding a preliminary gradebeam layout
 
-            //BtnAddRebar.Click += (s, e) => AddRebarBars();
-            //BtnAddStrands.Click += (s, e) => AddStrands();
-            //BtnAddPiers.Click += (s, e) => AddPiers();
+            //BtnAddRebar.Click += (s, e) => btnAddRebarBars_Click();
+            //BtnAddStrands.Click += (s, e) => btnAddStrands_Click();
+            //BtnAddPiers.Click += (s, e) => btnAddPiers_Click();
 
             //BtnPreview.Click += (s, e) => ShowPreview();
             //BtnClearPreview.Click += (s, e) => ClearPreview();
             //BtnCommit.Click += (s, e) => CommitModel();
-            BtnSave.Click += (s, e) => BtnSaveModel_Click();
-            BtnLoad.Click += (s, e) => BtnLoadModel_Click();
+            BtnSave.Click += (s, e) => btnSaveModel_Click();
+            BtnLoad.Click += (s, e) => btnLoadModel_Click();
 
             BtnShowBoundary.Click += (s, e) => PolylineBoundaryManager.HighlightBoundary();
             BtnZoomBoundary.Click += (s, e) => PolylineBoundaryManager.ZoomToBoundary();
@@ -114,7 +113,7 @@ namespace FoundationDetailer.UI
                 var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
                 GradeBeamManager.HighlightGradeBeams(doc);
             };
-            BtnClearGradeBeams.Click += BtnClearAllGradeBeams_Click;
+            BtnClearGradeBeams.Click += btnClearAllGradeBeams_Click;
 
             TxtGBHorzMin.TextChanged += Spacing_TextChanged;
             TxtGBHorzMax.TextChanged += Spacing_TextChanged;
@@ -122,63 +121,24 @@ namespace FoundationDetailer.UI
             TxtGBVertMax.TextChanged += Spacing_TextChanged;
         }
 
-        private void Spacing_TextChanged(object sender, TextChangedEventArgs e)
-        {
-            if (sender is TextBox tb)
-            {
-                if (IsValidSpacing(tb.Text, out double val))
-                {
-                    tb.Background = _validBrush;
-                    // Optionally store the value somewhere if needed
-                }
-                else
-                {
-                    tb.Background = _invalidBrush;
-                }
-                // Optionally, validate input and store updated spacing values
-                double hMin = HorzGBMinSpacing;
-                double hMax = HorzGBMaxSpacing;
-                double vMin = VertGBMinSpacing;
-                double vMax = VertGBMaxSpacing;
-
-                // For debug or status update
-                TxtStatus.Text = $"H: {hMin}-{hMax}, V: {vMin}-{vMax}";
-            }
-        }
-
-        private bool IsValidSpacing(string text, out double value)
-        {
-            value = 0;
-
-            // Must parse as double
-            if (!double.TryParse(text, out value))
-                return false;
-
-            // Must be non-negative
-            if (value < 0)
-                return false;
-
-            // Optionally, you could check for min <= max if you have both values
-            return true;
-        }
 
 
-        /// <summary>
-        /// Queries the NOD for a list of handles in each subdirectory.
-        /// </summary>
-        private void QueryNOD()
-        {
-            NODManager.ViewFoundationNOD(); // optional debug
 
-            // Updates the TreeView for the handles.
-            UpdateTreeViewHandleUI();
 
-        }
+
+
+
+
+
+
+
+
+
 
         /// <summary>
         /// Helper function to update the data in the TreeView for the HANDLES from the NOD.
         /// </summary>
-        internal void UpdateTreeViewHandleUI()
+        internal void UpdateTreeViewUI()
         {
             var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
@@ -256,24 +216,6 @@ namespace FoundationDetailer.UI
 
         }
 
-
-
-
-        /// <summary>
-        /// Cleans the NOD of any stake handles
-        /// </summary>
-        private void SyncNodData()
-        {
-            NODManager.CleanFoundationNOD();
-        }
-
-        #region --- Boundary Selection and UI Updates ---
-
-        private void OnBoundaryChanged(object sender, EventArgs e)
-        {
-            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
-        }
-
         private void UpdateBoundaryDisplay()
         {
             bool isValid = false;
@@ -316,7 +258,7 @@ namespace FoundationDetailer.UI
             SetActionButtonBackgrounds(ActionButtonsPanel, isValid ? Brushes.LightGreen : Brushes.LightCoral);
 
             // Update the tree Viewer
-            UpdateTreeViewHandleUI();
+            UpdateTreeViewUI();
         }
 
         private void SetActionButtonBackgrounds(Panel parent, Brush background)
@@ -335,7 +277,27 @@ namespace FoundationDetailer.UI
             }
         }
 
-        private void DefineFoundationBoundary()
+
+        #region --- Boundary Selection and UI Updates ---
+
+
+        #endregion
+
+        #region --- UI Button Click Handlers ---
+
+        /// <summary>
+        /// Queries the NOD for a list of handles in each subdirectory.
+        /// </summary>
+        private void btnQueryNOD_Click()
+        {
+            NODManager.CleanFoundationNOD();
+            NODManager.ViewFoundationNOD(); // optional debug
+
+            // Updates the TreeView for the handles.
+            UpdateTreeViewUI();
+
+        }
+        private void btnDefineFoundationBoundary_Click()
         {
             var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
@@ -392,65 +354,7 @@ namespace FoundationDetailer.UI
                 }
             }
         }
-
-        private void BtnClearAllGradeBeams_Click(object sender, RoutedEventArgs e)
-        {
-            Database db = Autodesk.AutoCAD.ApplicationServices.Application
-                .DocumentManager
-                .MdiActiveDocument
-                .Database;
-
-            // Delete the AutoCAD entities
-            NODManager.DeleteEntitiesFromFoundationSubDictionary(
-                Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument.Database,
-                NODManager.KEY_GRADEBEAM
-                );
-
-            // Clear the NOD
-            NODManager.ClearFoundationSubDictionary(db, NODManager.KEY_GRADEBEAM);
-
-            TxtStatus.Text = "All grade beams cleared.";
-
-            // Update UI immediately
-            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
-        }
-
-        private void BtnSaveModel_Click()
-        {
-            NODManager.ExportFoundationNOD();
-        }
-
-        private void BtnLoadModel_Click()
-        {
-            NODManager.ImportFoundationNOD();
-        }
-
-
-        #endregion
-
-        #region --- PierControl Handlers ---
-
-        private void OnPierAdded(PierData data)
-        {
-            Pier pier = PierConverter.ToModelPier(data);
-            CurrentModel.Piers.Add(pier);
-            Dispatcher.BeginInvoke(new Action(() =>
-                TxtStatus.Text = $"Pier added at ({pier.Location.X:F2}, {pier.Location.Y:F2})"));
-        }
-
-        private void PickPierLocation()
-        {
-            MessageBox.Show("Pick pier location in AutoCAD.");
-        }
-
-        #endregion
-
-        #region --- Model Operations ---
-
-
-        private void AddPiers() => MessageBox.Show("Add piers to model.");
-
-        private void AddPreliminaryGradeBeams()
+        private void btnAddPreliminaryGradeBeams_Click()
         {
             var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
@@ -491,14 +395,43 @@ namespace FoundationDetailer.UI
             Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
 
-        private void AddRebarBars()
+
+        private void btnClearAllGradeBeams_Click(object sender, RoutedEventArgs e)
+        {
+            Database db = Autodesk.AutoCAD.ApplicationServices.Application
+                .DocumentManager
+                .MdiActiveDocument
+                .Database;
+
+            // Delete the AutoCAD entities
+            NODManager.DeleteEntitiesFromFoundationSubDictionary(
+                Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument.Database,
+                NODManager.KEY_GRADEBEAM
+                );
+
+            // Clear the NOD
+            NODManager.ClearFoundationSubDictionary(db, NODManager.KEY_GRADEBEAM);
+
+            TxtStatus.Text = "All grade beams cleared.";
+
+            // Update UI immediately
+            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+        }
+
+
+
+
+        private void btnAddPiers_Click() => MessageBox.Show("Add piers to model.");
+
+
+        private void btnAddRebarBars_Click()
         {
             MessageBox.Show("Add rebar bars to model.");
             // Update UI immediately
             Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
 
         }
-        private void AddStrands()
+        private void btnAddStrands_Click()
         {
             MessageBox.Show("Add strands to model.");
             // Update UI immediately
@@ -506,21 +439,63 @@ namespace FoundationDetailer.UI
 
         }
 
-        private void SaveModel()
+        private void btnSaveModel_Click()
         {
             NODManager.ExportFoundationNOD();
-            // Update UI immediately
-            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
 
-        private void LoadModel()
+        private void btnLoadModel_Click()
         {
             NODManager.ImportFoundationNOD();
-            // Update UI immediately
-            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+        }
+
+        private void btnPickPierLocation_Click()
+        {
+            MessageBox.Show("Pick pier location in AutoCAD.");
         }
 
         #endregion
+
+
+        #region --- UI Events Handlers ---
+
+        private void OnPierAdded(PierData data)
+        {
+            Pier pier = PierConverter.ToModelPier(data);
+            CurrentModel.Piers.Add(pier);
+            Dispatcher.BeginInvoke(new Action(() =>
+                TxtStatus.Text = $"Pier added at ({pier.Location.X:F2}, {pier.Location.Y:F2})"));
+        }
+
+        private void OnBoundaryChanged(object sender, EventArgs e)
+        {
+            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+        }
+
+
+        private void Spacing_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (sender is TextBox tb)
+            {
+                if (GridlineManager.IsValidSpacing(tb.Text, out double val))
+                {
+                    tb.Background = _validBrush;
+                    // Optionally store the value somewhere if needed
+                }
+                else
+                {
+                    tb.Background = _invalidBrush;
+                }
+                // Optionally, validate input and store updated spacing values
+                double hMin = HorzGBMinSpacing;
+                double hMax = HorzGBMaxSpacing;
+                double vMin = VertGBMinSpacing;
+                double vMax = VertGBMaxSpacing;
+
+                // For debug or status update
+                TxtStatus.Text = $"H: {hMin}-{hMax}, V: {vMin}-{vMax}";
+            }
+        }
 
         private void TreeViewExtensionData_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
         {
@@ -538,5 +513,10 @@ namespace FoundationDetailer.UI
                 }
             }
         }
+
+
+
+        #endregion
+
     }
 }

@@ -384,7 +384,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         }
 
         // ==========================================================
-        //  REMOVE ENTIRE QueryNOD STRUCTURE
+        //  REMOVE ENTIRE btnQueryNOD_Click STRUCTURE
         // ==========================================================
         [CommandMethod("EraseFoundationNOD")]
         public static void EraseFoundationNOD()
