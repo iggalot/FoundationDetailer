@@ -163,16 +163,13 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                     return;
                 }
 
-                // Prompt user for second point
-                var secondPointRes = context.Document.Editor.GetPoint("\nSelect second point for grade beam:");
-                if (secondPointRes.Status != Autodesk.AutoCAD.EditorInput.PromptStatus.OK)
-                {
-                    TxtStatus.Text = "Second point selection canceled.";
-                    return;
-                }
+                // Prompt user for second point using an autocad jig for preview
+                var jig = new GradeBeamPolylineJig(firstPointRes.Value);
+                var res = context.Document.Editor.Drag(jig);
+
 
                 var pt1 = firstPointRes.Value;
-                var pt2 = secondPointRes.Value;
+                var pt2 = jig.Polyline.GetPoint3dAt(1);
 
                 // Validation: points not the same
                 if (pt1.IsEqualTo(pt2))

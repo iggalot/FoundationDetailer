@@ -31,6 +31,16 @@ namespace FoundationDetailsLibraryAutoCAD.UI.Controls.GradeBeamSummaryControl
 
         private void BtnClearAll_Click(object sender, RoutedEventArgs e)
         {
+            var result = MessageBox.Show(
+                "This will permanently delete ALL grade beams.\n\nAre you sure you want to continue?",
+                "Confirm Clear All Grade Beams",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning,
+                MessageBoxResult.No);
+
+            if (result != MessageBoxResult.Yes)
+                return;
+
             ClearAllClicked?.Invoke(this, EventArgs.Empty);
         }
 

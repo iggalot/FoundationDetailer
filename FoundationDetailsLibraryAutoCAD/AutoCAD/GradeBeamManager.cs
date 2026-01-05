@@ -1,18 +1,64 @@
 ﻿using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using FoundationDetailsLibraryAutoCAD.Data;
 using FoundationDetailsLibraryAutoCAD.Managers;
 using System;
 using System.Collections.Generic;
-using System.Windows.Controls;
-using System.Windows.Media.Animation;
-using System.Windows.Threading;
-using static Autodesk.AutoCAD.DatabaseServices.TextEditor;
 
 namespace FoundationDetailer.AutoCAD
 {
+    public class GradeBeamPolylineJig : EntityJig
+    {
+        private Point3d _start;
+        private Point3d _end;
+
+        public Polyline Polyline => (Polyline)Entity;
+
+        public GradeBeamPolylineJig(Point3d startPoint)
+            : base(CreateInitialPolyline(startPoint))
+        {
+            _start = startPoint;
+            _end = startPoint;
+        }
+
+        private static Polyline CreateInitialPolyline(Point3d start)
+        {
+            var pl = new Polyline();
+            pl.AddVertexAt(0, new Point2d(start.X, start.Y), 0, 0, 0);
+            pl.AddVertexAt(1, new Point2d(start.X, start.Y), 0, 0, 0);
+            return pl;
+        }
+
+        protected override SamplerStatus Sampler(JigPrompts prompts)
+        {
+            var opts = new JigPromptPointOptions("\nSelect second point:")
+            {
+                BasePoint = _start,
+                UseBasePoint = true
+            };
+
+            var res = prompts.AcquirePoint(opts);
+            if (res.Status != PromptStatus.OK)
+                return SamplerStatus.Cancel;
+
+            if (res.Value.IsEqualTo(_end))
+                return SamplerStatus.NoChange;
+
+            _end = res.Value;
+            return SamplerStatus.OK;
+        }
+
+        protected override bool Update()
+        {
+            // Update preview polyline geometry
+            Polyline.SetPointAt(1, new Point2d(_end.X, _end.Y));
+            return true;
+        }
+    }
+
     public class GradeBeamManager
     {
         // Track grade beams per document
@@ -82,10 +128,39 @@ namespace FoundationDetailer.AutoCAD
         /// </summary>
         public void HighlightGradeBeams(FoundationContext context)
         {
+            if (context == null) return;
+
             var doc = context.Document;
-            if (!_gradeBeams.ContainsKey(doc) || _gradeBeams[doc].Count == 0) return;
-            doc.Editor.SetImpliedSelection(_gradeBeams[doc].ToArray());
+            var db = doc.Database;
+            var ed = doc.Editor;
+
+            using (doc.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                // Get the GRADEBEAM sub-dictionary
+                var subDict = NODManager.GetSubDictionary(
+                    tr,
+                    db,
+                    NODManager.KEY_GRADEBEAM);
+
+                if (subDict == null || subDict.Count == 0)
+                    return;
+
+                var ids = NODManager.GetAllValidObjectIdsFromSubDictionary(
+                    context,
+                    tr,
+                    db,
+                    subDict);
+
+                if (ids.Count == 0)
+                    return;
+
+                ed.SetImpliedSelection(ids.ToArray());
+
+                tr.Commit();
+            }
         }
+
 
         // -------------------------
         // Internal Helpers
@@ -329,6 +404,7 @@ namespace FoundationDetailer.AutoCAD
             return null;
         }
     }
+
 }
 
 
