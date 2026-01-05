@@ -6,7 +6,10 @@ using FoundationDetailsLibraryAutoCAD.Data;
 using FoundationDetailsLibraryAutoCAD.Managers;
 using System;
 using System.Collections.Generic;
+using System.Windows.Controls;
 using System.Windows.Media.Animation;
+using System.Windows.Threading;
+using static Autodesk.AutoCAD.DatabaseServices.TextEditor;
 
 namespace FoundationDetailer.AutoCAD
 {
@@ -220,6 +223,7 @@ namespace FoundationDetailer.AutoCAD
             var doc = context.Document;
             var db = doc.Database;
 
+            using (doc.LockDocument())
             using (var tr = db.TransactionManager.StartTransaction())
             {
                 exists = NODManager.TryGetFirstEntity(
@@ -242,6 +246,8 @@ namespace FoundationDetailer.AutoCAD
             double totalLength = 0;
 
             var db = context.Document.Database;
+
+            using (context.Document.LockDocument())
             using (var tr = db.TransactionManager.StartTransaction())
             {
                 // Get the KEY_GRADEBEAM sub-dictionary
@@ -275,6 +281,54 @@ namespace FoundationDetailer.AutoCAD
             return (quantity, totalLength);
         }
 
+        ///Adds a new gradebeam object between the two selected user points <summary>
+        /// 
+        /// </summary>
+        /// <param name="context"></param>
+        /// <param name="start"></param>
+        /// <param name="end"></param>
+        /// <param name="vertexCount"></param>
+        /// <exception cref="ArgumentNullException"></exception>
+        /// <exception cref="ArgumentException"></exception>
+        internal Polyline AddInterpolatedGradeBeam(FoundationContext context, Point3d start, Point3d end, int vertexCount)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (vertexCount < 2) throw new ArgumentException("Vertex count must be >= 2", nameof(vertexCount));
 
+            var db = context.Document.Database;
+
+            using (context.Document.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+                var btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+
+                // Create the polyline
+                Polyline pl = new Polyline();
+                for (int i = 0; i < vertexCount; i++)
+                {
+                    double t = (double)i / (vertexCount - 1); // linear interpolation
+                    double x = start.X + (end.X - start.X) * t;
+                    double y = start.Y + (end.Y - start.Y) * t;
+                    double z = start.Z + (end.Z - start.Z) * t;
+
+                    pl.AddVertexAt(i, new Point2d(x, y), 0, 0, 0);
+                }
+
+                btr.AppendEntity(pl);
+                tr.AddNewlyCreatedDBObject(pl, true);
+
+                FoundationEntityData.Write(tr, pl, NODManager.KEY_GRADEBEAM);
+                AddGradeBeamHandleToNOD(context, pl.Id, tr);  // add the grade beam to the NOD.
+
+                tr.Commit();
+
+                return pl;
+            }
+
+            return null;
+        }
     }
 }
+
+

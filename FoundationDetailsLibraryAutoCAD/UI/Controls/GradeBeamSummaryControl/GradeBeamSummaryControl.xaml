@@ -21,6 +21,7 @@
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
             <Button x:Name="BtnHighlightGradeBeams" Content="Show All" Width="60" Margin="5" Click="BtnHighlightGradeBeams_Clicked"/>
             <Button x:Name="BtnClearGradeBeams" Content="Clear All" Width="60" Margin="5" Click="BtnClearAll_Click"/>
+            <Button x:Name="BtnAddCustomGradeBeam" Content="(+) Add single GB" Margin="5" Click="BtnAddsingleGradeBeam_Clicked"/>
         </StackPanel>
     </StackPanel>
 </UserControl>

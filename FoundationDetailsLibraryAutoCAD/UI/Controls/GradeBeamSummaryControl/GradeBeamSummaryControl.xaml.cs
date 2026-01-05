@@ -8,6 +8,8 @@ namespace FoundationDetailsLibraryAutoCAD.UI.Controls.GradeBeamSummaryControl
     {
         public event EventHandler ClearAllClicked;
         public event EventHandler HighlightGradeBeamslClicked;
+        public event EventHandler AddSingleGradeBeamClicked;
+
 
         public GradeBeamSummaryViewModel ViewModel { get; }
 
@@ -35,6 +37,11 @@ namespace FoundationDetailsLibraryAutoCAD.UI.Controls.GradeBeamSummaryControl
         private void BtnHighlightGradeBeams_Clicked(object sender, RoutedEventArgs e)
         {
             HighlightGradeBeamslClicked?.Invoke(this, EventArgs.Empty);
+        }
+
+        private void BtnAddsingleGradeBeam_Clicked(object sender, RoutedEventArgs e)
+        {
+            AddSingleGradeBeamClicked?.Invoke(this, EventArgs.Empty);
         }
     }
 }

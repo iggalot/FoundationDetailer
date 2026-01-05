@@ -97,6 +97,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             PrelimGBControl.AddPreliminaryClicked += PrelimGBControl_AddPreliminaryClicked;
             GradeBeamSummary.ClearAllClicked += GradeBeam_ClearAllClicked;
             GradeBeamSummary.HighlightGradeBeamslClicked += GradeBeam_HighlightGradeBeamsClicked;
+            GradeBeamSummary.AddSingleGradeBeamClicked += GradeBeamSummary_AddSingleGradeBeamClicked;
 
         }
 
@@ -140,6 +141,66 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         {
             var context = CurrentContext;
             _gradeBeamService.HighlightGradeBeams(context);
+        }
+
+        private void GradeBeamSummary_AddSingleGradeBeamClicked(object sender, EventArgs e)
+
+        {
+            var context = CurrentContext;
+            if (context == null)
+            {
+                TxtStatus.Text = "No active document.";
+                return;
+            }
+
+            try
+            {
+                // Prompt user for first point
+                var firstPointRes = context.Document.Editor.GetPoint("\nSelect first point for grade beam:");
+                if (firstPointRes.Status != Autodesk.AutoCAD.EditorInput.PromptStatus.OK)
+                {
+                    TxtStatus.Text = "First point selection canceled.";
+                    return;
+                }
+
+                // Prompt user for second point
+                var secondPointRes = context.Document.Editor.GetPoint("\nSelect second point for grade beam:");
+                if (secondPointRes.Status != Autodesk.AutoCAD.EditorInput.PromptStatus.OK)
+                {
+                    TxtStatus.Text = "Second point selection canceled.";
+                    return;
+                }
+
+                var pt1 = firstPointRes.Value;
+                var pt2 = secondPointRes.Value;
+
+                // Validation: points not the same
+                if (pt1.IsEqualTo(pt2))
+                {
+                    TxtStatus.Text = "Points cannot be the same.";
+                    context.Document.Editor.GetPoint("\nPoints cannot be the same.");
+                    return;
+                }
+
+                // Ask the manager to create the polyline
+                _gradeBeamService.AddInterpolatedGradeBeam(context, pt1, pt2, 5);
+
+                // Refresh UI
+                Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+
+                TxtStatus.Text = "Custom grade beam added.";
+                context.Document.Editor.GetPoint("Custom grade beam added.");
+
+                PrelimGBControl.ViewModel.IsPreliminaryGenerated = true;  // reset the the preliminary input control
+
+                // Hide the gradebeam control completely
+                PrelimGBControl.Visibility = System.Windows.Visibility.Collapsed;
+            }
+            catch (Exception ex)
+            {
+                TxtStatus.Text = $"Error adding grade beam: {ex.Message}";
+                context.Document.Editor.GetPoint("Custom grade beam added.");
+            }
         }
 
         private void UpdateBoundaryDisplay()
