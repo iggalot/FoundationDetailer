@@ -95,7 +95,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             BtnZoomBoundary.Click += (s, e) => _boundaryService.ZoomToBoundary(context);
 
             PrelimGBControl.AddPreliminaryClicked += PrelimGBControl_AddPreliminaryClicked;
-            PrelimGBControl.ClearAllClicked += PrelimGBControl_ClearAllClicked;
+            GradeBeamSummary.ClearAllClicked += GradeBeam_ClearAllClicked;
         }
 
         #region --- UI Updates ---
@@ -117,6 +117,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 e.VertMin,
                 e.VertMax
             );
+            PrelimGBControl.ViewModel.IsPreliminaryGenerated = true;  // reset the the preliminary input control
 
             // Hide the gradebeam control completely
             PrelimGBControl.Visibility = System.Windows.Visibility.Collapsed;
@@ -124,10 +125,11 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
 
-        private void PrelimGBControl_ClearAllClicked(object sender, EventArgs e)
+        private void GradeBeam_ClearAllClicked(object sender, EventArgs e)
         {
             var context = CurrentContext;
             _gradeBeamService.ClearAll(context);
+            PrelimGBControl.ViewModel.IsPreliminaryGenerated = false;  // reset the the preliminary input control
 
             Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }

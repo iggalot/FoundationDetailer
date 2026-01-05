@@ -1,5 +1,4 @@
-﻿using Autodesk.AutoCAD.DatabaseServices;
-using FoundationDetailsLibraryAutoCAD.Managers;
+﻿using FoundationDetailsLibraryAutoCAD.Managers;
 using System;
 using System.Windows;
 using System.Windows.Controls;
@@ -15,7 +14,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI.Controls.PrelimGBControl
         public PrelimGradeBeamViewModel ViewModel { get; }
 
         public event EventHandler<PrelimGBEventArgs> AddPreliminaryClicked;
-        public event EventHandler ClearAllClicked;
 
         public class PrelimGBEventArgs : EventArgs
         {
@@ -49,11 +47,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI.Controls.PrelimGBControl
                 VertMin = ViewModel.VertMin,
                 VertMax = ViewModel.VertMax
             });
-        }
-
-        private void BtnClearAll_Click(object sender, RoutedEventArgs e)
-        {
-            ClearAllClicked?.Invoke(this, EventArgs.Empty);
         }
 
         private void Spacing_TextChanged(object sender, TextChangedEventArgs e)

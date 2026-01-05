@@ -1,9 +1,12 @@
-﻿using System.Windows.Controls;
+﻿using System;
+using System.Windows;
+using System.Windows.Controls;
 
 namespace FoundationDetailsLibraryAutoCAD.UI.Controls.GradeBeamSummaryControl
 {
     public partial class GradeBeamSummaryControl : UserControl
     {
+        public event EventHandler ClearAllClicked;
         public GradeBeamSummaryViewModel ViewModel { get; }
 
         public GradeBeamSummaryControl()
@@ -20,6 +23,11 @@ namespace FoundationDetailsLibraryAutoCAD.UI.Controls.GradeBeamSummaryControl
         {
             ViewModel.Quantity = quantity;
             ViewModel.TotalLength = totalLength;
+        }
+
+        private void BtnClearAll_Click(object sender, RoutedEventArgs e)
+        {
+            ClearAllClicked?.Invoke(this, EventArgs.Empty);
         }
     }
 }

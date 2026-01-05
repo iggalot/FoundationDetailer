@@ -6,13 +6,21 @@
         <TextBlock Text="Grade Beam Summary" FontWeight="Bold" FontSize="14" Margin="0,0,0,5"/>
 
         <StackPanel Orientation="Horizontal">
-            <TextBlock Text="Total Qty:" FontWeight="Bold"/>
-            <TextBlock Text="{Binding Quantity}" Margin="5,0"/>
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="Qty:" FontWeight="Bold"/>
+                <TextBlock Text="{Binding Quantity}" Margin="5,0"/>
+            </StackPanel>
+
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="Total Length (ft):" FontWeight="Bold"/>
+                <TextBlock Text="{Binding TotalLength}" Margin="5,0"/>
+            </StackPanel>
         </StackPanel>
 
-        <StackPanel Orientation="Horizontal">
-            <TextBlock Text="Total Length (ft):" FontWeight="Bold"/>
-            <TextBlock Text="{Binding TotalLength}" Margin="5,0"/>
+        <!-- Action Buttons -->
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+            <Button x:Name="BtnHighlightGradeBeams" Content="Show All" Width="60" Margin="5"/>
+            <Button x:Name="BtnClearGradeBeams" Content="Clear All" Width="60" Margin="5" Click="BtnClearAll_Click"/>
         </StackPanel>
     </StackPanel>
 </UserControl>

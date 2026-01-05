@@ -33,26 +33,5 @@
                          IsEnabled="{Binding CanEditSpacingAndGenerate}"/>
             </StackPanel>
         </GroupBox>
-
-        <!-- Action Buttons -->
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
-            <Button x:Name="BtnHighlightGradeBeams" Content="Show All" Width="60" Margin="5"/>
-            <Button x:Name="BtnClearGradeBeams" Content="Clear All" Width="60" Margin="5" Click="BtnClearAll_Click"/>
-        </StackPanel>
-
-        <!-- Summary -->
-        <StackPanel Orientation="Horizontal">
-            <TextBlock Text="Qty:" FontWeight="Bold"/>
-            <TextBlock Text="{Binding Quantity}" Margin="5,0"/>
-            <TextBlock Text="W (in):" FontWeight="Bold"/>
-            <TextBlock Text="{Binding Width}" Margin="5,0"/>
-            <TextBlock Text="D (in.):" FontWeight="Bold"/>
-            <TextBlock Text="{Binding Depth}" Margin="5,0"/>
-        </StackPanel>
-
-        <StackPanel Orientation="Horizontal">
-            <TextBlock Text="TOT LENGTH (ft):" FontWeight="Bold"/>
-            <TextBlock Text="{Binding TotalLength}" Margin="5,0"/>
-        </StackPanel>
     </StackPanel>
 </UserControl>
