@@ -1374,16 +1374,18 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         /// <param name="dict">Dictionary to traverse</param>
         /// <param name="db">Database reference</param>
         /// <param name="callback">Action to invoke per entity (Entity, handle string)</param>
-        internal static void TraverseDictionary(FoundationContext context, Transaction tr, DBDictionary dict, Database db, Action<Entity, string> callback)
+        internal static void TraverseDictionary(
+            FoundationContext context,
+            Transaction tr,
+            DBDictionary dict,
+            Database db,
+            Action<TraversalResult> callback)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
-
-            var doc = context.Document;
-            var model = context.Model;
-
-            if (doc == null) return;
-
-            var ed = doc.Editor;
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+            if (dict == null) throw new ArgumentNullException(nameof(dict));
+            if (db == null) throw new ArgumentNullException(nameof(db));
+            if (callback == null) throw new ArgumentNullException(nameof(callback));
 
             foreach (DBDictionaryEntry entry in dict)
             {
@@ -1391,25 +1393,38 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 
                 if (obj is DBDictionary subDict)
                 {
-                    // Recurse into subdictionary
                     TraverseDictionary(context, tr, subDict, db, callback);
+                    continue;
                 }
-                else
+
+                // ----- LEAF SAFETY BEGINS (unchanged in spirit) -----
+
+                if (!TryParseHandle(context, entry.Key, out Handle handle))
                 {
-                    // Assume entry.Key is a handle string
-                    if (!TryParseHandle(context, entry.Key, out Handle handle))
-                        continue;
-
-                    if (!db.TryGetObjectId(handle, out ObjectId id))
-                        continue;
-
-                    if (!id.IsValid || id.IsErased)
-                        continue;
-
-                    Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
-                    if (ent != null)
-                        callback(ent, entry.Key);
+                    callback(TraversalResult.InvalidHandle(entry.Key));
+                    continue;
                 }
+
+                if (!db.TryGetObjectId(handle, out ObjectId id))
+                {
+                    callback(TraversalResult.MissingObjectId(entry.Key, handle));
+                    continue;
+                }
+
+                if (!id.IsValid || id.IsErased)
+                {
+                    callback(TraversalResult.Erased(entry.Key, handle, id));
+                    continue;
+                }
+
+                DBObject dbObj = tr.GetObject(id, OpenMode.ForRead);
+                if (!(dbObj is Entity ent))
+                {
+                    callback(TraversalResult.NotEntity(entry.Key, handle, id));
+                    continue;
+                }
+
+                callback(TraversalResult.Success(entry.Key, handle, id, ent));
             }
         }
 
@@ -1557,6 +1572,53 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             ed.WriteMessage($"\nDeleted {count} entities from {sub}.");
         }
 
+        internal enum TraversalStatus
+        {
+            Success,
+            InvalidHandle,
+            MissingObjectId,
+            ErasedObject,
+            NotEntity
+        }
+
+        internal sealed class TraversalResult
+        {
+            public string Key { get; }
+            public Handle Handle { get; }
+            public ObjectId ObjectId { get; }
+            public Entity Entity { get; }
+            public TraversalStatus Status { get; }
+
+            private TraversalResult(
+                string key,
+                TraversalStatus status,
+                Handle handle = default,
+                ObjectId objectId = default,
+                Entity entity = null)
+            {
+                Key = key;
+                Status = status;
+                Handle = handle;
+                ObjectId = objectId;
+                Entity = entity;
+            }
+
+            public static TraversalResult Success(
+                string key, Handle handle, ObjectId id, Entity ent) =>
+                new TraversalResult(key, TraversalStatus.Success, handle, id, ent);
+
+            public static TraversalResult InvalidHandle(string key) =>
+                new TraversalResult(key, TraversalStatus.InvalidHandle);
+
+            public static TraversalResult MissingObjectId(string key, Handle handle) =>
+                new TraversalResult(key, TraversalStatus.MissingObjectId, handle);
+
+            public static TraversalResult Erased(string key, Handle handle, ObjectId id) =>
+                new TraversalResult(key, TraversalStatus.ErasedObject, handle, id);
+
+            public static TraversalResult NotEntity(string key, Handle handle, ObjectId id) =>
+                new TraversalResult(key, TraversalStatus.NotEntity, handle, id);
+        }
 
 
 

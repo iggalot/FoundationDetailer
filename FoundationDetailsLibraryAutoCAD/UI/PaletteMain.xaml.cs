@@ -17,7 +17,9 @@ using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Threading;
+using static FoundationDetailsLibraryAutoCAD.AutoCAD.NODManager;
 using static FoundationDetailsLibraryAutoCAD.Data.FoundationEntityData;
+using static FoundationDetailsLibraryAutoCAD.Managers.TreeViewManager;
 
 namespace FoundationDetailer.UI
 {
@@ -243,7 +245,7 @@ namespace FoundationDetailer.UI
         internal void UpdateTreeViewUI()
         {
             var context = CurrentContext;
-            var doc = context.Document;
+            var doc = context?.Document;
             if (doc == null) return;
 
             TreeViewExtensionData.Items.Clear();
@@ -254,42 +256,75 @@ namespace FoundationDetailer.UI
                 if (root == null) return;
 
                 var nodeMap = new Dictionary<string, TreeViewItem>();
-                var rootNode = new TreeViewItem { Header = NODManager.ROOT, IsExpanded = true };
+
+                var rootNode = new TreeViewItem
+                {
+                    Header = NODManager.ROOT,
+                    IsExpanded = true,
+                    Tag = new TreeNodeInfo(NODManager.ROOT, isDictionary: true)
+                };
+
                 TreeViewExtensionData.Items.Add(rootNode);
 
+                // ---------------------------------
+                // PASS 1: Build tree
+                // ---------------------------------
                 TreeViewManager.BuildTree(root, rootNode, tr, nodeMap);
 
-                var dictCounts = new Dictionary<string, int>();
-                NODManager.TraverseDictionary(context, tr, root, doc.Database, (ent, handle) =>
-                {
-                    if (nodeMap.TryGetValue(handle, out var node))
-                    {
-                        node.Tag = ent;
-                        FoundationEntityData.DisplayExtensionData(context, ent);
+                // ---------------------------------
+                // PASS 2: Attach entities + count by branch
+                // ---------------------------------
+                var branchCounts = new Dictionary<string, int>();
 
-                        if (node.Parent is TreeViewItem parentNode)
-                        {
-                            string parentName = parentNode.Header.ToString();
-                            dictCounts[parentName] = dictCounts.ContainsKey(parentName) ? dictCounts[parentName] + 1 : 1;
-                        }
+                NODManager.TraverseDictionary(context, tr, root, doc.Database, result =>
+                {
+                    if (result.Status != TraversalStatus.Success)
+                        return;
+
+                    if (!nodeMap.TryGetValue(result.Key, out var leafNode))
+                        return;
+
+                    if (!(leafNode.Tag is TreeNodeInfo leafInfo))
+                        return;
+
+                    // Attach entity
+                    leafInfo.Entity = result.Entity;
+                    FoundationEntityData.DisplayExtensionData(context, result.Entity);
+
+                    // Count under immediate dictionary parent (FD_BOUNDARY, etc.)
+                    if (leafNode.Parent is TreeViewItem parentNode &&
+                        parentNode.Tag is TreeNodeInfo parentInfo &&
+                        parentInfo.IsDictionary)
+                    {
+                        branchCounts[parentInfo.Key] =
+                            branchCounts.TryGetValue(parentInfo.Key, out int count)
+                                ? count + 1
+                                : 1;
                     }
                 });
 
-                foreach (var kvp in dictCounts)
+                // ---------------------------------
+                // PASS 3: Update branch headers
+                // ---------------------------------
+                foreach (var kvp in branchCounts)
                 {
-                    var node = TreeViewManager.FindNodeByHeader(rootNode, kvp.Key);
-                    if (node != null)
+                    if (!nodeMap.TryGetValue(kvp.Key, out var branchNode))
+                        continue;
+
+                    var tb = new TextBlock();
+                    tb.Inlines.Add(new Run($" ({kvp.Value}) ")
                     {
-                        var tb = new TextBlock();
-                        tb.Inlines.Add(new Run($" ({kvp.Value})  ") { FontWeight = FontWeights.Bold });
-                        tb.Inlines.Add(new Run(kvp.Key));
-                        node.Header = tb;
-                    }
+                        FontWeight = FontWeights.Bold
+                    });
+                    tb.Inlines.Add(new Run(kvp.Key));
+
+                    branchNode.Header = tb;
                 }
 
                 tr.Commit();
             }
         }
+
         #endregion
 
 

@@ -60,33 +60,35 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
         }
 
         internal static void BuildTree(
-    DBDictionary dict,
-    TreeViewItem parent,
-    Transaction tr,
-    Dictionary<string, TreeViewItem> nodeMap)
+            DBDictionary dict,
+            TreeViewItem parent,
+            Transaction tr,
+            Dictionary<string, TreeViewItem> nodeMap)
         {
             foreach (DBDictionaryEntry entry in dict)
             {
-                TreeViewItem node = new TreeViewItem
+                DBObject obj = tr.GetObject(entry.Value, OpenMode.ForRead);
+
+                bool isDict = obj is DBDictionary;
+
+                var node = new TreeViewItem
                 {
-                    Header = entry.Key
+                    Header = entry.Key,
+                    Tag = new TreeNodeInfo(entry.Key, isDict)
                 };
 
                 parent.Items.Add(node);
 
-                DBObject obj = tr.GetObject(entry.Value, OpenMode.ForRead);
+                // 🔑 THIS IS THE MISSING PIECE
+                nodeMap[entry.Key] = node;
 
-                if (obj is DBDictionary subDict)
+                if (isDict)
                 {
-                    BuildTree(subDict, node, tr, nodeMap);
-                }
-                else
-                {
-                    // Leaf node (handle)
-                    nodeMap[entry.Key] = node;
+                    BuildTree((DBDictionary)obj, node, tr, nodeMap);
                 }
             }
         }
+
 
         internal static void AttachEntityToTree(FoundationContext context,
             TreeViewItem rootNode,
@@ -127,6 +129,19 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
             }
 
             return null;
+        }
+
+        internal sealed class TreeNodeInfo
+        {
+            public string Key { get; }
+            public bool IsDictionary { get; }
+            public Entity Entity { get; set; }
+
+            public TreeNodeInfo(string key, bool isDictionary)
+            {
+                Key = key;
+                IsDictionary = isDictionary;
+            }
         }
     }
 }
