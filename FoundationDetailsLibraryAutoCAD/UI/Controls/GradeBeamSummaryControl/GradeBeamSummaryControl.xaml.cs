@@ -7,6 +7,8 @@ namespace FoundationDetailsLibraryAutoCAD.UI.Controls.GradeBeamSummaryControl
     public partial class GradeBeamSummaryControl : UserControl
     {
         public event EventHandler ClearAllClicked;
+        public event EventHandler HighlightGradeBeamslClicked;
+
         public GradeBeamSummaryViewModel ViewModel { get; }
 
         public GradeBeamSummaryControl()
@@ -28,6 +30,11 @@ namespace FoundationDetailsLibraryAutoCAD.UI.Controls.GradeBeamSummaryControl
         private void BtnClearAll_Click(object sender, RoutedEventArgs e)
         {
             ClearAllClicked?.Invoke(this, EventArgs.Empty);
+        }
+
+        private void BtnHighlightGradeBeams_Clicked(object sender, RoutedEventArgs e)
+        {
+            HighlightGradeBeamslClicked?.Invoke(this, EventArgs.Empty);
         }
     }
 }

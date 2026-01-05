@@ -96,6 +96,8 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
             PrelimGBControl.AddPreliminaryClicked += PrelimGBControl_AddPreliminaryClicked;
             GradeBeamSummary.ClearAllClicked += GradeBeam_ClearAllClicked;
+            GradeBeamSummary.HighlightGradeBeamslClicked += GradeBeam_HighlightGradeBeamsClicked;
+
         }
 
         #region --- UI Updates ---
@@ -132,6 +134,12 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             PrelimGBControl.ViewModel.IsPreliminaryGenerated = false;  // reset the the preliminary input control
 
             Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+        }
+
+        private void GradeBeam_HighlightGradeBeamsClicked(object sender, EventArgs e)
+        {
+            var context = CurrentContext;
+            _gradeBeamService.HighlightGradeBeams(context);
         }
 
         private void UpdateBoundaryDisplay()
