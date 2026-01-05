@@ -257,7 +257,7 @@ namespace FoundationDetailer.UI
                 var rootNode = new TreeViewItem { Header = NODManager.ROOT, IsExpanded = true };
                 TreeViewExtensionData.Items.Add(rootNode);
 
-                NODManager.BuildTree(root, rootNode, tr, nodeMap);
+                TreeViewManager.BuildTree(root, rootNode, tr, nodeMap);
 
                 var dictCounts = new Dictionary<string, int>();
                 NODManager.TraverseDictionary(context, tr, root, doc.Database, (ent, handle) =>
@@ -277,7 +277,7 @@ namespace FoundationDetailer.UI
 
                 foreach (var kvp in dictCounts)
                 {
-                    var node = NODManager.FindNodeByHeader(rootNode, kvp.Key);
+                    var node = TreeViewManager.FindNodeByHeader(rootNode, kvp.Key);
                     if (node != null)
                     {
                         var tb = new TextBlock();

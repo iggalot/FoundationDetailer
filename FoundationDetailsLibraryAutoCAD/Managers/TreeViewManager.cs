@@ -53,10 +53,80 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
                 };
 
                 treeView.Items.Add(rootNode);
-                NODManager.BuildTree(root, rootNode, tr, nodeMap);
+                TreeViewManager.BuildTree(root, rootNode, tr, nodeMap);
 
                 tr.Commit();
             }
+        }
+
+        internal static void BuildTree(
+    DBDictionary dict,
+    TreeViewItem parent,
+    Transaction tr,
+    Dictionary<string, TreeViewItem> nodeMap)
+        {
+            foreach (DBDictionaryEntry entry in dict)
+            {
+                TreeViewItem node = new TreeViewItem
+                {
+                    Header = entry.Key
+                };
+
+                parent.Items.Add(node);
+
+                DBObject obj = tr.GetObject(entry.Value, OpenMode.ForRead);
+
+                if (obj is DBDictionary subDict)
+                {
+                    BuildTree(subDict, node, tr, nodeMap);
+                }
+                else
+                {
+                    // Leaf node (handle)
+                    nodeMap[entry.Key] = node;
+                }
+            }
+        }
+
+        internal static void AttachEntityToTree(FoundationContext context,
+            TreeViewItem rootNode,
+            string handleKey,
+            Entity ent)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var model = context.Model;
+
+            if (doc == null) return;
+
+            var db = doc.Database;
+            var ed = doc.Editor;
+
+            // Find the node with matching header (handle string)
+            TreeViewItem node = FindNodeByHeader(rootNode, handleKey);
+            if (node == null)
+                return;
+
+            node.Tag = ent;
+            FoundationEntityData.DisplayExtensionData(context, ent);
+        }
+
+        internal static TreeViewItem FindNodeByHeader(
+            TreeViewItem parent,
+            string header)
+        {
+            foreach (TreeViewItem child in parent.Items)
+            {
+                if (child.Header?.ToString() == header)
+                    return child;
+
+                TreeViewItem found = FindNodeByHeader(child, header);
+                if (found != null)
+                    return found;
+            }
+
+            return null;
         }
     }
 }
