@@ -1121,7 +1121,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         /// <param name="subDict">Sub-dictionary containing handle strings; null returns empty list.</param>
         /// <returns>List of valid, readable ObjectIds.</returns>
 
-        internal List<ObjectId> GetAllValidObjectIdsFromSubDictionary(FoundationContext context,
+        internal static List<ObjectId> GetAllValidObjectIdsFromSubDictionary(FoundationContext context,
             Transaction tr, Database db, DBDictionary subDict)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));

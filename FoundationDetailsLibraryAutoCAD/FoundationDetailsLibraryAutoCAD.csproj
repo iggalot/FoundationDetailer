@@ -81,6 +81,10 @@
     <Compile Include="Preview\PreviewManager.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Tools\XDataViewer.cs" />
+    <Compile Include="UI\Controls\GradeBeamSummaryControl\GradeBeamSummaryControl.xaml.cs">
+      <DependentUpon>GradeBeamSummaryControl.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="UI\Controls\GradeBeamSummaryControl\GradeBeamSummaryViewModel.cs" />
     <Compile Include="UI\Controls\PierControl.xaml.cs">
       <DependentUpon>PierControl.xaml</DependentUpon>
     </Compile>
@@ -101,6 +105,9 @@
     </Compile>
   </ItemGroup>
   <ItemGroup>
+    <Page Include="UI\Controls\GradeBeamSummaryControl\GradeBeamSummaryControl.xaml">
+      <SubType>Designer</SubType>
+    </Page>
     <Page Include="UI\Controls\PierControl.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>

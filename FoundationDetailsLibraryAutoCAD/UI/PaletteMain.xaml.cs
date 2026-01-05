@@ -7,6 +7,7 @@ using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using FoundationDetailsLibraryAutoCAD.Data;
 using FoundationDetailsLibraryAutoCAD.Managers;
 using FoundationDetailsLibraryAutoCAD.UI.Controls;
+using FoundationDetailsLibraryAutoCAD.UI.Controls.GradeBeamSummaryControl;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -180,6 +181,9 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
             // Update the tree Viewer
             UpdateTreeViewUI();
+
+            // Update the gradebeam summary
+            RefreshGradeBeamSummary();
 
             // Hide / show the preliminary button if there are no grade beams
             PrelimGBControl.Visibility = _gradeBeamService.HasAnyGradeBeams(CurrentContext)
@@ -423,5 +427,16 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         }
 
         #endregion
+
+        private void RefreshGradeBeamSummary()
+        {
+            var context = CurrentContext;
+
+            int quantity;
+            double total_length;
+            (quantity, total_length) = _gradeBeamService.GetGradeBeamSummary(context);
+
+            GradeBeamSummary.UpdateSummary(quantity, total_length);
+        }
     }
 }

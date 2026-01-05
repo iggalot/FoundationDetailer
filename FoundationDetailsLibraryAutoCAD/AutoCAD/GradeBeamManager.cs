@@ -3,6 +3,7 @@ using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using FoundationDetailsLibraryAutoCAD.Data;
+using FoundationDetailsLibraryAutoCAD.Managers;
 using System;
 using System.Collections.Generic;
 using System.Windows.Media.Animation;
@@ -234,6 +235,46 @@ namespace FoundationDetailer.AutoCAD
 
             return exists;
         }
+
+        public (int Quantity, double TotalLength) GetGradeBeamSummary(FoundationContext context)
+        {
+            int quantity = 0;
+            double totalLength = 0;
+
+            var db = context.Document.Database;
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                // Get the KEY_GRADEBEAM sub-dictionary
+                var subDict = NODManager.GetSubDictionary(tr, db, NODManager.KEY_GRADEBEAM);
+                if (subDict == null)
+                    return (0, 0);
+
+                // Get all valid ObjectIds using your helper
+                var validIds = NODManager.GetAllValidObjectIdsFromSubDictionary(context, tr, db, subDict);
+
+                quantity = validIds.Count;
+
+                foreach (var oid in validIds)
+                {
+                    var ent = tr.GetObject(oid, OpenMode.ForRead) as Autodesk.AutoCAD.DatabaseServices.Entity;
+
+                    if (ent is Autodesk.AutoCAD.DatabaseServices.Line line)
+                    {
+                        totalLength += line.Length;
+                    }
+                    else if (ent is Autodesk.AutoCAD.DatabaseServices.Polyline pl)
+                    {
+                        totalLength += MathHelperManager.ComputePolylineLength(pl);
+                    }
+                    // Extend for other beam types if needed
+                }
+
+                tr.Commit();
+            }
+
+            return (quantity, totalLength);
+        }
+
 
     }
 }

@@ -3,6 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:ctrls="clr-namespace:FoundationDetailsLibraryAutoCAD.UI.Controls"
              xmlns:gb_ctrl="clr-namespace:FoundationDetailsLibraryAutoCAD.UI.Controls.PrelimGBControl"
+             xmlns:gb_summary_ctrl="clr-namespace:FoundationDetailsLibraryAutoCAD.UI.Controls.GradeBeamSummaryControl"
              
              Height="600" Width="400">
     <Grid Margin="5">
@@ -56,7 +57,7 @@
                 <StackPanel x:Name="ActionButtonsPanel" Orientation="Vertical" Margin="0,10,0,0">
                     <!-- Replace the old prelim grade beam section with: -->
                     <gb_ctrl:PrelimGradeBeamControl x:Name="PrelimGBControl" Margin="0,5"/>
-                    
+                    <gb_summary_ctrl:GradeBeamSummaryControl x:Name="GradeBeamSummary" Margin="0,5"/>
                     <Button x:Name="BtnAddRebar" Content="Add Rebar Bars" Margin="0,5"/>
                     <Button x:Name="BtnAddStrands" Content="Add Strands" Margin="0,5"/>
                     
