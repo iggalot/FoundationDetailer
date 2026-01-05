@@ -210,5 +210,30 @@ namespace FoundationDetailer.AutoCAD
             }
         }
 
+        public bool HasAnyGradeBeams(FoundationContext context)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            bool exists = false;
+
+            var doc = context.Document;
+            var db = doc.Database;
+
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                exists = NODManager.TryGetFirstEntity(
+                    context,
+                    tr,
+                    db,
+                    NODManager.KEY_GRADEBEAM,  // The sub-dictionary key for grade beams
+                    out ObjectId oid
+                );
+
+                // No need to commit; we're just reading
+            }
+
+            return exists;
+        }
+
     }
 }

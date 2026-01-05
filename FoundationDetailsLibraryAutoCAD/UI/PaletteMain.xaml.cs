@@ -29,7 +29,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         private readonly PolylineBoundaryManager _boundaryService = new PolylineBoundaryManager();
         private readonly GradeBeamManager _gradeBeamService = new GradeBeamManager();
         private readonly FoundationPersistenceManager _persistenceService = new FoundationPersistenceManager();
-        private readonly NODManager _nodService = new NODManager();
 
         private FoundationContext CurrentContext => FoundationContext.For(Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument);
 
@@ -118,6 +117,9 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 e.VertMax
             );
 
+            // Hide the gradebeam control completely
+            PrelimGBControl.Visibility = System.Windows.Visibility.Collapsed;
+
             Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
 
@@ -178,6 +180,11 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
             // Update the tree Viewer
             UpdateTreeViewUI();
+
+            // Hide / show the preliminary button if there are no grade beams
+            PrelimGBControl.Visibility = _gradeBeamService.HasAnyGradeBeams(CurrentContext)
+                                         ? System.Windows.Visibility.Collapsed
+                                         : System.Windows.Visibility.Visible;
         }
 
         private void SetActionButtonBackgrounds(Panel parent, Brush background)

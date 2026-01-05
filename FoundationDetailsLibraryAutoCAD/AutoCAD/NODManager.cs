@@ -1619,10 +1619,5 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             public static TraversalResult NotEntity(string key, Handle handle, ObjectId id) =>
                 new TraversalResult(key, TraversalStatus.NotEntity, handle, id);
         }
-
-
-
-
-
     }
 }
