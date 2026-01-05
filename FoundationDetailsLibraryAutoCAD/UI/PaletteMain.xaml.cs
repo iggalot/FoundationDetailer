@@ -187,7 +187,15 @@ namespace FoundationDetailer.UI
 
         private void TreeViewExtensionData_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
         {
-            if (!(e.NewValue is TreeViewItem tvi && tvi.Tag is Entity ent))
+            if (!(e.NewValue is TreeViewItem tvi))
+                return;
+
+            // TreeNodeInfo holds the Entity
+            if (!(tvi.Tag is TreeViewManager.TreeNodeInfo nodeInfo))
+                return;
+
+            Entity ent = nodeInfo.Entity;
+            if (ent == null)
                 return;
 
             var context = CurrentContext;
