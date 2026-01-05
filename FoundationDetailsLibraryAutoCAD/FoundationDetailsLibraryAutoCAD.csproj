@@ -84,6 +84,10 @@
     <Compile Include="UI\Controls\PierControl.xaml.cs">
       <DependentUpon>PierControl.xaml</DependentUpon>
     </Compile>
+    <Compile Include="UI\Controls\ViewModels\PolylineTreeItemControl.xaml.cs">
+      <DependentUpon>PolylineTreeItemControl.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="UI\Controls\ViewModels\PolylineTreeItemViewModel.cs" />
     <Compile Include="UI\Converters\PierConverter.cs" />
     <Compile Include="UI\PaletteMain.xaml.cs">
       <DependentUpon>PaletteMain.xaml</DependentUpon>
@@ -96,6 +100,10 @@
     <Page Include="UI\Controls\PierControl.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
+    </Page>
+    <Page Include="UI\Controls\ViewModels\PolylineTreeItemControl.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="UI\PaletteMain.xaml">
       <Generator>MSBuild:Compile</Generator>

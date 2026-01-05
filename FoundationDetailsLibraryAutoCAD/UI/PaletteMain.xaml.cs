@@ -10,8 +10,10 @@ using FoundationDetailer.UI.Converters;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using FoundationDetailsLibraryAutoCAD.Data;
 using FoundationDetailsLibraryAutoCAD.Managers;
+using FoundationDetailsLibraryAutoCAD.UI.Controls;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
@@ -252,11 +254,14 @@ namespace FoundationDetailer.UI
 
             using (var tr = doc.Database.TransactionManager.StartTransaction())
             {
+                var _tree_view_mgr = new TreeViewManager();
+
                 var root = NODManager.GetFoundationRoot(context, tr);
                 if (root == null) return;
 
                 var nodeMap = new Dictionary<string, TreeViewItem>();
 
+                // Root node
                 var rootNode = new TreeViewItem
                 {
                     Header = NODManager.ROOT,
@@ -266,14 +271,10 @@ namespace FoundationDetailer.UI
 
                 TreeViewExtensionData.Items.Add(rootNode);
 
-                // ---------------------------------
-                // PASS 1: Build tree
-                // ---------------------------------
-                TreeViewManager.BuildTree(root, rootNode, tr, nodeMap);
+                // PASS 1: Build the tree
+                _tree_view_mgr.BuildTree(root, rootNode, tr, nodeMap);
 
-                // ---------------------------------
-                // PASS 2: Attach entities + count by branch
-                // ---------------------------------
+                // PASS 2: Attach entities + branch counts
                 var branchCounts = new Dictionary<string, int>();
 
                 NODManager.TraverseDictionary(context, tr, root, doc.Database, result =>
@@ -291,21 +292,53 @@ namespace FoundationDetailer.UI
                     leafInfo.Entity = result.Entity;
                     FoundationEntityData.DisplayExtensionData(context, result.Entity);
 
-                    // Count under immediate dictionary parent (FD_BOUNDARY, etc.)
-                    if (leafNode.Parent is TreeViewItem parentNode &&
-                        parentNode.Tag is TreeNodeInfo parentInfo &&
-                        parentInfo.IsDictionary)
+                    // Determine parent branch key
+                    string branchKey = (leafNode.Parent as TreeViewItem)?.Tag is TreeNodeInfo parentInfo
+                        ? parentInfo.Key
+                        : null;
+                    Debug.WriteLine($"Leaf: {leafInfo.Key}, Parent Key: {branchKey}");
+
+                    // --------------------------
+                    // Use the _controlMap field to create custom header if available
+                    // --------------------------
+                    if (branchKey != null && _tree_view_mgr._controlMap.TryGetValue(branchKey, out var factory))
                     {
-                        branchCounts[parentInfo.Key] =
-                            branchCounts.TryGetValue(parentInfo.Key, out int count)
+                        // Call the factory to create a new TreeViewItem
+                        var newLeafNode = factory(leafInfo);
+
+                        // Assign a NEW instance of the control, not the old one
+                        if (newLeafNode.Header is PolylineTreeItemControl control)
+                        {
+                            leafNode.Header = new PolylineTreeItemControl
+                            {
+                                DataContext = control.DataContext
+                            };
+                        }
+                        else
+                        {
+                            // Fallback: assign whatever the factory returned
+                            leafNode.Header = newLeafNode.Header;
+                        }
+                    }
+                    else
+                    {
+                        // Fallback: just show key text
+                        leafNode.Header = leafInfo.Key;
+                    }
+
+                    // Count leaf under immediate dictionary parent
+                    if (leafNode.Parent is TreeViewItem parentNode &&
+                        parentNode.Tag is TreeNodeInfo parentInfo2 &&
+                        parentInfo2.IsDictionary)
+                    {
+                        branchCounts[parentInfo2.Key] =
+                            branchCounts.TryGetValue(parentInfo2.Key, out int count)
                                 ? count + 1
                                 : 1;
                     }
                 });
 
-                // ---------------------------------
-                // PASS 3: Update branch headers
-                // ---------------------------------
+                // PASS 3: Update branch headers with counts
                 foreach (var kvp in branchCounts)
                 {
                     if (!nodeMap.TryGetValue(kvp.Key, out var branchNode))

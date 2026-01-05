@@ -1,6 +1,7 @@
 ﻿using Autodesk.AutoCAD.DatabaseServices;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using FoundationDetailsLibraryAutoCAD.Data;
+using FoundationDetailsLibraryAutoCAD.UI.Controls;
 using System;
 using System.Collections.Generic;
 using System.Windows.Controls;
@@ -8,9 +9,28 @@ using static FoundationDetailsLibraryAutoCAD.Data.FoundationEntityData;
 
 namespace FoundationDetailsLibraryAutoCAD.Managers
 {
-    public static class TreeViewManager
+    public class TreeViewManager
     {
-        internal static TreeViewItem CreateTreeViewItem(ExtensionDataItem dataItem)
+        internal readonly Dictionary<string, Func<TreeNodeInfo, TreeViewItem>> _controlMap =
+            new Dictionary<string, Func<TreeNodeInfo, TreeViewItem>>
+            {
+                { NODManager.KEY_BOUNDARY, leafInfo =>
+                    new TreeViewItem
+                    {
+                        Header = new PolylineTreeItemControl { DataContext = new PolylineTreeItemViewModel((Polyline)leafInfo.Entity) },
+                        Tag = leafInfo
+                    }
+                },
+                { NODManager.KEY_GRADEBEAM, leafInfo =>
+                    new TreeViewItem
+                    {
+                        Header = new PolylineTreeItemControl { DataContext = new PolylineTreeItemViewModel((Polyline)leafInfo.Entity) },
+                        Tag = leafInfo
+                    }
+                }
+            };
+
+        internal TreeViewItem CreateTreeViewItem(ExtensionDataItem dataItem)
         {
             string headerText = dataItem.Value != null
                 ? $"{dataItem.Name} ({dataItem.Type}): {FormatValue(dataItem.Value)}"
@@ -26,7 +46,7 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
             return treeItem;
         }
 
-        private static string FormatValue(object value)
+        private string FormatValue(object value)
         {
             if (value is IEnumerable<string> list)
                 return string.Join(", ", list);
@@ -34,7 +54,7 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
             return value?.ToString() ?? "";
         }
 
-        public static void Populate(FoundationContext context, TreeView treeView, Database db)
+        public void Populate(FoundationContext context, TreeView treeView, Database db)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
 
@@ -53,13 +73,13 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
                 };
 
                 treeView.Items.Add(rootNode);
-                TreeViewManager.BuildTree(root, rootNode, tr, nodeMap);
+                BuildTree(root, rootNode, tr, nodeMap);
 
                 tr.Commit();
             }
         }
 
-        internal static void BuildTree(
+        internal void BuildTree(
             DBDictionary dict,
             TreeViewItem parent,
             Transaction tr,
@@ -90,7 +110,7 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
         }
 
 
-        internal static void AttachEntityToTree(FoundationContext context,
+        internal void AttachEntityToTree(FoundationContext context,
             TreeViewItem rootNode,
             string handleKey,
             Entity ent)
@@ -143,5 +163,39 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
                 IsDictionary = isDictionary;
             }
         }
+
+        private TreeViewItem CreateLeafHeaderFactory(TreeNodeInfo leafInfo, string parentBranchKey)
+        {
+            // Only show custom controls for specific branches
+            switch (parentBranchKey)
+            {
+                case NODManager.KEY_BOUNDARY:
+                case NODManager.KEY_GRADEBEAM:
+                    if (leafInfo.Entity is Polyline pl)
+                    {
+                        var vm = new PolylineTreeItemViewModel(pl);
+
+                        var control = new PolylineTreeItemControl
+                        {
+                            DataContext = vm
+                        };
+
+                        return new TreeViewItem
+                        {
+                            Header = control,
+                            Tag = leafInfo
+                        };
+                    }
+                    break;
+            }
+
+            // Fallback: show key as text
+            return new TreeViewItem
+            {
+                Header = leafInfo.Key,
+                Tag = leafInfo
+            };
+        }
+
     }
 }
