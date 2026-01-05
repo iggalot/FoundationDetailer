@@ -1,7 +1,7 @@
 ﻿<UserControl x:Class="FoundationDetailsLibraryAutoCAD.UI.Controls.PolylineTreeItemControl"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             Height="24">
+             >
     <Grid Margin="2">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="Auto"/>
@@ -17,7 +17,7 @@
 
         <!-- Length -->
         <TextBlock Grid.Column="2"
-                   Text="{Binding TotalLength, StringFormat=Length: {0:F2}}"
+                   Text="{Binding TotalLength, StringFormat=Length: {0:F2} ft.}"
                    VerticalAlignment="Center"/>
     </Grid>
 </UserControl>

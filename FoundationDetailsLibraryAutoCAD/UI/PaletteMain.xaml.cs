@@ -1,12 +1,8 @@
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
-using Autodesk.AutoCAD.EditorInput;
-using Autodesk.AutoCAD.Geometry;
 using FoundationDetailer.AutoCAD;
 using FoundationDetailer.Managers;
-using FoundationDetailer.Model;
 using FoundationDetailer.UI.Controls;
-using FoundationDetailer.UI.Converters;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using FoundationDetailsLibraryAutoCAD.Data;
 using FoundationDetailsLibraryAutoCAD.Managers;
@@ -20,10 +16,10 @@ using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Threading;
 using static FoundationDetailsLibraryAutoCAD.AutoCAD.NODManager;
-using static FoundationDetailsLibraryAutoCAD.Data.FoundationEntityData;
 using static FoundationDetailsLibraryAutoCAD.Managers.TreeViewManager;
+using static FoundationDetailsLibraryAutoCAD.UI.Controls.PrelimGBControl.PrelimGradeBeamControl;
 
-namespace FoundationDetailer.UI
+namespace FoundationDetailsLibraryAutoCAD.UI
 {
     public partial class PaletteMain : UserControl
     {
@@ -36,16 +32,6 @@ namespace FoundationDetailer.UI
         private readonly NODManager _nodService = new NODManager();
 
         private FoundationContext CurrentContext => FoundationContext.For(Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument);
-
-
-
-        public double HorzGBMinSpacing => ParseDoubleOrDefault(TxtGBHorzMin.Text, 5.0);
-        public double HorzGBMaxSpacing => ParseDoubleOrDefault(TxtGBHorzMax.Text, 12.0);
-        public double VertGBMinSpacing => ParseDoubleOrDefault(TxtGBVertMin.Text, 5.0);
-        public double VertGBMaxSpacing => ParseDoubleOrDefault(TxtGBVertMax.Text, 12.0);
-
-        private readonly Brush _invalidBrush = Brushes.LightCoral;
-        private readonly Brush _validBrush = Brushes.White;
 
 
         private double ParseDoubleOrDefault(string text, double defaultValue)
@@ -102,21 +88,46 @@ namespace FoundationDetailer.UI
 
             BtnQuery.Click += (s, e) => btnQueryNOD_Click();
             BtnSelectBoundary.Click += (s, e) => btnDefineFoundationBoundary_Click();
-            BtnAddGradeBeams.Click += (s, e) => btnAddPreliminaryGradeBeams_Click();
-            BtnClearGradeBeams.Click += btnClearAllGradeBeams_Click;
             BtnSave.Click += (s, e) => btnSaveModel_Click();
             BtnLoad.Click += (s, e) => btnLoadModel_Click();
 
             BtnShowBoundary.Click += (s, e) => _boundaryService.HighlightBoundary(context);
             BtnZoomBoundary.Click += (s, e) => _boundaryService.ZoomToBoundary(context);
 
-            TxtGBHorzMin.TextChanged += Spacing_TextChanged;
-            TxtGBHorzMax.TextChanged += Spacing_TextChanged;
-            TxtGBVertMin.TextChanged += Spacing_TextChanged;
-            TxtGBVertMax.TextChanged += Spacing_TextChanged;
+            PrelimGBControl.AddPreliminaryClicked += PrelimGBControl_AddPreliminaryClicked;
+            PrelimGBControl.ClearAllClicked += PrelimGBControl_ClearAllClicked;
         }
 
         #region --- UI Updates ---
+        private void PrelimGBControl_AddPreliminaryClicked(object sender, PrelimGBEventArgs e)
+        {
+            var context = CurrentContext;
+
+            if (!_boundaryService.TryGetBoundary(context, out Polyline boundary))
+            {
+                TxtStatus.Text = "No boundary selected.";
+                return;
+            }
+
+            _gradeBeamService.CreatePreliminary(
+                context,
+                boundary,
+                e.HorzMin,
+                e.HorzMax,
+                e.VertMin,
+                e.VertMax
+            );
+
+            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+        }
+
+        private void PrelimGBControl_ClearAllClicked(object sender, EventArgs e)
+        {
+            var context = CurrentContext;
+            _gradeBeamService.ClearAll(context);
+
+            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+        }
 
         private void UpdateBoundaryDisplay()
         {
@@ -220,29 +231,7 @@ namespace FoundationDetailer.UI
             }
         }
 
-        private void Spacing_TextChanged(object sender, TextChangedEventArgs e)
-        {
-            if (sender is TextBox tb)
-            {
-                if (GridlineManager.IsValidSpacing(tb.Text, out double val))
-                {
-                    tb.Background = _validBrush;
-                    // Optionally store the value somewhere if needed
-                }
-                else
-                {
-                    tb.Background = _invalidBrush;
-                }
-                // Optionally, validate input and store updated spacing values
-                double hMin = HorzGBMinSpacing;
-                double hMax = HorzGBMaxSpacing;
-                double vMin = VertGBMinSpacing;
-                double vMax = VertGBMaxSpacing;
 
-                // For debug or status update
-                TxtStatus.Text = $"H: {hMin}-{hMax}, V: {vMin}-{vMax}";
-            }
-        }
 
         #endregion
 
@@ -393,30 +382,7 @@ namespace FoundationDetailer.UI
 
         }
 
-        private void btnAddPreliminaryGradeBeams_Click()
-        {
-            var context = CurrentContext;
 
-            if (!_boundaryService.TryGetBoundary(context, out Polyline boundary))
-            {
-                TxtStatus.Text = "No boundary selected.";
-                return;
-            }
-
-            _gradeBeamService.CreatePreliminary(context, boundary,
-                HorzGBMinSpacing, HorzGBMaxSpacing,
-                VertGBMinSpacing, VertGBMaxSpacing);
-
-            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
-        }
-
-        private void btnClearAllGradeBeams_Click(object sender, RoutedEventArgs e)
-        {
-            var context = CurrentContext;
-            _gradeBeamService.ClearAll(context);
-            TxtStatus.Text = "All grade beams cleared.";
-            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
-        }
 
         private void btnSaveModel_Click()
         {

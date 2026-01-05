@@ -1,13 +1,13 @@
 using Autodesk.AutoCAD.Runtime;
 using Autodesk.AutoCAD.Windows;
-using FoundationDetailer.UI;
+using FoundationDetailsLibraryAutoCAD.UI;
 using System;
 using System.Windows.Forms;
 using System.Windows.Forms.Integration;
 
-[assembly: CommandClass(typeof(FoundationDetailer.Commands.FoundationCommands))]
+[assembly: CommandClass(typeof(FoundationDetailsLibraryAutoCAD.Commands.FoundationCommands))]
 
-namespace FoundationDetailer.Commands
+namespace FoundationDetailsLibraryAutoCAD.Commands
 {
     //
     public class FoundationCommands : IExtensionApplication

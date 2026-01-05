@@ -84,6 +84,10 @@
     <Compile Include="UI\Controls\PierControl.xaml.cs">
       <DependentUpon>PierControl.xaml</DependentUpon>
     </Compile>
+    <Compile Include="UI\Controls\PrelimGBControl\PrelimGradeBeamControl.xaml.cs">
+      <DependentUpon>PrelimGradeBeamControl.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="UI\Controls\PrelimGBControl\PrelimGradeBeamViewModel.cs" />
     <Compile Include="UI\Controls\ViewModels\PolylineTreeItemControl.xaml.cs">
       <DependentUpon>PolylineTreeItemControl.xaml</DependentUpon>
     </Compile>
@@ -99,6 +103,9 @@
   <ItemGroup>
     <Page Include="UI\Controls\PierControl.xaml">
       <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Include="UI\Controls\PrelimGBControl\PrelimGradeBeamControl.xaml">
       <SubType>Designer</SubType>
     </Page>
     <Page Include="UI\Controls\ViewModels\PolylineTreeItemControl.xaml">

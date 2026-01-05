@@ -42,6 +42,6 @@ internal sealed class PolylineTreeItemViewModel
             length += segmentLength;
         }
 
-        return length;
+        return length / 12.0;
     }
 }
