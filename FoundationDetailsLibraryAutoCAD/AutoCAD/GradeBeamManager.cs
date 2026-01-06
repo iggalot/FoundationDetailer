@@ -69,7 +69,7 @@ namespace FoundationDetailer.AutoCAD
         // Track which documents have already registered the RegApp
         private readonly HashSet<Document> _regAppRegistered = new HashSet<Document>();
 
-        public void Initialize(FoundationContext context)
+        public void Initialize(FoundationContext _context)
         {
 
         }
@@ -83,7 +83,6 @@ namespace FoundationDetailer.AutoCAD
             if (boundary == null) return;
 
             var doc = context.Document;
-            var model = context.Model;
             var db = doc.Database;
 
             int horiz_count = 0;
@@ -153,7 +152,6 @@ namespace FoundationDetailer.AutoCAD
             if (points == null || points.Count < 2) return;
 
             var doc = context.Document;
-            var model = context.Model;
             var db = doc.Database;
 
             var pl = new Polyline();

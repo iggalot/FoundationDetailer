@@ -25,8 +25,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
     public partial class PaletteMain : UserControl
     {
 
-        private PierControl PierUI;
-
         private readonly PolylineBoundaryManager _boundaryService = new PolylineBoundaryManager();
         private readonly GradeBeamManager _gradeBeamService = new GradeBeamManager();
         private readonly FoundationPersistenceManager _persistenceService = new FoundationPersistenceManager();
@@ -86,10 +84,10 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         {
             var context = CurrentContext;
 
-            BtnQuery.Click += (s, e) => btnQueryNOD_Click();
-            BtnSelectBoundary.Click += (s, e) => btnDefineFoundationBoundary_Click();
-            BtnSave.Click += (s, e) => btnSaveModel_Click();
-            BtnLoad.Click += (s, e) => btnLoadModel_Click();
+            BtnQuery.Click += (s, e) => BtnQueryNOD_Click();
+            BtnSelectBoundary.Click += (s, e) => BtnDefineFoundationBoundary_Click();
+            BtnSave.Click += (s, e) => BtnSaveModel_Click();
+            BtnLoad.Click += (s, e) => BtnLoadModel_Click();
 
             BtnShowBoundary.Click += (s, e) => _boundaryService.HighlightBoundary(context);
             BtnZoomBoundary.Click += (s, e) => _boundaryService.ZoomToBoundary(context);
@@ -142,7 +140,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         private void GradeBeam_HighlightGradeBeamsClicked(object sender, EventArgs e)
         {
             var context = CurrentContext;
-            var doc = context.Document;
             _gradeBeamService.HighlightGradeBeams(context);
         }
 
@@ -208,11 +205,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
         private void UpdateBoundaryDisplay()
         {
-            var context = CurrentContext;
-            if ( context == null )
-            {
-                throw new Exception("Un UpdateBoundaryDCurrent context is null.");
-            }
+            var context = CurrentContext ?? throw new Exception("Un UpdateBoundaryDCurrent context is null.");
 
             bool isValid = false;
 
@@ -444,7 +437,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
 
         #region --- UI Button Click Handlers ---
-        private void btnDefineFoundationBoundary_Click()
+        private void BtnDefineFoundationBoundary_Click()
         {
             var context = CurrentContext;
             if (_boundaryService.SelectBoundary(context, out string error))
@@ -456,7 +449,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         /// <summary>
         /// Queries the NOD for a list of handles in each subdirectory.
         /// </summary>
-        private void btnQueryNOD_Click()
+        private void BtnQueryNOD_Click()
         {
             var context = CurrentContext;
             NODManager.CleanFoundationNOD(context);
@@ -469,12 +462,12 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
 
 
-        private void btnSaveModel_Click()
+        private void BtnSaveModel_Click()
         {
             var context = CurrentContext;
             _persistenceService.Save(context);
         }
-        private void btnLoadModel_Click()
+        private void BtnLoadModel_Click()
         {
             var context = CurrentContext;
             _persistenceService.Load(context);

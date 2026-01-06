@@ -117,6 +117,7 @@ namespace FoundationDetailer.Managers
             LoadBoundaryForActiveDocument(context);
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "Required by event handler signature")]
         private void DocManager_DocumentCreated(object sender, DocumentCollectionEventArgs e, FoundationContext context)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
@@ -124,6 +125,7 @@ namespace FoundationDetailer.Managers
             AttachDocumentEvents(context);
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "Required by event handler signature")]
         private void DocManager_DocumentToBeDestroyed(object sender, DocumentCollectionEventArgs e, FoundationContext context)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
@@ -139,6 +141,7 @@ namespace FoundationDetailer.Managers
             }
         }
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "Required by event handler signature")]
         private void DocManager_DocumentActivated(object sender, DocumentCollectionEventArgs e, FoundationContext context)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
@@ -304,7 +307,6 @@ namespace FoundationDetailer.Managers
             if (context == null) throw new ArgumentNullException(nameof(context));
 
             var doc = context.Document;
-            var model = context.Model;
 
             pl = null;
 
@@ -343,11 +345,9 @@ namespace FoundationDetailer.Managers
             if (context == null) throw new ArgumentNullException(nameof(context));
 
             var doc = context.Document;
-            var model = context.Model;
 
             if (doc == null) return;
 
-            var db = doc.Database;
             var ed = doc.Editor;
 
             if (!TryGetBoundary(context, out Polyline pl)) return;
@@ -510,8 +510,7 @@ namespace FoundationDetailer.Managers
                     // ------------------------------
                     // 3. Convert handle → ObjectId
                     // ------------------------------
-                    ObjectId boundaryId;
-                    if (!NODManager.TryGetObjectIdFromHandleString(context, db, handleStr, out boundaryId) ||
+                    if (!NODManager.TryGetObjectIdFromHandleString(context, db, handleStr, out ObjectId boundaryId) ||
                         boundaryId.IsNull)
                     {
                         tr.Commit();
@@ -1103,8 +1102,11 @@ namespace FoundationDetailer.Managers
 
             public static GeometrySnapshot FromPolyline(Polyline pl)
             {
-                var snap = new GeometrySnapshot();
-                snap.VertexCount = pl.NumberOfVertices;
+                var snap = new GeometrySnapshot
+                {
+                    VertexCount = pl.NumberOfVertices
+                };
+
                 // centroid & area via shoelace (2D)
                 var pts = new List<Point2d>(pl.NumberOfVertices);
                 for (int i = 0; i < pl.NumberOfVertices; i++)
@@ -1260,7 +1262,6 @@ namespace FoundationDetailer.Managers
             if (context == null) throw new ArgumentNullException(nameof(context));
 
             var doc = context.Document;
-            var model = context.Model;
 
             if (doc == null || tr == null) return ObjectId.Null;
 
@@ -1372,8 +1373,7 @@ namespace FoundationDetailer.Managers
                 try { Application.Idle -= existing; } catch { }
             }
 
-            EventHandler handler = null;
-            handler = (s, e) =>
+            void handler(object s, EventArgs e)
             {
                 try
                 {
@@ -1388,7 +1388,7 @@ namespace FoundationDetailer.Managers
                 {
                     // swallow exceptions from deferred actions
                 }
-            };
+            }
 
             // Track and subscribe
             _deferredIdleHandlers.TryAdd(doc, handler);
@@ -1463,7 +1463,6 @@ namespace FoundationDetailer.Managers
             if (context == null) throw new ArgumentNullException(nameof(context));
 
             var doc = context.Document;
-            var model = context.Model;
             var db = doc.Database;
 
             using (doc.LockDocument())
@@ -1491,7 +1490,6 @@ namespace FoundationDetailer.Managers
             if (context == null) throw new ArgumentNullException(nameof(context));
 
             var doc = context.Document;
-            var model = context.Model;
 
             error = null;
 
