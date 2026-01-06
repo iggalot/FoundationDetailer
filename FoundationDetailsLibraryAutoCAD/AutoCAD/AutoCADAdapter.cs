@@ -1,5 +1,11 @@
 ﻿using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
+using FoundationDetailsLibraryAutoCAD.AutoCAD;
+using FoundationDetailsLibraryAutoCAD.Data;
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Windows.Threading;
 
 namespace FoundationDetailer.AutoCAD
 {
@@ -27,6 +33,28 @@ namespace FoundationDetailer.AutoCAD
                 new Point3d(center.X - hx, center.Y + hy, center.Z)
             };
             return CreatePolyline(pts, center.Z);
+        }
+    }
+
+    /// <summary>
+    /// Helper function to make the drawing area active immediately.  Useful for immediate response during button clicks in the Palette.
+    /// </summary>
+    public static class AcadFocusHelper
+    {
+        [DllImport("user32.dll")]
+        private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
+
+        /// <summary>
+        /// Brings AutoCAD main window to the foreground.
+        /// </summary>
+        public static void FocusAutoCADWindow()
+        {
+            IntPtr hwnd = FindWindow("AcCtrlFrame", null);
+            if (hwnd != IntPtr.Zero)
+                SetForegroundWindow(hwnd);
         }
     }
 }

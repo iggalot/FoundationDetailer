@@ -2,6 +2,7 @@
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
+using FoundationDetailer.AutoCAD;
 using FoundationDetailer.Model;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using FoundationDetailsLibraryAutoCAD.Data;
@@ -9,6 +10,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Windows.Threading;
 
 namespace FoundationDetailer.Managers
 {
@@ -279,6 +281,24 @@ namespace FoundationDetailer.Managers
             }
         }
 
+
+        /// <summary>
+        /// Highlight all grade beams in the current document.
+        /// </summary>
+        public void HighlightBoundary(FoundationContext context)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            if (doc == null) return;
+
+            if (!TryGetBoundary(context, out Polyline pl))
+                return;
+
+            // Bring AutoCAD to front and highlight selected objects
+            SelectionService.FocusAndHighlight(context, new[] { pl.ObjectId }, "HighlightGradeBeam");
+        }
+
         public bool TryGetBoundary(FoundationContext context, out Polyline pl)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
@@ -315,14 +335,8 @@ namespace FoundationDetailer.Managers
         }
 
 
-        public void HighlightBoundary(FoundationContext context)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
 
-            if (!TryGetBoundary(context, out Polyline pl)) return;
-            var doc = Application.DocumentManager.MdiActiveDocument;
-            doc.Editor.SetImpliedSelection(new ObjectId[] { pl.ObjectId });
-        }
+
 
         public void ZoomToBoundary(FoundationContext context)
         {
@@ -1383,30 +1397,36 @@ namespace FoundationDetailer.Managers
 
         #endregion
 
-        public static bool TryGetBoundaryHandle(Transaction tr, out string handleString)
+        public static bool TryGetBoundaryHandle(
+            FoundationContext context,
+            Transaction tr,
+            out string handleString)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+
             handleString = null;
 
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            Database db = doc.Database;
+            var doc = context.Document;
+            var db = doc.Database;
 
             // Open NOD
-            DBDictionary nod =
-                (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+            var nod = (DBDictionary)
+                tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
 
             if (!nod.Contains(NODManager.ROOT))
                 return false;
 
-            DBDictionary root =
-                (DBDictionary)tr.GetObject(nod.GetAt(NODManager.ROOT), OpenMode.ForRead);
+            var root = (DBDictionary)
+                tr.GetObject(nod.GetAt(NODManager.ROOT), OpenMode.ForRead);
 
             if (!root.Contains(NODManager.KEY_BOUNDARY))
                 return false;
 
-            DBDictionary boundaryDict =
-                (DBDictionary)tr.GetObject(root.GetAt(NODManager.KEY_BOUNDARY), OpenMode.ForRead);
+            var boundaryDict = (DBDictionary)
+                tr.GetObject(root.GetAt(NODManager.KEY_BOUNDARY), OpenMode.ForRead);
 
-            // Boundary should contain exactly one handle
+            // Boundary dictionary should contain exactly one entry
             foreach (DBDictionaryEntry entry in boundaryDict)
             {
                 handleString = entry.Key;
@@ -1416,12 +1436,13 @@ namespace FoundationDetailer.Managers
             return false;
         }
 
+
         public bool TryRestoreBoundaryFromNOD(FoundationContext context, Database db, Transaction tr, out ObjectId boundaryId)
         {
             boundaryId = ObjectId.Null;
 
             // Get boundary handle from NOD
-            if (!TryGetBoundaryHandle(tr, out string handleString))
+            if (!TryGetBoundaryHandle(context, tr, out string handleString))
                 return false;
 
             if (!NODManager.TryParseHandle(context, handleString, out Handle handle))

@@ -105,6 +105,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         private void PrelimGBControl_AddPreliminaryClicked(object sender, PrelimGBEventArgs e)
         {
             var context = CurrentContext;
+            var doc = context.Document;
 
             if (!_boundaryService.TryGetBoundary(context, out Polyline boundary))
             {
@@ -131,6 +132,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         private void GradeBeam_ClearAllClicked(object sender, EventArgs e)
         {
             var context = CurrentContext;
+            var doc = context.Document;
             _gradeBeamService.ClearAll(context);
             PrelimGBControl.ViewModel.IsPreliminaryGenerated = false;  // reset the the preliminary input control
 
@@ -140,6 +142,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         private void GradeBeam_HighlightGradeBeamsClicked(object sender, EventArgs e)
         {
             var context = CurrentContext;
+            var doc = context.Document;
             _gradeBeamService.HighlightGradeBeams(context);
         }
 
@@ -152,6 +155,9 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 TxtStatus.Text = "No active document.";
                 return;
             }
+
+            var doc = context.Document;
+            if(doc == null) return;
 
             try
             {

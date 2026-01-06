@@ -1541,6 +1541,129 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             }
         }
 
+        public static void SafeSetImpliedSelection(
+            Document doc,
+            IEnumerable<ObjectId> ids)
+        {
+            if (doc == null) return;
+
+            var ed = doc.Editor;
+
+            var valid = ids
+                .Where(id =>
+                    !id.IsNull &&
+                    id.IsValid &&
+                    !id.IsErased &&
+                    id.Database == doc.Database)
+                .ToArray();
+
+            if (valid.Length == 0)
+                return;
+
+            ed.SetImpliedSelection(valid);
+        }
+
+        private static void BinaryTestSelection(
+            Document doc,
+            ObjectId[] ids)
+        {
+            if (ids.Length <= 1)
+            {
+                DebugSetImpliedSelection(doc, ids, "Binary Isolate");
+                return;
+            }
+
+            int mid = ids.Length / 2;
+
+            try
+            {
+                doc.Editor.SetImpliedSelection(ids.Take(mid).ToArray());
+            }
+            catch
+            {
+                BinaryTestSelection(doc, ids.Take(mid).ToArray());
+                return;
+            }
+
+            try
+            {
+                doc.Editor.SetImpliedSelection(ids.Skip(mid).ToArray());
+            }
+            catch
+            {
+                BinaryTestSelection(doc, ids.Skip(mid).ToArray());
+            }
+        }
+
+        public static void DebugSetImpliedSelection(
+    Document doc,
+    IEnumerable<ObjectId> ids,
+    string tag = null)
+        {
+            if (doc == null || ids == null)
+                return;
+
+            var ed = doc.Editor;
+
+            ed.WriteMessage($"\n[Selection Debug] {tag ?? ""}");
+
+            int index = 0;
+
+            foreach (var id in ids)
+            {
+                index++;
+
+                try
+                {
+                    // Basic validity checks
+                    if (id.IsNull)
+                    {
+                        ed.WriteMessage($"\n  #{index}: NULL ObjectId");
+                        continue;
+                    }
+
+                    if (!id.IsValid)
+                    {
+                        ed.WriteMessage($"\n  #{index}: INVALID ObjectId ({id})");
+                        continue;
+                    }
+
+                    if (id.IsErased)
+                    {
+                        ed.WriteMessage($"\n  #{index}: ERASED ObjectId ({id})");
+                        continue;
+                    }
+
+                    if (id.Database != doc.Database)
+                    {
+                        ed.WriteMessage($"\n  #{index}: WRONG DATABASE ({id})");
+                        continue;
+                    }
+
+                    // Try selecting JUST this ID
+                    ed.SetImpliedSelection(new[] { id });
+
+                    ed.WriteMessage(
+                        $"\n  #{index}: OK ({id.Handle})");
+                }
+                catch (Autodesk.AutoCAD.Runtime.Exception ex)
+                {
+                    ed.WriteMessage(
+                        $"\n  #{index}: FAILED ({id.Handle}) → {ex.ErrorStatus}");
+                }
+                catch (System.Exception ex)
+                {
+                    ed.WriteMessage(
+                        $"\n  #{index}: FAILED ({id.Handle}) → {ex.Message}");
+                }
+            }
+
+            // Clear selection at the end (optional)
+            try { ed.SetImpliedSelection(Array.Empty<ObjectId>()); } catch { }
+        }
+
+
+
         [CommandMethod("DeleteFoundationEntities")]
         public void DeleteFoundationEntitiesCommand(FoundationContext context)
         {

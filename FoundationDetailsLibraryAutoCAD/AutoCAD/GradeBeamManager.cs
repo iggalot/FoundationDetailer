@@ -7,6 +7,8 @@ using FoundationDetailsLibraryAutoCAD.Data;
 using FoundationDetailsLibraryAutoCAD.Managers;
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Windows.Threading;
 
 namespace FoundationDetailer.AutoCAD
 {
@@ -121,46 +123,6 @@ namespace FoundationDetailer.AutoCAD
                 doc.Editor.WriteMessage($"\nError creating grade beams: {ex.Message}");
             }
         }
-
-
-        /// <summary>
-        /// Highlight all grade beams in the current document.
-        /// </summary>
-        public void HighlightGradeBeams(FoundationContext context)
-        {
-            if (context == null) return;
-
-            var doc = context.Document;
-            var db = doc.Database;
-            var ed = doc.Editor;
-
-            using (doc.LockDocument())
-            using (var tr = db.TransactionManager.StartTransaction())
-            {
-                // Get the GRADEBEAM sub-dictionary
-                var subDict = NODManager.GetSubDictionary(
-                    tr,
-                    db,
-                    NODManager.KEY_GRADEBEAM);
-
-                if (subDict == null || subDict.Count == 0)
-                    return;
-
-                var ids = NODManager.GetAllValidObjectIdsFromSubDictionary(
-                    context,
-                    tr,
-                    db,
-                    subDict);
-
-                if (ids.Count == 0)
-                    return;
-
-                ed.SetImpliedSelection(ids.ToArray());
-
-                tr.Commit();
-            }
-        }
-
 
         // -------------------------
         // Internal Helpers
@@ -403,6 +365,117 @@ namespace FoundationDetailer.AutoCAD
 
             return null;
         }
+
+        public static bool TryGetGradeBeamHandles(
+            FoundationContext context,
+            Transaction tr,
+            out List<string> handleStrings)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+
+            handleStrings = new List<string>();
+
+            var doc = context.Document;
+            var db = doc.Database;
+
+            var nod = (DBDictionary)
+                tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+
+            if (!nod.Contains(NODManager.ROOT))
+                return false;
+
+            var root = (DBDictionary)
+                tr.GetObject(nod.GetAt(NODManager.ROOT), OpenMode.ForRead);
+
+            if (!root.Contains(NODManager.KEY_GRADEBEAM))
+                return false;
+
+            var gradeBeamDict = (DBDictionary)
+                tr.GetObject(root.GetAt(NODManager.KEY_GRADEBEAM), OpenMode.ForRead);
+
+            foreach (DBDictionaryEntry entry in gradeBeamDict)
+                handleStrings.Add(entry.Key);
+
+            return handleStrings.Count > 0;
+        }
+
+        public static bool TryGetGradeBeams(
+            FoundationContext context,
+            out List<Polyline> gradeBeams)
+        {
+            gradeBeams = new List<Polyline>();
+
+            if (context == null)
+                return false;
+
+            var doc = context.Document;
+            var db = doc.Database;
+
+            using (doc.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                if (!TryGetGradeBeamHandles(context, tr, out var handles))
+                    return false;
+
+                foreach (string handleStr in handles)
+                {
+                    if (!NODManager.TryGetObjectIdFromHandleString(
+                            context, db, handleStr, out ObjectId oid))
+                        continue;
+
+                    if (oid.IsNull || oid.IsErased || !oid.IsValid)
+                        continue;
+
+                    var pl = tr.GetObject(oid, OpenMode.ForRead, false) as Polyline;
+                    if (pl != null)
+                        gradeBeams.Add(pl);
+                }
+
+                return gradeBeams.Count > 0;
+            }
+        }
+
+        public void HighlightGradeBeams(FoundationContext context)
+        {
+            if (context == null)
+                throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var ed = doc.Editor;
+
+            // STEP 1 — Collect grade beams
+            if (!GradeBeamManager.TryGetGradeBeams(context, out List<Polyline> beams) ||
+                beams == null || beams.Count == 0)
+            {
+                ed.WriteMessage("\n[GradeBeam] No grade beams found.");
+                return;
+            }
+
+            // STEP 2 — Extract ObjectIds
+            var ids = beams
+                .Where(b => b != null)
+                .Select(b => b.ObjectId);
+
+            // STEP 3 — Use SelectionService to filter valid IDs and get invalid ones for logging
+            var validIds = SelectionService.FilterValidIds(context, ids, out List<ObjectId> invalidIds);
+
+            // STEP 4 — Log diagnostics
+            ed.WriteMessage($"\n[GradeBeam] Found={beams.Count}, Valid={validIds.Count}, Invalid={invalidIds.Count}");
+            foreach (var id in invalidIds)
+            {
+                string handle = id.IsNull ? "<null>" : id.Handle.ToString();
+                ed.WriteMessage($"\n  {handle} (invalid/erased)");
+            }
+
+            // Bring AutoCAD to front and highlight selected objects
+            SelectionService.FocusAndHighlight(context, ids, "HighlightGradeBeam");
+
+        }
+
+
+
+
     }
 
 }
