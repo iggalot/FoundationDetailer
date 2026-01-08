@@ -81,10 +81,10 @@ namespace FoundationDetailer.Managers
 
             var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
             var root = (DBDictionary)tr.GetObject(nod.GetAt(NODManager.ROOT), OpenMode.ForWrite);
-            var boundaryDict = (DBDictionary)tr.GetObject(root.GetAt(NODManager.KEY_BOUNDARY), OpenMode.ForWrite);
+            var boundaryDict = (DBDictionary)tr.GetObject(root.GetAt(NODManager.KEY_BOUNDARY_SUBDICT), OpenMode.ForWrite);
 
             string handleStr = id.Handle.ToString().ToUpperInvariant();
-            NODManager.AddHandleToDictionary(tr, boundaryDict, handleStr);
+            NODManager.AddHandleToMetadataDictionary(tr, boundaryDict, handleStr);
 
         }
 
@@ -259,7 +259,7 @@ namespace FoundationDetailer.Managers
                         ent.DowngradeOpen();
 
                         // Persist handle via NODManager
-                        FoundationEntityData.Write(tr, ent, NODManager.KEY_BOUNDARY);
+                        FoundationEntityData.Write(tr, ent, NODManager.KEY_BOUNDARY_SUBDICT);
                         AddBoundaryHandleToNOD(context, tr, candidateId);
 
                         // Update in-memory map
@@ -320,7 +320,7 @@ namespace FoundationDetailer.Managers
                 using (var tr = db.TransactionManager.StartTransaction())
                 {
                     // Delegate the dictionary and handle lookup to NODManager
-                    if (!NODManager.TryGetFirstEntity(context, tr, db, NODManager.KEY_BOUNDARY, out ObjectId oid))
+                    if (!NODManager.TryGetFirstEntity(context, tr, db, NODManager.KEY_BOUNDARY_SUBDICT, out ObjectId oid))
                         return false;
 
                     if (oid.IsNull || oid.IsErased || !oid.IsValid)
@@ -485,14 +485,14 @@ namespace FoundationDetailer.Managers
                     DBDictionary root =
                         (DBDictionary)tr.GetObject(nod.GetAt(NODManager.ROOT), OpenMode.ForRead);
 
-                    if (!root.Contains(NODManager.KEY_BOUNDARY))
+                    if (!root.Contains(NODManager.KEY_BOUNDARY_SUBDICT))
                     {
                         tr.Commit();
                         return;
                     }
 
                     DBDictionary boundaryDict =
-                        (DBDictionary)tr.GetObject(root.GetAt(NODManager.KEY_BOUNDARY), OpenMode.ForRead);
+                        (DBDictionary)tr.GetObject(root.GetAt(NODManager.KEY_BOUNDARY_SUBDICT), OpenMode.ForRead);
 
                     // ------------------------------
                     // 2. Expect exactly ONE boundary entry
@@ -1420,11 +1420,11 @@ namespace FoundationDetailer.Managers
             var root = (DBDictionary)
                 tr.GetObject(nod.GetAt(NODManager.ROOT), OpenMode.ForRead);
 
-            if (!root.Contains(NODManager.KEY_BOUNDARY))
+            if (!root.Contains(NODManager.KEY_BOUNDARY_SUBDICT))
                 return false;
 
             var boundaryDict = (DBDictionary)
-                tr.GetObject(root.GetAt(NODManager.KEY_BOUNDARY), OpenMode.ForRead);
+                tr.GetObject(root.GetAt(NODManager.KEY_BOUNDARY_SUBDICT), OpenMode.ForRead);
 
             // Boundary dictionary should contain exactly one entry
             foreach (DBDictionaryEntry entry in boundaryDict)
@@ -1531,7 +1531,7 @@ namespace FoundationDetailer.Managers
                     }
 
                     // Attach entity-side metadata
-                    FoundationEntityData.Write(tr, boundary, NODManager.KEY_BOUNDARY);
+                    FoundationEntityData.Write(tr, boundary, NODManager.KEY_BOUNDARY_SUBDICT);
 
                     // Register handle in the NOD
                     PolylineBoundaryManager.AddBoundaryHandleToNOD(context, tr, boundary.ObjectId);

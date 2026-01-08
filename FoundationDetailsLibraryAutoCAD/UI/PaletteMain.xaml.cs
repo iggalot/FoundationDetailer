@@ -13,6 +13,7 @@ using FoundationDetailsLibraryAutoCAD.UI.Controls.GradeBeamSummaryControl;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
@@ -459,8 +460,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
             using (var tr = doc.Database.TransactionManager.StartTransaction())
             {
-                var _tree_view_mgr = new TreeViewManager();
-
+                var treeMgr = new TreeViewManager();
                 var root = NODManager.GetFoundationRoot(context, tr);
                 if (root == null) return;
 
@@ -471,97 +471,99 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 {
                     Header = NODManager.ROOT,
                     IsExpanded = true,
-                    Tag = new TreeNodeInfo(NODManager.ROOT, isDictionary: true)
+                    Tag = new TreeViewManager.TreeNodeInfo(NODManager.ROOT, true)
                 };
 
                 TreeViewExtensionData.Items.Add(rootNode);
 
-                // PASS 1: Build the tree
-                _tree_view_mgr.BuildTree(root, rootNode, tr, nodeMap);
+                // Recursive build for all subdictionaries & entities
+                BuildTreeRecursiveWithEntities(root, rootNode, tr, nodeMap, treeMgr, "");
 
-                // PASS 2: Attach entities + branch counts
-                var branchCounts = new Dictionary<string, int>();
-
-                NODManager.TraverseDictionary(context, tr, root, doc.Database, result =>
+                // Count immediate children for each dictionary node
+                var branchCounts = new Dictionary<TreeViewItem, int>();
+                foreach (var kvp in nodeMap)
                 {
-                    if (result.Status != TraversalStatus.Success)
-                        return;
-
-                    if (!nodeMap.TryGetValue(result.Key, out var leafNode))
-                        return;
-
-                    if (!(leafNode.Tag is TreeNodeInfo leafInfo))
-                        return;
-
-                    // Attach entity
-                    leafInfo.Entity = result.Entity;
-                    FoundationEntityData.DisplayExtensionData(context, result.Entity);
-
-                    // Determine parent branch key
-                    string branchKey = (leafNode.Parent as TreeViewItem)?.Tag is TreeNodeInfo parentInfo
-                        ? parentInfo.Key
-                        : null;
-                    Debug.WriteLine($"Leaf: {leafInfo.Key}, Parent Key: {branchKey}");
-
-                    // --------------------------
-                    // Use the _controlMap field to create custom header if available
-                    // --------------------------
-                    if (branchKey != null && _tree_view_mgr._controlMap.TryGetValue(branchKey, out var factory))
+                    var node = kvp.Value;
+                    if (node.Tag is TreeViewManager.TreeNodeInfo info && info.IsDictionary)
                     {
-                        // Call the factory to create a new TreeViewItem
-                        var newLeafNode = factory(leafInfo);
-
-                        // Assign a NEW instance of the control, not the old one
-                        if (newLeafNode.Header is PolylineTreeItemControl control)
+                        int count = 0;
+                        foreach (TreeViewItem child in node.Items)
                         {
-                            leafNode.Header = new PolylineTreeItemControl
-                            {
-                                DataContext = control.DataContext
-                            };
+                            if (child.Tag is TreeViewManager.TreeNodeInfo) count++;
                         }
-                        else
-                        {
-                            // Fallback: assign whatever the factory returned
-                            leafNode.Header = newLeafNode.Header;
-                        }
+                        branchCounts[node] = count;
                     }
-                    else
-                    {
-                        // Fallback: just show key text
-                        leafNode.Header = leafInfo.Key;
-                    }
+                }
 
-                    // Count leaf under immediate dictionary parent
-                    if (leafNode.Parent is TreeViewItem parentNode &&
-                        parentNode.Tag is TreeNodeInfo parentInfo2 &&
-                        parentInfo2.IsDictionary)
-                    {
-                        branchCounts[parentInfo2.Key] =
-                            branchCounts.TryGetValue(parentInfo2.Key, out int count)
-                                ? count + 1
-                                : 1;
-                    }
-                });
-
-                // PASS 3: Update branch headers with counts
+                // Update headers with counts
                 foreach (var kvp in branchCounts)
                 {
-                    if (!nodeMap.TryGetValue(kvp.Key, out var branchNode))
-                        continue;
+                    var node = kvp.Key;
+                    int count = kvp.Value;
 
                     var tb = new TextBlock();
-                    tb.Inlines.Add(new Run($" ({kvp.Value}) ")
-                    {
-                        FontWeight = FontWeights.Bold
-                    });
-                    tb.Inlines.Add(new Run(kvp.Key));
-
-                    branchNode.Header = tb;
+                    tb.Inlines.Add(new Run($" ({count}) ") { FontWeight = FontWeights.Bold });
+                    tb.Inlines.Add(new Run(node.Header.ToString()));
+                    node.Header = tb;
                 }
 
                 tr.Commit();
             }
         }
+
+        /// <summary>
+        /// Recursively builds the TreeView for a dictionary and its subdictionaries/entities.
+        /// </summary>
+        private static void BuildTreeRecursiveWithEntities(
+            DBDictionary dict,
+            TreeViewItem parentNode,
+            Transaction tr,
+            Dictionary<string, TreeViewItem> nodeMap,
+            TreeViewManager treeMgr,
+            string pathSoFar)
+        {
+            foreach (DBDictionaryEntry entry in dict)
+            {
+                string entryKey = entry.Key;
+                string fullPath = string.IsNullOrEmpty(pathSoFar) ? entryKey : $"{pathSoFar}/{entryKey}";
+
+                DBObject obj = tr.GetObject(entry.Value, OpenMode.ForRead);
+
+                var node = new TreeViewItem
+                {
+                    Header = entryKey,
+                    Tag = new TreeViewManager.TreeNodeInfo(entryKey, obj is DBDictionary)
+                };
+
+                parentNode.Items.Add(node);
+                nodeMap[fullPath] = node;
+
+                if (obj is DBDictionary subDict)
+                {
+                    // Recurse into subdictionary
+                    BuildTreeRecursiveWithEntities(subDict, node, tr, nodeMap, treeMgr, fullPath);
+                }
+                else
+                {
+                    // Leaf entity (Entity or Xrecord)
+                    if (obj is Entity ent)
+                    {
+                        node.Tag = new TreeViewManager.TreeNodeInfo(entryKey, false) { Entity = ent };
+                        node.Header = $"{entryKey} ({ent.Handle})";
+                    }
+                    else if (obj is Xrecord xr)
+                    {
+                        node.Tag = new TreeViewManager.TreeNodeInfo(entryKey, false);
+                        node.Header = $"{entryKey} (Xrecord)";
+                    }
+                }
+            }
+        }
+
+
+
+
+
 
         #endregion
 
@@ -584,6 +586,19 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             var context = CurrentContext;
             NODManager.CleanFoundationNOD(context);
             NODManager.ViewFoundationNOD(context); // optional debug
+
+            var doc = context?.Document;
+            if(doc == null) return;
+
+            var db = doc?.Database;
+            if(db == null) return;
+
+            using (Transaction tr = db.TransactionManager.StartTransaction())
+            {
+                DBDictionary root = NODManager.GetFoundationRoot(context, tr);
+                string tree = NODDebugger.DumpDictionaryTree(root, tr, "EE_Foundation");
+                Console.WriteLine(tree);
+            }
 
             // Updates the TreeView for the handles.
             UpdateTreeViewUI();

@@ -139,9 +139,9 @@ namespace FoundationDetailer.AutoCAD
 
             var db = doc.Database;
             var rat = (RegAppTable)tr.GetObject(db.RegAppTableId, OpenMode.ForWrite);
-            if (!rat.Has(NODManager.KEY_GRADEBEAM))
+            if (!rat.Has(NODManager.KEY_GRADEBEAM_SUBDICT))
             {
-                var ratr = new RegAppTableRecord { Name = NODManager.KEY_GRADEBEAM };
+                var ratr = new RegAppTableRecord { Name = NODManager.KEY_GRADEBEAM_SUBDICT };
                 rat.Add(ratr);
                 tr.AddNewlyCreatedDBObject(ratr, true);
             }
@@ -179,8 +179,8 @@ namespace FoundationDetailer.AutoCAD
             _gradeBeams[doc].Add(pl.ObjectId);
 
             // Store the grade beams in its NOD
-            FoundationEntityData.Write(tr, pl, NODManager.KEY_GRADEBEAM);
-            AddGradeBeamHandleToNOD(context, pl.ObjectId, tr);
+            FoundationEntityData.Write(tr, pl, NODManager.KEY_GRADEBEAM_SUBDICT);
+            AddGradeBeamCenterlineHandleToNOD(context, pl.ObjectId, tr);
         }
 
         private void SetGradeBeamXData(ObjectId id, Transaction tr)
@@ -188,14 +188,17 @@ namespace FoundationDetailer.AutoCAD
             if (id.IsNull) return;
 
             var ent = (Entity)tr.GetObject(id, OpenMode.ForWrite);
-            ent.XData = new ResultBuffer(new TypedValue((int)DxfCode.ExtendedDataRegAppName, NODManager.KEY_GRADEBEAM));
+            ent.XData = new ResultBuffer(new TypedValue((int)DxfCode.ExtendedDataRegAppName, NODManager.KEY_GRADEBEAM_SUBDICT));
         }
 
         /// <summary>
         /// Adds a grade beam polyline handle to the EE_Foundation NOD under FD_GRADEBEAM.
         /// </summary>
         /// <param name="id">The ObjectId of the grade beam polyline.</param>
-        private void AddGradeBeamHandleToNOD(FoundationContext context, ObjectId id, Transaction tr)
+        private void AddGradeBeamCenterlineHandleToNOD(
+            FoundationContext context,
+            ObjectId id,
+            Transaction tr)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
             if (id.IsNull || !id.IsValid) return;
@@ -203,19 +206,59 @@ namespace FoundationDetailer.AutoCAD
             var doc = context.Document;
             var db = doc.Database;
 
-            // Ensure EE_Foundation NOD and subdictionaries exist
+            // Ensure EE_Foundation NOD exists
             NODManager.InitFoundationNOD(context, tr);
 
-            DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-            DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(NODManager.ROOT), OpenMode.ForWrite);
-            DBDictionary gradebeamDict = (DBDictionary)tr.GetObject(root.GetAt(NODManager.KEY_GRADEBEAM), OpenMode.ForWrite);
+            DBDictionary nod =
+                (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
 
-            // Convert ObjectId handle to uppercase string
+            DBDictionary root =
+                (DBDictionary)tr.GetObject(nod.GetAt(NODManager.ROOT), OpenMode.ForWrite);
+
+            DBDictionary gradebeamDict =
+                (DBDictionary)tr.GetObject(root.GetAt(NODManager.KEY_GRADEBEAM_SUBDICT), OpenMode.ForWrite);
+
+            // Handle string
             string handleStr = id.Handle.ToString().ToUpperInvariant();
 
-            // Add to NOD using existing helper
-            NODManager.AddHandleToDictionary(tr, gradebeamDict, handleStr);
+            // Create full grade beam structure (safe if already exists)
+            CreateGradeBeamNODStructure(context, tr, db, handleStr, id);
         }
+
+        public static void CreateGradeBeamNODStructure(
+            FoundationContext context,
+            Transaction tr,
+            Database db,
+            string gradeBeamHandle,
+            ObjectId centerlineId)
+        {
+            if (tr == null || db == null || string.IsNullOrEmpty(gradeBeamHandle))
+                throw new ArgumentNullException();
+
+            DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+            DBDictionary root = NODManager.GetOrCreateSubDictionary(tr, nod, NODManager.ROOT);
+            DBDictionary gradebeamDict = NODManager.GetOrCreateSubDictionary(tr, root, NODManager.KEY_GRADEBEAM_SUBDICT);
+            DBDictionary handleDict = NODManager.GetOrCreateSubDictionary(tr, gradebeamDict, gradeBeamHandle);
+
+            // Attach the existing centerline entity to the handle directory
+            if (!handleDict.Contains(NODManager.KEY_CENTERLINE))
+            {
+                Entity centerlineEnt = (Entity)tr.GetObject(centerlineId, OpenMode.ForWrite);
+                handleDict.SetAt(NODManager.KEY_CENTERLINE, centerlineEnt);
+                // DO NOT call AddNewlyCreatedDBObject here
+            }
+
+            // Ensure FD_EDGES sub dictionar exists
+            NODManager.GetOrCreateSubDictionary(tr, handleDict, NODManager.KEY_EDGES_SUBDICT);
+
+            // Add metadata Xrecord for future use -- this is a single xrecord and not a subdictionary at this time
+            NODManager.GetOrCreateMetadataXrecord(tr, handleDict, NODManager.KEY_METADATA_SUBDICT);
+
+        }
+
+
+
+
 
         public void CreatePreliminary(FoundationContext context, Polyline boundary, double hMin, double hMax, double vMin, double vMax, int vertexCount = 5)
         {
@@ -245,8 +288,8 @@ namespace FoundationDetailer.AutoCAD
             {
                 using (Transaction tr = db.TransactionManager.StartTransaction())
                 {
-                    NODManager.DeleteEntitiesFromFoundationSubDictionary(context, tr, db, NODManager.KEY_GRADEBEAM);
-                    NODManager.ClearFoundationSubDictionary(context, db, NODManager.KEY_GRADEBEAM);
+                    NODManager.DeleteEntitiesFromFoundationSubDictionary(context, tr, db, NODManager.KEY_GRADEBEAM_SUBDICT);
+                    NODManager.ClearFoundationSubDictionary(context, db, NODManager.KEY_GRADEBEAM_SUBDICT);
                     tr.Commit();
                 }
             }
@@ -268,7 +311,7 @@ namespace FoundationDetailer.AutoCAD
                     context,
                     tr,
                     db,
-                    NODManager.KEY_GRADEBEAM,  // The sub-dictionary key for grade beams
+                    NODManager.KEY_GRADEBEAM_SUBDICT,  // The sub-dictionary key for grade beams
                     out ObjectId oid
                 );
 
@@ -288,8 +331,8 @@ namespace FoundationDetailer.AutoCAD
             using (context.Document.LockDocument())
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                // Get the KEY_GRADEBEAM sub-dictionary
-                var subDict = NODManager.GetSubDictionary(tr, db, NODManager.KEY_GRADEBEAM);
+                // Get the KEY_GRADEBEAM_SUBDICT sub-dictionary
+                var subDict = NODManager.GetSubDictionary(tr, db, NODManager.KEY_GRADEBEAM_SUBDICT);
                 if (subDict == null)
                     return (0, 0);
 
@@ -356,8 +399,8 @@ namespace FoundationDetailer.AutoCAD
                 btr.AppendEntity(pl);
                 tr.AddNewlyCreatedDBObject(pl, true);
 
-                FoundationEntityData.Write(tr, pl, NODManager.KEY_GRADEBEAM);
-                AddGradeBeamHandleToNOD(context, pl.Id, tr);  // add the grade beam to the NOD.
+                FoundationEntityData.Write(tr, pl, NODManager.KEY_GRADEBEAM_SUBDICT);
+                AddGradeBeamCenterlineHandleToNOD(context, pl.Id, tr);  // add the grade beam to the NOD.
 
                 tr.Commit();
 
@@ -389,11 +432,11 @@ namespace FoundationDetailer.AutoCAD
             var root = (DBDictionary)
                 tr.GetObject(nod.GetAt(NODManager.ROOT), OpenMode.ForRead);
 
-            if (!root.Contains(NODManager.KEY_GRADEBEAM))
+            if (!root.Contains(NODManager.KEY_GRADEBEAM_SUBDICT))
                 return false;
 
             var gradeBeamDict = (DBDictionary)
-                tr.GetObject(root.GetAt(NODManager.KEY_GRADEBEAM), OpenMode.ForRead);
+                tr.GetObject(root.GetAt(NODManager.KEY_GRADEBEAM_SUBDICT), OpenMode.ForRead);
 
             foreach (DBDictionaryEntry entry in gradeBeamDict)
                 handleStrings.Add(entry.Key);

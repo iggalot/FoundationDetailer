@@ -23,13 +23,18 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         //  CONSTANTS
         // ==========================================================
         public const string ROOT = "EE_Foundation";
-        public const string KEY_BOUNDARY = "FD_BOUNDARY";
-        public const string KEY_GRADEBEAM = "FD_GRADEBEAM";
-        public const string KEY_BEAMSTRAND = "FD_BEAMSTRAND";
-        public const string KEY_SLABSTRAND = "FD_SLABSTRAND";
+        public const string KEY_BOUNDARY_SUBDICT = "FD_BOUNDARY";
+        public const string KEY_GRADEBEAM_SUBDICT = "FD_GRADEBEAM";
+        public const string KEY_BEAMSTRAND_SUBDICT = "FD_BEAMSTRAND";
+        public const string KEY_SLABSTRAND_SUBDICT = "FD_SLABSTRAND";
         public const string KEY_REBAR = "FD_REBAR";
 
-        private static readonly string[] KNOWN_SUBDIRS = { KEY_BOUNDARY,  KEY_GRADEBEAM, KEY_BEAMSTRAND, KEY_SLABSTRAND, KEY_REBAR };
+        public const string KEY_CENTERLINE = "FD_CENTERLINE";
+        public const string KEY_EDGES_SUBDICT = "FD_EDGES";
+        public const string KEY_METADATA_SUBDICT = "FD_METADATA"; // for storing future data in the NOD
+
+        private static readonly string[] KNOWN_SUBDIRS = { KEY_BOUNDARY_SUBDICT, KEY_GRADEBEAM_SUBDICT, KEY_BEAMSTRAND_SUBDICT, KEY_SLABSTRAND_SUBDICT, KEY_REBAR };
+
 
 
         // ==========================================================
@@ -53,13 +58,15 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             try
             {
                 // create the root dictionary
-                GetOrCreateRootDictionary(tr, db);
+                var rootDict = GetOrCreateRootDictionary(tr, db);
 
                 // create the sub dictionaries
-                foreach(var sub_dir in KNOWN_SUBDIRS)
+                foreach (var sub_dir in KNOWN_SUBDIRS)
                 {
-                    GetOrCreateSubDictionary(tr, db, sub_dir);
+                    var gradeBeamsDict = GetOrCreateSubDictionary(tr, rootDict, sub_dir);
                 }
+
+
 
                 ed.WriteMessage("\nEE_Foundation NOD structure initialized successfully.");
             }
@@ -113,18 +120,18 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         private static DBDictionary GetFoundationRootDictionary(
         Transaction tr,
         Database db)
-            {
-                var nod = tr.GetObject(
-                    db.NamedObjectsDictionaryId,
-                    OpenMode.ForRead) as DBDictionary;
+        {
+            var nod = tr.GetObject(
+                db.NamedObjectsDictionaryId,
+                OpenMode.ForRead) as DBDictionary;
 
-                if (nod == null || !nod.Contains(ROOT))
-                    return null;
+            if (nod == null || !nod.Contains(ROOT))
+                return null;
 
-                return tr.GetObject(
-                    nod.GetAt(ROOT),
-                    OpenMode.ForRead) as DBDictionary;
-            }
+            return tr.GetObject(
+                nod.GetAt(ROOT),
+                OpenMode.ForRead) as DBDictionary;
+        }
 
         private static void ScanGroupDictionary(FoundationContext context,
     Transaction tr,
@@ -261,7 +268,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         }
 
         public static void CleanupFoundationNod(
-            FoundationContext context, 
+            FoundationContext context,
             IEnumerable<HandleEntry> scanResults)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
@@ -639,10 +646,10 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 
                             foreach (string handle_string in handle_strings)
                             {
-                                if (!TryParseHandle(context,handle_string, out Handle handle))
+                                if (!TryParseHandle(context, handle_string, out Handle handle))
                                     continue;
 
-                                AddHandleToDictionary(tr, subDict, handle_string);
+                                AddHandleToMetadataDictionary(tr, subDict, handle_string);
 
                                 if (!TryGetObjectIdFromHandle(db, handle, out ObjectId id))
                                     continue;
@@ -701,8 +708,8 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                         DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
                         DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
 
-                        DBDictionary boundaryDict = (DBDictionary)tr.GetObject(root.GetAt(KEY_BOUNDARY), OpenMode.ForWrite);
-                        DBDictionary gradebeamDict = (DBDictionary)tr.GetObject(root.GetAt(KEY_GRADEBEAM), OpenMode.ForWrite);
+                        DBDictionary boundaryDict = (DBDictionary)tr.GetObject(root.GetAt(KEY_BOUNDARY_SUBDICT), OpenMode.ForWrite);
+                        DBDictionary gradebeamDict = (DBDictionary)tr.GetObject(root.GetAt(KEY_GRADEBEAM_SUBDICT), OpenMode.ForWrite);
 
                         BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
                         BlockTableRecord ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
@@ -718,8 +725,8 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                         ms.AppendEntity(boundary);
                         tr.AddNewlyCreatedDBObject(boundary, true);
 
-                        FoundationEntityData.Write(tr, boundary, KEY_BOUNDARY);
-                        AddHandleToDictionary(tr, boundaryDict, boundary.Handle.ToString().ToUpperInvariant());
+                        FoundationEntityData.Write(tr, boundary, KEY_BOUNDARY_SUBDICT);
+                        AddHandleToMetadataDictionary(tr, boundaryDict, boundary.Handle.ToString().ToUpperInvariant());
 
                         // Create 4 FD_GRADEBEAM polylines
                         for (int i = 0; i < 4; i++)
@@ -731,7 +738,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 
                             ms.AppendEntity(gb);
                             tr.AddNewlyCreatedDBObject(gb, true);
-                            AddHandleToDictionary(tr, gradebeamDict, gb.Handle.ToString().ToUpperInvariant());
+                            AddHandleToMetadataDictionary(tr, gradebeamDict, gb.Handle.ToString().ToUpperInvariant());
                         }
                         tr.Commit();
                         ed.WriteMessage("\nSample polylines created for FD_BOUNDARY and FD_GRADEBEAM.");
@@ -787,36 +794,63 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         }
 
         /// <summary>
-        /// Ensures a subdictionary exists, creates if missing.
+        /// Ensures a subdictionary exists under another subdictionary (nested).
         /// </summary>
-        internal static DBDictionary GetOrCreateSubDictionary(Transaction tr, Database db, string subKey)
+        internal static DBDictionary GetOrCreateSubDictionary(
+            Transaction tr,
+            DBDictionary parentDict,
+            string subKey)
         {
-            if (tr == null || db == null || string.IsNullOrWhiteSpace(subKey))
+            if (tr == null || parentDict == null || string.IsNullOrWhiteSpace(subKey))
                 return null;
 
-            // Get the top-level NOD
-            DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-            if (nod == null || !nod.Contains(ROOT))
-                return null;
-
-            // Open root for write
-            DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
-            if (root == null)
-                return null;
-
-            // Check if subdictionary exists
-            if (!root.Contains(subKey))
+            if (!parentDict.Contains(subKey))
             {
-                // Create subdictionary under EE_Foundation
                 DBDictionary sub = new DBDictionary();
-                root.SetAt(subKey, sub);
+                parentDict.SetAt(subKey, sub);
                 tr.AddNewlyCreatedDBObject(sub, true);
                 return sub;
             }
 
-            // Return existing subdictionary opened for write
-            return (DBDictionary)tr.GetObject(root.GetAt(subKey), OpenMode.ForWrite);
+            return (DBDictionary)tr.GetObject(parentDict.GetAt(subKey), OpenMode.ForWrite);
         }
+
+        internal static Xrecord GetOrCreateMetadataXrecord(
+            Transaction tr,
+            DBDictionary parent,
+            string key)
+        {
+            if (tr == null || parent == null || string.IsNullOrWhiteSpace(key))
+                throw new ArgumentNullException();
+
+            // Create if missing
+            if (!parent.Contains(key))
+            {
+                Xrecord newRecord = new Xrecord();
+                parent.SetAt(key, newRecord);
+                tr.AddNewlyCreatedDBObject(newRecord, true);
+                return newRecord;
+            }
+
+            ObjectId id = parent.GetAt(key);
+            DBObject obj = tr.GetObject(id, OpenMode.ForWrite);
+
+            // Correct type → return
+            Xrecord existingRecord = obj as Xrecord;
+            if (existingRecord != null)
+                return existingRecord;
+
+            // Wrong type → repair
+            obj.Erase();
+
+            Xrecord repairedRecord = new Xrecord();
+            parent.SetAt(key, repairedRecord);
+            tr.AddNewlyCreatedDBObject(repairedRecord, true);
+
+            return repairedRecord;
+        }
+
+
 
         // --------------------------------------------------------
         //  Generic helper to get or create a subdictionary under "EE_Foundation"
@@ -843,7 +877,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         /// <summary>
         /// Adds a handle as an Xrecord to a dictionary if it doesn't exist.
         /// </summary>
-        internal static void AddHandleToDictionary(Transaction tr, DBDictionary dict, string handle)
+        internal static void AddHandleToMetadataDictionary(Transaction tr, DBDictionary dict, string handle)
         {
             if (!dict.Contains(handle))
             {
@@ -913,7 +947,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 
             handleStr = handleStr.Trim();
             Handle handle;
-            if (!TryParseHandle(context,handleStr, out handle))
+            if (!TryParseHandle(context, handleStr, out handle))
                 return false;
 
             foreach (string subDictName in KNOWN_SUBDIRS)
@@ -1381,52 +1415,82 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             Database db,
             Action<TraversalResult> callback)
         {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-            if (tr == null) throw new ArgumentNullException(nameof(tr));
-            if (dict == null) throw new ArgumentNullException(nameof(dict));
-            if (db == null) throw new ArgumentNullException(nameof(db));
-            if (callback == null) throw new ArgumentNullException(nameof(callback));
+            TraverseDictionaryInternal(
+                context,
+                tr,
+                dict,
+                db,
+                callback,
+                path: NODManager.ROOT);
+        }
 
+        private static void TraverseDictionaryInternal(
+    FoundationContext context,
+    Transaction tr,
+    DBDictionary dict,
+    Database db,
+    Action<TraversalResult> callback,
+    string path)
+        {
             foreach (DBDictionaryEntry entry in dict)
             {
                 DBObject obj = tr.GetObject(entry.Value, OpenMode.ForRead);
 
+                string currentPath = path + "/" + entry.Key;
+
+                // -------------------------
+                // SUBDICTIONARY
+                // -------------------------
                 if (obj is DBDictionary subDict)
                 {
-                    TraverseDictionary(context, tr, subDict, db, callback);
+                    TraverseDictionaryInternal(
+                        context,
+                        tr,
+                        subDict,
+                        db,
+                        callback,
+                        currentPath);
                     continue;
                 }
 
-                // ----- LEAF SAFETY BEGINS (unchanged in spirit) -----
-
+                // -------------------------
+                // LEAF HANDLING
+                // -------------------------
                 if (!TryParseHandle(context, entry.Key, out Handle handle))
                 {
-                    callback(TraversalResult.InvalidHandle(entry.Key));
+                    callback(TraversalResult.InvalidHandle(entry.Key, currentPath));
                     continue;
                 }
 
                 if (!db.TryGetObjectId(handle, out ObjectId id))
                 {
-                    callback(TraversalResult.MissingObjectId(entry.Key, handle));
+                    callback(TraversalResult.MissingObjectId(entry.Key, currentPath, handle));
                     continue;
                 }
 
                 if (!id.IsValid || id.IsErased)
                 {
-                    callback(TraversalResult.Erased(entry.Key, handle, id));
+                    callback(TraversalResult.Erased(entry.Key, currentPath, handle, id));
                     continue;
                 }
 
                 DBObject dbObj = tr.GetObject(id, OpenMode.ForRead);
                 if (!(dbObj is Entity ent))
                 {
-                    callback(TraversalResult.NotEntity(entry.Key, handle, id));
+                    callback(TraversalResult.NotEntity(entry.Key, currentPath, handle, id));
                     continue;
                 }
 
-                callback(TraversalResult.Success(entry.Key, handle, id, ent));
+                callback(TraversalResult.Success(
+                    entry.Key,
+                    currentPath,
+                    handle,
+                    id,
+                    ent));
             }
         }
+
+
 
         internal static DBDictionary GetFoundationRoot(FoundationContext context, Transaction tr)
         {
@@ -1707,6 +1771,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         internal sealed class TraversalResult
         {
             public string Key { get; }
+            public string Path { get; }          // FULL dictionary path
             public Handle Handle { get; }
             public ObjectId ObjectId { get; }
             public Entity Entity { get; }
@@ -1714,33 +1779,88 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 
             private TraversalResult(
                 string key,
+                string path,
                 TraversalStatus status,
                 Handle handle = default,
                 ObjectId objectId = default,
                 Entity entity = null)
             {
                 Key = key;
+                Path = path;
                 Status = status;
                 Handle = handle;
                 ObjectId = objectId;
                 Entity = entity;
             }
 
+            // ===============================
+            // FACTORIES
+            // ===============================
+
             public static TraversalResult Success(
-                string key, Handle handle, ObjectId id, Entity ent) =>
-                new TraversalResult(key, TraversalStatus.Success, handle, id, ent);
+                string key,
+                string path,
+                Handle handle,
+                ObjectId id,
+                Entity ent)
+            {
+                return new TraversalResult(
+                    key,
+                    path,
+                    TraversalStatus.Success,
+                    handle,
+                    id,
+                    ent);
+            }
 
-            public static TraversalResult InvalidHandle(string key) =>
-                new TraversalResult(key, TraversalStatus.InvalidHandle);
+            public static TraversalResult InvalidHandle(string key, string path)
+            {
+                return new TraversalResult(
+                    key,
+                    path,
+                    TraversalStatus.InvalidHandle);
+            }
 
-            public static TraversalResult MissingObjectId(string key, Handle handle) =>
-                new TraversalResult(key, TraversalStatus.MissingObjectId, handle);
+            public static TraversalResult MissingObjectId(
+                string key,
+                string path,
+                Handle handle)
+            {
+                return new TraversalResult(
+                    key,
+                    path,
+                    TraversalStatus.MissingObjectId,
+                    handle);
+            }
 
-            public static TraversalResult Erased(string key, Handle handle, ObjectId id) =>
-                new TraversalResult(key, TraversalStatus.ErasedObject, handle, id);
+            public static TraversalResult Erased(
+                string key,
+                string path,
+                Handle handle,
+                ObjectId id)
+            {
+                return new TraversalResult(
+                    key,
+                    path,
+                    TraversalStatus.ErasedObject,
+                    handle,
+                    id);
+            }
 
-            public static TraversalResult NotEntity(string key, Handle handle, ObjectId id) =>
-                new TraversalResult(key, TraversalStatus.NotEntity, handle, id);
+            public static TraversalResult NotEntity(
+                string key,
+                string path,
+                Handle handle,
+                ObjectId id)
+            {
+                return new TraversalResult(
+                    key,
+                    path,
+                    TraversalStatus.NotEntity,
+                    handle,
+                    id);
+            }
         }
+
     }
 }

@@ -64,6 +64,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="AutoCAD\AutoCADAdapter.cs" />
+    <Compile Include="AutoCAD\NODDebugger.cs" />
     <Compile Include="AutoCAD\SelectionService.cs" />
     <Compile Include="Data\FoundationContext.cs" />
     <Compile Include="AutoCAD\FoundationPersistenceManager.cs" />

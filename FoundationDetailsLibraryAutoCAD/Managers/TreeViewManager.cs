@@ -14,14 +14,14 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
         internal readonly Dictionary<string, Func<TreeNodeInfo, TreeViewItem>> _controlMap =
             new Dictionary<string, Func<TreeNodeInfo, TreeViewItem>>
             {
-                { NODManager.KEY_BOUNDARY, leafInfo =>
+                { NODManager.KEY_BOUNDARY_SUBDICT, leafInfo =>
                     new TreeViewItem
                     {
                         Header = new PolylineTreeItemControl { DataContext = new PolylineTreeItemViewModel((Polyline)leafInfo.Entity) },
                         Tag = leafInfo
                     }
                 },
-                { NODManager.KEY_GRADEBEAM, leafInfo =>
+                { NODManager.KEY_GRADEBEAM_SUBDICT, leafInfo =>
                     new TreeViewItem
                     {
                         Header = new PolylineTreeItemControl { DataContext = new PolylineTreeItemViewModel((Polyline)leafInfo.Entity) },
@@ -83,7 +83,8 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
             DBDictionary dict,
             TreeViewItem parent,
             Transaction tr,
-            Dictionary<string, TreeViewItem> nodeMap)
+            Dictionary<string, TreeViewItem> nodeMap,
+            string parentPath = "")
         {
             foreach (DBDictionaryEntry entry in dict)
             {
@@ -91,23 +92,140 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
 
                 bool isDict = obj is DBDictionary;
 
+                // Full path key
+                string fullKey = string.IsNullOrEmpty(parentPath) ? entry.Key : $"{parentPath}/{entry.Key}";
+
                 var node = new TreeViewItem
                 {
                     Header = entry.Key,
-                    Tag = new TreeNodeInfo(entry.Key, isDict)
+                    Tag = new TreeViewManager.TreeNodeInfo(fullKey, isDict)
                 };
 
                 parent.Items.Add(node);
 
-                // 🔑 THIS IS THE MISSING PIECE
-                nodeMap[entry.Key] = node;
+                // Add to map
+                nodeMap[fullKey] = node;
 
                 if (isDict)
                 {
-                    BuildTree((DBDictionary)obj, node, tr, nodeMap);
+                    BuildTree((DBDictionary)obj, node, tr, nodeMap, fullKey);
                 }
             }
         }
+
+
+        /// <summary>
+        /// Recursively build TreeView items from DBDictionaries and Entities, including nested subdictionaries
+        /// </summary>
+        internal static void BuildTreeRecursive(
+            DBDictionary dict,
+            TreeViewItem parentNode,
+            Transaction tr,
+            Dictionary<string, TreeViewItem> nodeMap,
+            TreeViewManager treeMgr,
+            string pathSoFar = "")
+        {
+            foreach (DBDictionaryEntry entry in dict)
+            {
+                string entryKey = entry.Key;
+                string fullPath = string.IsNullOrEmpty(pathSoFar) ? entryKey : $"{pathSoFar}/{entryKey}";
+
+                DBObject obj = tr.GetObject(entry.Value, OpenMode.ForRead);
+
+                // Node for this key
+                var node = new TreeViewItem
+                {
+                    Header = entryKey,
+                    Tag = new TreeViewManager.TreeNodeInfo(entryKey, obj is DBDictionary)
+                };
+
+                parentNode.Items.Add(node);
+                nodeMap[fullPath] = node;
+
+                if (obj is DBDictionary subDict)
+                {
+                    // Recurse into subdictionary
+                    BuildTreeRecursive(subDict, node, tr, nodeMap, treeMgr, fullPath);
+                }
+                else
+                {
+                    // Leaf entity (Xrecord or Entity)
+                    if (obj is Entity ent)
+                    {
+                        node.Tag = new TreeViewManager.TreeNodeInfo(entryKey, false) { Entity = ent };
+                        node.Header = $"{entryKey} ({ent.Handle})";
+                    }
+                    else if (obj is Xrecord xr)
+                    {
+                        node.Tag = new TreeViewManager.TreeNodeInfo(entryKey, false);
+                        node.Header = $"{entryKey} (Xrecord)";
+                    }
+                    else
+                    {
+                        node.Tag = new TreeViewManager.TreeNodeInfo(entryKey, false);
+                        node.Header = entryKey;
+                    }
+                }
+            }
+        }
+
+
+        /// <summary>
+        /// Recursively builds the TreeView for a dictionary and its subdictionaries/entities.
+        /// </summary>
+        private static void BuildTreeRecursiveWithEntities(
+            DBDictionary dict,
+            TreeViewItem parentNode,
+            Transaction tr,
+            Dictionary<string, TreeViewItem> nodeMap,
+            TreeViewManager treeMgr,
+            string pathSoFar)
+        {
+            foreach (DBDictionaryEntry entry in dict)
+            {
+                string entryKey = entry.Key;
+                string fullPath = string.IsNullOrEmpty(pathSoFar) ? entryKey : $"{pathSoFar}/{entryKey}";
+
+                DBObject obj = tr.GetObject(entry.Value, OpenMode.ForRead);
+
+                var node = new TreeViewItem
+                {
+                    Header = entryKey,
+                    Tag = new TreeViewManager.TreeNodeInfo(entryKey, obj is DBDictionary)
+                };
+
+                parentNode.Items.Add(node);
+                nodeMap[fullPath] = node;
+
+                if (obj is DBDictionary subDict)
+                {
+                    // Recurse into subdictionary
+                    BuildTreeRecursiveWithEntities(subDict, node, tr, nodeMap, treeMgr, fullPath);
+                }
+                else
+                {
+                    // Leaf entity (Entity or Xrecord)
+                    if (obj is Entity ent)
+                    {
+                        node.Tag = new TreeViewManager.TreeNodeInfo(entryKey, false) { Entity = ent };
+                        node.Header = $"{entryKey} ({ent.Handle})";
+                    }
+                    else if (obj is Xrecord xr)
+                    {
+                        node.Tag = new TreeViewManager.TreeNodeInfo(entryKey, false);
+                        node.Header = $"{entryKey} (Xrecord)";
+                    }
+                }
+            }
+        }
+
+
+        private static string CombinePath(string parent, string child)
+        {
+            return string.IsNullOrEmpty(parent) ? child : parent + "/" + child;
+        }
+
+
 
 
         internal void AttachEntityToTree(FoundationContext context,
@@ -163,39 +281,5 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
                 IsDictionary = isDictionary;
             }
         }
-
-        private TreeViewItem CreateLeafHeaderFactory(TreeNodeInfo leafInfo, string parentBranchKey)
-        {
-            // Only show custom controls for specific branches
-            switch (parentBranchKey)
-            {
-                case NODManager.KEY_BOUNDARY:
-                case NODManager.KEY_GRADEBEAM:
-                    if (leafInfo.Entity is Polyline pl)
-                    {
-                        var vm = new PolylineTreeItemViewModel(pl);
-
-                        var control = new PolylineTreeItemControl
-                        {
-                            DataContext = vm
-                        };
-
-                        return new TreeViewItem
-                        {
-                            Header = control,
-                            Tag = leafInfo
-                        };
-                    }
-                    break;
-            }
-
-            // Fallback: show key as text
-            return new TreeViewItem
-            {
-                Header = leafInfo.Key,
-                Tag = leafInfo
-            };
-        }
-
     }
 }
