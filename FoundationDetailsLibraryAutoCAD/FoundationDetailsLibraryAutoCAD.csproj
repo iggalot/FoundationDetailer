@@ -82,6 +82,9 @@
     <Compile Include="Preview\PreviewManager.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Tools\XDataViewer.cs" />
+    <Compile Include="UI\Controls\EqualSpacingGBControl\EqualSpacingControl.xaml.cs">
+      <DependentUpon>EqualSpacingControl.xaml</DependentUpon>
+    </Compile>
     <Compile Include="UI\Controls\GradeBeamSummaryControl\GradeBeamSummaryControl.xaml.cs">
       <DependentUpon>GradeBeamSummaryControl.xaml</DependentUpon>
     </Compile>
@@ -106,6 +109,10 @@
     </Compile>
   </ItemGroup>
   <ItemGroup>
+    <Page Include="UI\Controls\EqualSpacingGBControl\EqualSpacingControl.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
     <Page Include="UI\Controls\GradeBeamSummaryControl\GradeBeamSummaryControl.xaml">
       <SubType>Designer</SubType>
     </Page>

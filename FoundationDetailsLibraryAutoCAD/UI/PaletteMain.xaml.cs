@@ -1,5 +1,6 @@
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.Geometry;
 using FoundationDetailer.AutoCAD;
 using FoundationDetailer.Managers;
 using FoundationDetailer.UI.Controls;
@@ -7,6 +8,7 @@ using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using FoundationDetailsLibraryAutoCAD.Data;
 using FoundationDetailsLibraryAutoCAD.Managers;
 using FoundationDetailsLibraryAutoCAD.UI.Controls;
+using FoundationDetailsLibraryAutoCAD.UI.Controls.EqualSpacingGBControl;
 using FoundationDetailsLibraryAutoCAD.UI.Controls.GradeBeamSummaryControl;
 using System;
 using System.Collections.Generic;
@@ -75,6 +77,8 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
             UpdateTreeViewUI();
 
+
+
             // Optional: auto-refresh on document switch
             Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.DocumentActivated += OnDocumentActivated;
 
@@ -97,7 +101,133 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             GradeBeamSummary.HighlightGradeBeamslClicked += GradeBeam_HighlightGradeBeamsClicked;
             GradeBeamSummary.AddSingleGradeBeamClicked += GradeBeamSummary_AddSingleGradeBeamClicked;
 
+            //EqualSpacingGBControl.DrawRequested += OnDrawRequested;
+            PickPointsButton.Click += PickPointsButton_Click;
+
         }
+
+        private void PickPointsButton_Click(object sender, RoutedEventArgs e)
+        {
+            var doc = CurrentContext.Document;
+            var ed = doc.Editor;
+
+            // get the interpolated points.
+            (Point3d? start, Point3d? end) = _gradeBeamService.PromptForSpacingPoints(CurrentContext);
+            if (start == null || end == null)
+            {
+                ed.WriteMessage("No points selected.");
+                return;
+            }
+            var spaces = _gradeBeamService.PromptForEqualSpacingCount(CurrentContext);
+            if (spaces <= 1)
+            {
+                ed.WriteMessage("At least 2 spaces are required.");
+                return;
+            }
+            var dir = _gradeBeamService.PromptForSpacingDirection(CurrentContext);
+            if (dir == null)
+            {
+                ed.WriteMessage("No direction selected.");
+                return;
+            }
+
+            Vector3d vec = end.Value - start.Value;
+            var length = vec.Length;
+
+
+            OnDrawRequested(CurrentContext, new SpacingRequest()
+            {
+                Count = spaces.Value,
+                Direction = dir.Value,
+                MaxSpa = (Math.Abs(length) / (spaces.Value - 1)),
+                MinSpa = (Math.Abs(length) / (spaces.Value - 1)),
+                Start = start.Value,
+                End = end.Value
+
+            });
+        }
+
+        private void OnDrawRequested(FoundationContext context, SpacingRequest request)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (request == null) throw new ArgumentNullException(nameof(request));
+
+            // Get boundary polyline
+            if (!_boundaryService.TryGetBoundary(context, out Polyline boundary))
+                return;
+
+            // Get bounding box
+            var ext = boundary.GeometricExtents;
+            double minX = ext.MinPoint.X;
+            double maxX = ext.MaxPoint.X;
+            double minY = ext.MinPoint.Y;
+            double maxY = ext.MaxPoint.Y;
+
+            Document doc = context.Document;
+            Database db = doc.Database;
+
+            using (doc.LockDocument())
+            using (Transaction tr = db.TransactionManager.StartTransaction())
+            {
+                BlockTableRecord btr =
+                    (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForWrite);
+
+                Vector3d span = request.End - request.Start;
+                Vector3d dir;
+
+                // Determine direction based on the enum
+                switch (request.Direction)
+                {
+                    case SpacingDirections.Perpendicular:
+                        dir = span.GetPerpendicularVector().GetNormal();
+                        break;
+
+                    case SpacingDirections.Horizontal:
+                        dir = Vector3d.XAxis;
+                        break;
+
+                    case SpacingDirections.Vertical:
+                        dir = Vector3d.YAxis;
+                        break;
+
+                    default:
+                        dir = span.GetPerpendicularVector().GetNormal();
+                        break;
+                }
+
+                // Compute evenly spaced points along the span
+                // skip first/last since usually coincide with vertices
+                for (int i = 1; i < request.Count; i++)
+                {
+                    double t = request.Count == 1 ? 0 : (double)i / request.Count;
+                    Point3d basePt = request.Start + span * t;
+
+                    // Clip the line to the bounding box
+                    if (!MathHelperManager.TryClipLineToBoundingBoxExtents(basePt, dir, ext, out Point3d s, out Point3d e))
+                        continue;
+                    var start = s;
+                    var end = e;
+
+                    //// Clip the line to the bounding box
+                    //if (!MathHelperManager.TryClipLineToPolyline(basePt, dir, boundary, out Point3d s1, out Point3d e1))
+                    //    continue;
+                    //start = s1;
+                    //end = e1;
+
+
+                    // Add the grade beam
+                    _gradeBeamService.AddInterpolatedGradeBeam(context, start, end, 5);
+                }
+
+                tr.Commit();
+            }
+
+            // Refresh the UI asynchronously
+            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+        }
+
+
+
 
         #region --- UI Updates ---
         private void PrelimGBControl_AddPreliminaryClicked(object sender, PrelimGBEventArgs e)
@@ -473,6 +603,25 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             _persistenceService.Load(context);
             Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
+
+        //private void PickPointsButton_Click(object sender, RoutedEventArgs e)
+        //{
+        //    // Ask the manager to prompt for points
+        //    var (start, end) = _gradeBeamService.PromptForSpacingPoints();
+
+        //    if (!start.HasValue || !end.HasValue)
+        //    {
+        //        MessageBox.Show("Point selection canceled.", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
+        //        return;
+        //    }
+
+        //    // Pass points to the UserControl so it can compute span and counts
+        //    EqualSpacingGBControl.SetSpan(start.Value, end.Value);
+
+
+        //}
+
+
         #endregion
 
 
