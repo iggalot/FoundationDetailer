@@ -5,6 +5,7 @@ using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Runtime;
 using FoundationDetailer.UI.Windows;
 using FoundationDetailsLibraryAutoCAD.Data;
+using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -507,75 +508,92 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
 
-            var doc = context.Document;
-            var model = context.Model;
-            var db = doc.Database;
+            Document doc = context.Document;
+            Database db = doc.Database;
 
-            // Build filename in same folder as drawing
             string drawingFolder = Path.GetDirectoryName(doc.Name);
             string drawingName = Path.GetFileNameWithoutExtension(doc.Name);
             string jsonFile = Path.Combine(drawingFolder, $"{drawingName}_FDN_DATA.json");
 
-            // Container for export data
-            Dictionary<string, List<string>> exportData =
-                new Dictionary<string, List<string>>();
-
-            using (var tr = db.TransactionManager.StartTransaction())
+            using (Transaction tr = db.TransactionManager.StartTransaction())
             {
                 try
                 {
-                    // Open the top-level NOD (Named Objects Dictionary)
-                    DBDictionary nod =
-                        (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-
-                    if (!nod.Contains(ROOT))
+                    DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+                    if (!nod.Contains(NODManager.ROOT))
                     {
                         MessageBox.Show("EE_Foundation dictionary does not exist.");
                         return;
                     }
 
-                    // Open EE_Foundation
-                    DBDictionary root =
-                        (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForRead);
+                    DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(NODManager.ROOT), OpenMode.ForRead);
 
-                    // Loop through all known subdictionaries so they appear even if empty
-                    foreach (string sub in KNOWN_SUBDIRS)
-                    {
-                        List<string> handles = new List<string>();
+                    // Recursively export dictionary
+                    var exportData = ExportDictionaryRecursive(root, tr);
 
-                        if (root.Contains(sub))
-                        {
-                            DBDictionary subDict =
-                                (DBDictionary)tr.GetObject(root.GetAt(sub), OpenMode.ForRead);
+                    // Serialize to JSON
+                    string json = Newtonsoft.Json.JsonConvert.SerializeObject(exportData, Newtonsoft.Json.Formatting.Indented);
+                    File.WriteAllText(jsonFile, json);
 
-                            // Collect handle keys
-                            foreach (DBDictionaryEntry entry in subDict)
-                            {
-                                handles.Add(entry.Key);
-                            }
-                        }
-
-                        // store result (empty list if none)
-                        exportData[sub] = handles;
-                    }
-
-                    tr.Commit();
+                    MessageBox.Show($"Export complete:\n{jsonFile}");
                 }
-                catch (System.Exception ex)
+                catch (Autodesk.AutoCAD.Runtime.Exception ex)
                 {
                     doc.Editor.WriteMessage($"\nExport failed: {ex.Message}");
-                    return;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Recursively exports a DBDictionary, serializing Entities, XRecords, and subdictionaries.
+        /// </summary>
+        private static Dictionary<string, object> ExportDictionaryRecursive(DBDictionary dict, Transaction tr)
+        {
+            var result = new Dictionary<string, object>();
+
+            foreach (DBDictionaryEntry entry in dict)
+            {
+                DBObject obj = tr.GetObject(entry.Value, OpenMode.ForRead);
+
+                if (obj is DBDictionary subDict)
+                {
+                    // Recurse into subdictionary
+                    result[entry.Key] = ExportDictionaryRecursive(subDict, tr);
+                }
+                else if (obj is Entity ent)
+                {
+                    // Leaf entity (e.g., FD_CENTERLINE)
+                    result[entry.Key] = new Dictionary<string, string>
+            {
+                { "Type", ent.GetType().Name }, // e.g., "Polyline"
+                { "Handle", ent.Handle.ToString().ToUpperInvariant() }
+            };
+                }
+                else if (obj is Xrecord xr)
+                {
+                    object[] data = new object[0];
+                    if (xr.Data != null)
+                    {
+                        data = xr.Data.Cast<TypedValue>().Select(v => v.Value?.ToString() ?? "").ToArray();
+                    }
+
+                    result[entry.Key] = new Dictionary<string, object>
+                    {
+                        { "Type", "XRecord" },
+                        { "Data", data }
+                    };
+                }
+                else
+                {
+                    // Unknown object type, just store type name
+                    result[entry.Key] = new Dictionary<string, string>
+            {
+                { "Type", obj.GetType().Name }
+            };
                 }
             }
 
-            // Convert dictionary → JSON and write to file
-            string json = Newtonsoft.Json.JsonConvert.SerializeObject(
-                exportData,
-                Newtonsoft.Json.Formatting.Indented);
-
-            File.WriteAllText(jsonFile, json);
-
-            MessageBox.Show($"Export complete:\n{jsonFile}");
+            return result;
         }
 
         /// <summary>
@@ -587,10 +605,9 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             if (context == null) throw new ArgumentNullException(nameof(context));
 
             var doc = context.Document;
-            var model = context.Model;
             var db = doc.Database;
 
-            // Build the JSON file name in the drawing’s folder
+            // Build JSON file path
             string drawingFolder = Path.GetDirectoryName(doc.Name);
             string drawingName = Path.GetFileNameWithoutExtension(doc.Name);
             string jsonFile = Path.Combine(drawingFolder, $"{drawingName}_FDN_DATA.json");
@@ -601,68 +618,53 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 return;
             }
 
-            // Read and deserialize JSON
+            // Read JSON safely
             string json = File.ReadAllText(jsonFile);
-            var importData = Newtonsoft.Json.JsonConvert.DeserializeObject<Dictionary<string, List<string>>>(json);
-            if (importData == null)
+            Dictionary<string, object> importData = null;
+            try
             {
-                MessageBox.Show("JSON format invalid.");
-                return;
+                importData = Newtonsoft.Json.JsonConvert.DeserializeObject<Dictionary<string, object>>(json);
             }
+            catch
+            {
+                MessageBox.Show("JSON is corrupted or invalid. Partial import may be possible.");
+                importData = new Dictionary<string, object>();
+            }
+
+            if (importData == null)
+                importData = new Dictionary<string, object>();
 
             using (doc.LockDocument())
             {
-                // Ensure the NOD exists
                 using (Transaction tr = db.TransactionManager.StartTransaction())
                 {
-                    InitFoundationNOD(context, tr);
+                    // Ensure root NOD structure exists
+                    NODManager.InitFoundationNOD(context, tr);
                     tr.Commit();
                 }
 
-                // Import the entities from JSON
                 using (Transaction tr = db.TransactionManager.StartTransaction())
                 {
                     try
                     {
                         DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-                        DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
+                        DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(NODManager.ROOT), OpenMode.ForWrite);
 
+                        // Recursively restore dictionary
                         foreach (var kvp in importData)
                         {
-                            string subName = kvp.Key;
-                            List<string> handle_strings = kvp.Value ?? new List<string>();
+                            string key = kvp.Key;
+                            object value = kvp.Value;
 
-                            DBDictionary subDict;
-                            if (!root.Contains(subName))
+                            if (value is Newtonsoft.Json.Linq.JObject obj)
                             {
-                                subDict = new DBDictionary();
-                                root.SetAt(subName, subDict);
-                                tr.AddNewlyCreatedDBObject(subDict, true);
+                                DBDictionary subDict = NODManager.GetOrCreateSubDictionary(tr, root, key);
+                                RestoreDictionaryFromJson(context,tr, subDict, obj, db);
                             }
                             else
                             {
-                                subDict = (DBDictionary)tr.GetObject(root.GetAt(subName), OpenMode.ForWrite);
-                            }
-
-                            foreach (string handle_string in handle_strings)
-                            {
-                                if (!TryParseHandle(context, handle_string, out Handle handle))
-                                    continue;
-
-                                AddHandleToMetadataDictionary(tr, subDict, handle_string);
-
-                                if (!TryGetObjectIdFromHandle(db, handle, out ObjectId id))
-                                    continue;
-
-                                if (!IsValidReadableObject(tr, id))
-                                    continue;
-
-                                Entity ent = tr.GetObject(id, OpenMode.ForWrite) as Entity;
-                                if (ent == null)
-                                    continue;
-
-                                // Attach entity-side Foundation data
-                                FoundationEntityData.Write(tr, ent, subName);
+                                // Skip invalid entries safely
+                                doc.Editor.WriteMessage($"\nSkipping invalid top-level entry: {key}");
                             }
                         }
 
@@ -674,11 +676,79 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                         doc.Editor.WriteMessage($"\nImport failed: {ex.Message}");
                     }
                 }
-
-                // Clean stale handles
-                CleanFoundationNOD(context);
             }
         }
+
+        /// <summary>
+        /// Recursively restores subdictionaries, entities, and Xrecords from a JSON JObject.
+        /// </summary>
+        private static void RestoreDictionaryFromJson(FoundationContext context, Transaction tr, DBDictionary dict, Newtonsoft.Json.Linq.JObject jsonObj, Database db)
+        {
+            foreach (var kvp in jsonObj)
+            {
+                string key = kvp.Key;
+                var value = kvp.Value;
+
+                try
+                {
+                    if (value is Newtonsoft.Json.Linq.JObject innerObj)
+                    {
+                        // Determine type
+                        string type = innerObj.Value<string>("Type");
+
+                        if (type == "XRecord")
+                        {
+                            // Recreate metadata Xrecord
+                            Xrecord xr;
+                            if (dict.Contains(key))
+                                xr = tr.GetObject(dict.GetAt(key), OpenMode.ForWrite) as Xrecord;
+                            else
+                            {
+                                xr = new Xrecord();
+                                dict.SetAt(key, xr);
+                                tr.AddNewlyCreatedDBObject(xr, true);
+                            }
+
+                            var dataArray = innerObj["Data"] as Newtonsoft.Json.Linq.JArray;
+                            if (dataArray != null)
+                            {
+                                var rb = new ResultBuffer();
+                                foreach (var v in dataArray)
+                                    rb.Add(new TypedValue((int)DxfCode.Text, v.ToString())); // Use Text as generic
+                                xr.Data = rb;
+                            }
+                        }
+                        else if (type == "Polyline" || type == "Entity")
+                        {
+                            // Try to get the ObjectId from handle string
+                            string handleStr = innerObj.Value<string>("Handle");
+                            if (!string.IsNullOrEmpty(handleStr) && db.TryGetObjectId(new Handle(Convert.ToInt64(handleStr, 16)), out ObjectId id))
+                            {
+                                if (id.IsValid && !id.IsErased)
+                                {
+                                    Entity ent = tr.GetObject(id, OpenMode.ForWrite) as Entity;
+                                    if (ent != null)
+                                        dict.SetAt(key, ent); // Attach entity directly
+                                }
+                            }
+                        }
+                        else
+                        {
+                            // Subdictionary: recurse
+                            DBDictionary subDict = NODManager.GetOrCreateSubDictionary(tr, dict, key);
+                            RestoreDictionaryFromJson(context,tr, subDict, innerObj, db);
+                        }
+                    }
+                }
+                catch
+                {
+                    // Skip corrupted or invalid entries
+                    context.Document.Editor.WriteMessage($"\nSkipping invalid NOD item: {key}");
+                }
+            }
+        }
+
+
 
         // ==========================================================
         //  SAMPLE DATA CREATION
