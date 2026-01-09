@@ -235,17 +235,25 @@ namespace FoundationDetailer.AutoCAD
             if (tr == null || db == null || string.IsNullOrEmpty(gradeBeamHandle))
                 throw new ArgumentNullException();
 
+            string centerlineHandle = centerlineId.Handle.ToString();
+
             DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
             DBDictionary root = NODManager.GetOrCreateSubDictionary(tr, nod, NODManager.ROOT);
             DBDictionary gradebeamDict = NODManager.GetOrCreateSubDictionary(tr, root, NODManager.KEY_GRADEBEAM_SUBDICT);
             DBDictionary handleDict = NODManager.GetOrCreateSubDictionary(tr, gradebeamDict, gradeBeamHandle);
 
             // Attach the existing centerline entity to the handle directory
+            // ------------------------------------------------
+            // CENTERLINE HANDLE (XRecord, persistent)
+            // ------------------------------------------------
             if (!handleDict.Contains(NODManager.KEY_CENTERLINE))
             {
-                Entity centerlineEnt = (Entity)tr.GetObject(centerlineId, OpenMode.ForWrite);
-                handleDict.SetAt(NODManager.KEY_CENTERLINE, centerlineEnt);
-                // DO NOT call AddNewlyCreatedDBObject here
+                Xrecord xrec = new Xrecord();
+                xrec.Data = new ResultBuffer(
+                    new TypedValue((int)DxfCode.Text, centerlineHandle));
+
+                handleDict.SetAt(NODManager.KEY_CENTERLINE, xrec);
+                tr.AddNewlyCreatedDBObject(xrec, true);
             }
 
             // Ensure FD_EDGES sub dictionar exists
@@ -409,6 +417,34 @@ namespace FoundationDetailer.AutoCAD
 
             return null;
         }
+
+        // ---------------------------
+        // GradeBeam service function
+        // ---------------------------
+        internal void AddExistingPolylineAsGradeBeam(
+            FoundationContext context,
+            ObjectId polylineId,
+            Transaction tr)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (polylineId.IsNull) throw new ArgumentException("Invalid Polyline ObjectId.", nameof(polylineId));
+
+            Database db = context.Document.Database;
+
+            Polyline pl = tr.GetObject(polylineId, OpenMode.ForRead) as Polyline;
+            if (pl == null)
+                throw new ArgumentException("Object is not a Polyline.", nameof(polylineId));
+
+            string gradeBeamHandle = polylineId.Handle.ToString();
+
+            // Write metadata / GradeBeam info
+            FoundationEntityData.Write(tr, pl, NODManager.KEY_GRADEBEAM_SUBDICT);
+
+            // Add centerline handle to NOD
+            AddGradeBeamCenterlineHandleToNOD(context, polylineId, tr);
+        }
+
+
 
         public static bool TryGetGradeBeamHandles(
             FoundationContext context,

@@ -268,6 +268,82 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             return true;
         }
 
+        /// <summary>
+        /// Recursively scans any dictionary or subtree in the NOD for a stored handle.
+        /// </summary>
+        /// <param name="tr">Active transaction</param>
+        /// <param name="rootDictId">ObjectId of the dictionary to scan (can be NamedObjectsDictionary or any sub-dictionary)</param>
+        /// <param name="targetHandle">Handle stored as text in XRecord</param>
+        /// <returns>True if handle exists anywhere in the subtree</returns>
+        internal static bool IsHandleAlreadyInTree(FoundationContext context,
+            Transaction tr,
+            ObjectId rootDictId,
+            string targetHandle)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            if (rootDictId.IsNull || !rootDictId.IsValid)
+                return false;
+
+            DBObject rootObj = tr.GetObject(rootDictId, OpenMode.ForRead);
+            if (!(rootObj is DBDictionary rootDict))
+                return false;
+
+            return ScanDictionaryForHandle(context, tr, rootDict, targetHandle);
+        }
+
+
+        private static bool ScanDictionaryForHandle(
+            FoundationContext context,
+            Transaction tr,
+            DBDictionary dict,
+            string targetHandle)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            foreach (DBDictionaryEntry entry in dict)
+            {
+                DBObject obj =
+                    tr.GetObject(entry.Value, OpenMode.ForRead);
+
+                if (obj is DBDictionary subDict)
+                {
+                    if (ScanDictionaryForHandle(context, tr, subDict, targetHandle))
+                        return true;
+                }
+                else if (obj is Xrecord xrec)
+                {
+                    if (XrecordContainsHandle(xrec, targetHandle))
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+
+        private static bool XrecordContainsHandle(
+            Xrecord xrec,
+            string targetHandle)
+        {
+            if (xrec.Data == null)
+                return false;
+
+            foreach (TypedValue tv in xrec.Data)
+            {
+                if (tv.TypeCode == (int)DxfCode.Text &&
+                    tv.Value is string s &&
+                    s.Equals(targetHandle, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+
+
         public static void CleanupFoundationNod(
             FoundationContext context,
             IEnumerable<HandleEntry> scanResults)
