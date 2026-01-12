@@ -335,7 +335,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
                 verts = PolylineConversionService.EnsureMinimumVertices(verts, 5);
 
-                Polyline newPl = _gradeBeamService.CreatePolylineFromVertices(verts);
+                Polyline newPl = PolylineConversionService.CreatePolylineFromVertices(verts);
 
                 // --- Append to ModelSpace and register as GradeBeam ---
                 using (doc.LockDocument())
@@ -711,19 +711,19 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             var ed = doc.Editor;
 
             // get the interpolated points.
-            (Point3d? start, Point3d? end) = _gradeBeamService.PromptForSpacingPoints(CurrentContext);
+            (Point3d? start, Point3d? end) = AutoCADPromptService.PromptForSpacingPoints(CurrentContext);
             if (start == null || end == null)
             {
                 ed.WriteMessage("No points selected.");
                 return;
             }
-            var spaces = _gradeBeamService.PromptForEqualSpacingCount(CurrentContext);
+            var spaces = AutoCADPromptService.PromptForEqualSpacingCount(CurrentContext);
             if (spaces <= 1)
             {
                 ed.WriteMessage("At least 2 spaces are required.");
                 return;
             }
-            var dir = _gradeBeamService.PromptForSpacingDirection(CurrentContext);
+            var dir = AutoCADPromptService.PromptForSpacingDirection(CurrentContext);
             if (dir == null)
             {
                 ed.WriteMessage("No direction selected.");

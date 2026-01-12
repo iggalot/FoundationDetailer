@@ -1305,19 +1305,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             public ObjectId Id { get; set; }         // only set when valid
         }
 
-        public static bool TryGetGradeBeamHandles(
-            FoundationContext context,
-            Transaction tr,
-            out List<string> handleStrings)
-        {
-            return NODHelper.TryGetSubdictEntries(
-                context,
-                KEY_GRADEBEAM_SUBDICT,
-                tr,
-                out handleStrings);
-        }
-
-
         /// <summary>
         /// Returns all keys from the given AutoCAD sub-dictionary.
         /// Keys are returned as raw strings (typically handle strings) with no validation.
@@ -1953,6 +1940,164 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 
             ed.WriteMessage($"\nDeleted {count} entities from {sub}.");
         }
+
+        // Track which documents have already registered the RegApp
+        private readonly HashSet<Document> _regAppRegistered = new HashSet<Document>();
+        /// <summary>
+        /// Registers the FD_GRADEBEAM RegApp if not already registered for this document.
+        /// </summary>
+        public void RegisterGradeBeamRegApp(Document doc, Transaction tr)
+        {
+            if (_regAppRegistered.Contains(doc)) return;
+
+            var db = doc.Database;
+            var rat = (RegAppTable)tr.GetObject(db.RegAppTableId, OpenMode.ForWrite);
+            if (!rat.Has(NODManager.KEY_GRADEBEAM_SUBDICT))
+            {
+                var ratr = new RegAppTableRecord { Name = NODManager.KEY_GRADEBEAM_SUBDICT };
+                rat.Add(ratr);
+                tr.AddNewlyCreatedDBObject(ratr, true);
+            }
+
+            _regAppRegistered.Add(doc);
+        }
+
+
+        /// <summary>
+        /// Adds a grade beam polyline handle to the EE_Foundation NOD under FD_GRADEBEAM.
+        /// </summary>
+        /// <param name="id">The ObjectId of the grade beam polyline.</param>
+        internal static void AddGradeBeamCenterlineHandleToNOD(
+            FoundationContext context,
+            ObjectId id,
+            Transaction tr)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (id.IsNull || !id.IsValid) return;
+
+            var doc = context.Document;
+            var db = doc.Database;
+
+            // Ensure EE_Foundation NOD exists
+            NODManager.InitFoundationNOD(context, tr);
+
+            DBDictionary nod =
+                (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+
+            DBDictionary root =
+                (DBDictionary)tr.GetObject(nod.GetAt(NODManager.ROOT), OpenMode.ForWrite);
+
+            DBDictionary gradebeamDict =
+                (DBDictionary)tr.GetObject(root.GetAt(NODManager.KEY_GRADEBEAM_SUBDICT), OpenMode.ForWrite);
+
+            // Handle string
+            string handleStr = id.Handle.ToString().ToUpperInvariant();
+
+            // Create full grade beam structure (safe if already exists)
+            CreateGradeBeamNODStructure(context, tr, db, handleStr, id);
+        }
+
+        public static void CreateGradeBeamNODStructure(
+            FoundationContext context,
+            Transaction tr,
+            Database db,
+            string gradeBeamHandle,
+            ObjectId centerlineId)
+        {
+            if (tr == null || db == null || string.IsNullOrEmpty(gradeBeamHandle))
+                throw new ArgumentNullException();
+
+            string centerlineHandle = centerlineId.Handle.ToString();
+
+            DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+            DBDictionary root = NODManager.GetOrCreateSubDictionary(tr, nod, NODManager.ROOT);
+            DBDictionary gradebeamDict = NODManager.GetOrCreateSubDictionary(tr, root, NODManager.KEY_GRADEBEAM_SUBDICT);
+            DBDictionary handleDict = NODManager.GetOrCreateSubDictionary(tr, gradebeamDict, gradeBeamHandle);
+
+            // Attach the existing centerline entity to the handle directory
+            // ------------------------------------------------
+            // CENTERLINE HANDLE (XRecord, persistent)
+            // ------------------------------------------------
+            if (!handleDict.Contains(NODManager.KEY_CENTERLINE))
+            {
+                Xrecord xrec = new Xrecord();
+                xrec.Data = new ResultBuffer(
+                    new TypedValue((int)DxfCode.Text, centerlineHandle));
+
+                handleDict.SetAt(NODManager.KEY_CENTERLINE, xrec);
+                tr.AddNewlyCreatedDBObject(xrec, true);
+            }
+
+            // Ensure FD_EDGES sub dictionar exists
+            NODManager.GetOrCreateSubDictionary(tr, handleDict, NODManager.KEY_EDGES_SUBDICT);
+
+            // Add metadata Xrecord for future use -- this is a single xrecord and not a subdictionary at this time
+            NODManager.GetOrCreateMetadataXrecord(tr, handleDict, NODManager.KEY_METADATA_SUBDICT);
+
+        }
+
+        public static bool TryGetAllGradeBeamHandles(
+    FoundationContext context,
+    Transaction tr,
+    out List<string> handleStrings)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+
+            handleStrings = new List<string>();
+
+            var doc = context.Document;
+            var db = doc.Database;
+
+            var nod = (DBDictionary)
+                tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+
+            if (!nod.Contains(NODManager.ROOT))
+                return false;
+
+            var root = (DBDictionary)
+                tr.GetObject(nod.GetAt(NODManager.ROOT), OpenMode.ForRead);
+
+            if (!root.Contains(NODManager.KEY_GRADEBEAM_SUBDICT))
+                return false;
+
+            var gradeBeamDict = (DBDictionary)
+                tr.GetObject(root.GetAt(NODManager.KEY_GRADEBEAM_SUBDICT), OpenMode.ForRead);
+
+            foreach (DBDictionaryEntry entry in gradeBeamDict)
+                handleStrings.Add(entry.Key);
+
+            return handleStrings.Count > 0;
+        }
+
+        public static List<ObjectId> GetAllValidObjectIds(
+    FoundationContext context,
+    Transaction tr,
+    Database db,
+    string subDictKey)
+        {
+            var result = new List<ObjectId>();
+
+            if (!TryGetHandles(context, tr, subDictKey, out var handles))
+                return result;
+
+            foreach (var handleStr in handles)
+            {
+                if (!TryGetObjectIdFromHandleString(context, db, handleStr, out ObjectId oid))
+                    continue;
+
+                if (oid.IsNull || oid.IsErased || !oid.IsValid)
+                    continue;
+
+                result.Add(oid);
+            }
+
+            return result;
+        }
+
+
+
+
 
         internal enum TraversalStatus
         {

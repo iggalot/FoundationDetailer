@@ -64,6 +64,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="AutoCAD\AutoCADAdapter.cs" />
+    <Compile Include="AutoCAD\GradeBeamPolylineJig.cs" />
     <Compile Include="AutoCAD\NODDebugger.cs" />
     <Compile Include="AutoCAD\NODHelper.cs" />
     <Compile Include="AutoCAD\SelectionService.cs" />
@@ -83,6 +84,7 @@
     <Compile Include="Managers\TreeViewManager.cs" />
     <Compile Include="Preview\PreviewManager.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="Services\AutoCADEditorPromptService.cs" />
     <Compile Include="Services\ModelSpaceWriterService.cs" />
     <Compile Include="Services\PolylineConversionService.cs" />
     <Compile Include="Tools\XDataViewer.cs" />
