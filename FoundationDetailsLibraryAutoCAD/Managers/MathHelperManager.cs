@@ -194,6 +194,5 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
             intersection = origin + dir * t;
             return true;
         }
-
     }
 }

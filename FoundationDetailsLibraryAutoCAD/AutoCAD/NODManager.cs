@@ -575,6 +575,43 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 }
             }
         }
+        internal static void EraseGradeBeamEntry(
+            Transaction tr,
+            Database db,
+            string gradeBeamHandle)
+        {
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+            if (db == null) throw new ArgumentNullException(nameof(db));
+            if (string.IsNullOrWhiteSpace(gradeBeamHandle))
+                throw new ArgumentException("Invalid grade beam handle.", nameof(gradeBeamHandle));
+
+            gradeBeamHandle = gradeBeamHandle.Trim().ToUpperInvariant();
+
+            DBDictionary nod =
+                (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+
+            if (!nod.Contains(ROOT))
+                return;
+
+            DBDictionary root =
+                (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForRead);
+
+            if (!root.Contains(KEY_GRADEBEAM_SUBDICT))
+                return;
+
+            DBDictionary gradeBeams =
+                (DBDictionary)tr.GetObject(root.GetAt(KEY_GRADEBEAM_SUBDICT), OpenMode.ForWrite);
+
+            if (!gradeBeams.Contains(gradeBeamHandle))
+                return;
+
+            // Erase the grade beam dictionary (children erased automatically)
+            DBDictionary gbDict =
+                (DBDictionary)tr.GetObject(gradeBeams.GetAt(gradeBeamHandle), OpenMode.ForWrite);
+
+            gbDict.Erase();
+        }
+
 
         // ==========================================================
         //  EXPORT / IMPORT JSON
@@ -1266,6 +1303,18 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             public string HandleKey { get; set; }   // handle string
             public string Status { get; set; }      // Valid | Missing | Invalid | Error
             public ObjectId Id { get; set; }         // only set when valid
+        }
+
+        public static bool TryGetGradeBeamHandles(
+            FoundationContext context,
+            Transaction tr,
+            out List<string> handleStrings)
+        {
+            return NODHelper.TryGetSubdictEntries(
+                context,
+                KEY_GRADEBEAM_SUBDICT,
+                tr,
+                out handleStrings);
         }
 
 

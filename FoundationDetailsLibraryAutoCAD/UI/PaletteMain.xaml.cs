@@ -8,6 +8,7 @@ using FoundationDetailer.UI.Controls;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using FoundationDetailsLibraryAutoCAD.Data;
 using FoundationDetailsLibraryAutoCAD.Managers;
+using FoundationDetailsLibraryAutoCAD.Services;
 using FoundationDetailsLibraryAutoCAD.UI.Controls;
 using FoundationDetailsLibraryAutoCAD.UI.Controls.EqualSpacingGBControl;
 using FoundationDetailsLibraryAutoCAD.UI.Controls.GradeBeamSummaryControl;
@@ -104,51 +105,12 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             GradeBeamSummary.AddSingleGradeBeamClicked += GradeBeamSummary_AddSingleGradeBeamClicked;
 
             //EqualSpacingGBControl.DrawRequested += OnDrawNewRequested;
-            BtnNEqualSpaces.Click += NEqualSpaces_Click;
+            BtnNEqualSpaces.Click += BtnNEqualSpaces_Click;
             BtnConvertExisting.Click += BtnConvertToPolyline_Click;
 
         }
 
-        private void NEqualSpaces_Click(object sender, RoutedEventArgs e)
-        {
-            var doc = CurrentContext.Document;
-            var ed = doc.Editor;
 
-            // get the interpolated points.
-            (Point3d? start, Point3d? end) = _gradeBeamService.PromptForSpacingPoints(CurrentContext);
-            if (start == null || end == null)
-            {
-                ed.WriteMessage("No points selected.");
-                return;
-            }
-            var spaces = _gradeBeamService.PromptForEqualSpacingCount(CurrentContext);
-            if (spaces <= 1)
-            {
-                ed.WriteMessage("At least 2 spaces are required.");
-                return;
-            }
-            var dir = _gradeBeamService.PromptForSpacingDirection(CurrentContext);
-            if (dir == null)
-            {
-                ed.WriteMessage("No direction selected.");
-                return;
-            }
-
-            Vector3d vec = end.Value - start.Value;
-            var length = vec.Length;
-
-
-            OnDrawNewRequested(CurrentContext, new SpacingRequest()
-            {
-                Count = spaces.Value,
-                Direction = dir.Value,
-                MaxSpa = (Math.Abs(length) / (spaces.Value - 1)),
-                MinSpa = (Math.Abs(length) / (spaces.Value - 1)),
-                Start = start.Value,
-                End = end.Value
-
-            });
-        }
 
         private void OnDrawNewRequested(FoundationContext context, SpacingRequest request)
         {
@@ -259,7 +221,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 //MessageBox.Show($"\nObjectId of existing_pl: {existing_pl.ObjectId}");
                 //MessageBox.Show($"\nType: {existing_pl.GetType().Name}");
                 // Add the grade beam
-                _gradeBeamService.AddExistingPolylineAsGradeBeam(context, selectedId, tr);
+                _gradeBeamService.AddExistingAsGradeBeam(context, selectedId, tr);
 
                 tr.Commit();
             }
@@ -268,14 +230,11 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
 
-
-
-
         #region --- UI Updates ---
         private void PrelimGBControl_AddPreliminaryClicked(object sender, PrelimGBEventArgs e)
         {
             var context = CurrentContext;
-            var doc = context.Document;
+            if (context == null) return;
 
             if (!_boundaryService.TryGetBoundary(context, out Polyline boundary))
             {
@@ -283,27 +242,35 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 return;
             }
 
-            _gradeBeamService.CreatePreliminary(
-                context,
-                boundary,
-                e.HorzMin,
-                e.HorzMax,
-                e.VertMin,
-                e.VertMax
-            );
-            PrelimGBControl.ViewModel.IsPreliminaryGenerated = true;  // reset the the preliminary input control
+            try
+            {
+                var beams = _gradeBeamService.CreatePreliminaryGradeBeamLayout(
+                    context,
+                    boundary,
+                    e.HorzMin,
+                    e.HorzMax,
+                    e.VertMin,
+                    e.VertMax,
+                    vertexCount: 5
+                );
 
-            // Hide the gradebeam control completely
-            PrelimGBControl.Visibility = System.Windows.Visibility.Collapsed;
+                TxtStatus.Text = $"Created {beams.Count} preliminary grade beams.";
+                PrelimGBControl.ViewModel.IsPreliminaryGenerated = true;
+                PrelimGBControl.Visibility = System.Windows.Visibility.Collapsed;
 
-            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+                Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+            }
+            catch (Exception ex)
+            {
+                TxtStatus.Text = $"Error creating grade beams: {ex.Message}";
+            }
         }
 
         private void GradeBeam_ClearAllClicked(object sender, EventArgs e)
         {
             var context = CurrentContext;
             var doc = context.Document;
-            _gradeBeamService.ClearAll(context);
+            _gradeBeamService.ClearAllGradeBeams(context);
             PrelimGBControl.ViewModel.IsPreliminaryGenerated = false;  // reset the the preliminary input control
 
             Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
@@ -316,7 +283,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         }
 
         private void GradeBeamSummary_AddSingleGradeBeamClicked(object sender, EventArgs e)
-
         {
             var context = CurrentContext;
             if (context == null)
@@ -326,52 +292,71 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             }
 
             var doc = context.Document;
-            if(doc == null) return;
+            if (doc == null) return;
 
             try
             {
-                // Prompt user for first point
-                var firstPointRes = context.Document.Editor.GetPoint("\nSelect first point for grade beam:");
+                var ed = doc.Editor;
+
+                // --- Prompt user for first point ---
+                var firstPointRes = ed.GetPoint("\nSelect first point for grade beam:");
                 if (firstPointRes.Status != Autodesk.AutoCAD.EditorInput.PromptStatus.OK)
                 {
                     TxtStatus.Text = "First point selection canceled.";
                     return;
                 }
 
-                // Prompt user for second point using an autocad jig for preview
-                var jig = new GradeBeamPolylineJig(firstPointRes.Value);
-                var res = context.Document.Editor.Drag(jig);
+                Point3d pt1 = firstPointRes.Value;
 
-
-                var pt1 = firstPointRes.Value;
-                var pt2 = jig.Polyline.GetPoint3dAt(1);
-
-                // Validation: points not the same
-                if (pt1.IsEqualTo(pt2))
+                // --- Use jig to get second point (preview) ---
+                var jig = new GradeBeamPolylineJig(pt1);
+                var res = ed.Drag(jig);
+                if (res.Status != Autodesk.AutoCAD.EditorInput.PromptStatus.OK)
                 {
-                    TxtStatus.Text = "Points cannot be the same.";
-                    context.Document.Editor.GetPoint("\nPoints cannot be the same.");
+                    TxtStatus.Text = "Second point selection canceled.";
                     return;
                 }
 
-                // Ask the manager to create the polyline
-                _gradeBeamService.AddInterpolatedGradeBeam(context, pt1, pt2, 5);
+                Point3d pt2 = jig.Polyline.GetPoint3dAt(1);
 
-                // Refresh UI
+                // --- Validate points ---
+                if (pt1.IsEqualTo(pt2))
+                {
+                    TxtStatus.Text = "Points cannot be the same.";
+                    return;
+                }
+
+                // --- Create Polyline vertices and Polyline ---
+                List<Point2d> verts = new List<Point2d>
+        {
+                    new Point2d(pt1.X, pt1.Y),
+                    new Point2d(pt2.X, pt2.Y)
+        };
+
+                verts = PolylineConversionService.EnsureMinimumVertices(verts, 5);
+
+                Polyline newPl = _gradeBeamService.CreatePolylineFromVertices(verts);
+
+                // --- Append to ModelSpace and register as GradeBeam ---
+                using (doc.LockDocument())
+                using (var tr = doc.Database.TransactionManager.StartTransaction())
+                {
+                    _gradeBeamService.RegisterGradeBeam(context, newPl, tr, appendToModelSpace: true);
+                    tr.Commit();
+                }
+
+                // --- Refresh UI ---
                 Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
 
                 TxtStatus.Text = "Custom grade beam added.";
-                context.Document.Editor.GetPoint("Custom grade beam added.");
+                PrelimGBControl.ViewModel.IsPreliminaryGenerated = true;
 
-                PrelimGBControl.ViewModel.IsPreliminaryGenerated = true;  // reset the the preliminary input control
-
-                // Hide the gradebeam control completely
+                // Hide the gradebeam control
                 PrelimGBControl.Visibility = System.Windows.Visibility.Collapsed;
             }
             catch (Exception ex)
             {
                 TxtStatus.Text = $"Error adding grade beam: {ex.Message}";
-                context.Document.Editor.GetPoint("Custom grade beam added.");
             }
         }
 
@@ -649,122 +634,117 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         // ---------------------------
         // Button click handler
         // ---------------------------
-        private void BtnConvertToPolyline_Click(object sender, RoutedEventArgs e)
+        private void BtnConvertToPolyline_Click(object sender, System.Windows.RoutedEventArgs e)
         {
-            Document doc = CurrentContext.Document;
+            var doc = CurrentContext?.Document;
             if (doc == null) return;
-            Editor ed = doc.Editor;
-            Database db = doc.Database;
 
-            PromptEntityOptions peo = new PromptEntityOptions("\nSelect a Line or Polyline to convert:");
-            peo.SetRejectMessage("\nOnly Line or Polyline are allowed.");
+            var ed = doc.Editor;
+            var db = doc.Database;
+
+            // --------------------------------------------
+            // Prompt for Line or Polyline
+            // --------------------------------------------
+            var peo = new PromptEntityOptions("\nSelect a Line or Polyline to convert:");
+            peo.SetRejectMessage("\nOnly Line or Polyline objects are allowed.");
             peo.AddAllowedClass(typeof(Line), true);
             peo.AddAllowedClass(typeof(Polyline), true);
 
-            PromptEntityResult per = ed.GetEntity(peo);
-            if (per.Status != PromptStatus.OK) return;
-
-            ObjectId selectedId = per.ObjectId;
+            var per = ed.GetEntity(peo);
+            if (per.Status != PromptStatus.OK)
+                return;
 
             using (doc.LockDocument())
-            using (Transaction tr = db.TransactionManager.StartTransaction())
+            using (var tr = db.TransactionManager.StartTransaction())
             {
-                Entity ent = tr.GetObject(selectedId, OpenMode.ForRead) as Entity;
-                if (ent == null) return;
-
-                // Collect vertices
-                List<Point2d> verts = new List<Point2d>();
-
-                if (ent is Line line)
+                try
                 {
-                    verts.Add(new Point2d(line.StartPoint.X, line.StartPoint.Y));
-                    verts.Add(new Point2d(line.EndPoint.X, line.EndPoint.Y));
-                }
-                else if (ent is Polyline pl)
-                {
-                    for (int i = 0; i < pl.NumberOfVertices; i++)
-                        verts.Add(pl.GetPoint2dAt(i));
-                }
-                else
-                {
-                    ed.WriteMessage("\nUnsupported entity type.");
-                    return;
-                }
+                    string handle = per.ObjectId.Handle.ToString();
 
-                // Ensure minimum vertices
-                verts = EnsureMinimumVertices(verts, 5);
+                    // --------------------------------------------
+                    // CHECK: already a GradeBeam?
+                    // --------------------------------------------
+                    bool alreadyInTree =
+                        NODManager.IsHandleAlreadyInTree(
+                            CurrentContext,
+                            tr,
+                            db.NamedObjectsDictionaryId,
+                            handle);
 
-                // Create new Polyline
-                Polyline newPl = new Polyline();
-                for (int i = 0; i < verts.Count; i++)
-                    newPl.AddVertexAt(i, verts[i], 0, 0, 0);
-
-                newPl.LayerId = ent.LayerId;
-                newPl.Color = ent.Color;
-                newPl.LinetypeId = ent.LinetypeId;
-                newPl.LineWeight = ent.LineWeight;
-
-                // Append to ModelSpace
-                BlockTable bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-                BlockTableRecord btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
-
-                btr.AppendEntity(newPl);
-                tr.AddNewlyCreatedDBObject(newPl, true);
-
-                // Delete original
-                ent.UpgradeOpen();
-                ent.Erase();
-
-                // Add to GradeBeam NOD
-                _gradeBeamService.AddExistingPolylineAsGradeBeam(CurrentContext, newPl.ObjectId, tr);
-
-                tr.Commit();
-            }
-
-            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
-        }
-
-        // ==================================================
-        // Subdivide until minimum vertex count is met
-        // ==================================================
-        private static List<Point2d> EnsureMinimumVertices(
-            List<Point2d> input, int minCount)
-        {
-            if (input.Count >= minCount)
-                return input;
-
-            List<Point2d> result = new List<Point2d>(input);
-
-            while (result.Count < minCount)
-            {
-                int longestIndex = 0;
-                double maxDist = 0.0;
-
-                for (int i = 0; i < result.Count - 1; i++)
-                {
-                    double d =
-                        result[i].GetDistanceTo(result[i + 1]);
-
-                    if (d > maxDist)
+                    if (alreadyInTree)
                     {
-                        maxDist = d;
-                        longestIndex = i;
+                        ed.WriteMessage(
+                            "\nSelected object is already registered as a GradeBeam.");
+                        TxtStatus.Text = "Object is already a GradeBeam.";
+                        return;
                     }
+
+                    // --------------------------------------------
+                    // Convert to GradeBeam Polyline
+                    // --------------------------------------------
+                    const int minVertexCount = 5;
+                    _gradeBeamService.ConvertToGradeBeam(
+                        CurrentContext,
+                        per.ObjectId,
+                        minVertexCount,
+                        tr);
+
+                    tr.Commit();
+
+                    // --------------------------------------------
+                    // UI refresh
+                    // --------------------------------------------
+                    Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+                    TxtStatus.Text = "Selected object converted to GradeBeam Polyline.";
                 }
-
-                Point2d a = result[longestIndex];
-                Point2d b = result[longestIndex + 1];
-
-                Point2d mid = new Point2d(
-                    (a.X + b.X) * 0.5,
-                    (a.Y + b.Y) * 0.5);
-
-                result.Insert(longestIndex + 1, mid);
+                catch (Exception ex)
+                {
+                    ed.WriteMessage($"\nError converting to GradeBeam: {ex.Message}");
+                    TxtStatus.Text = $"Error: {ex.Message}";
+                }
             }
-
-            return result;
         }
 
+        private void BtnNEqualSpaces_Click(object sender, RoutedEventArgs e)
+        {
+            var doc = CurrentContext.Document;
+            var ed = doc.Editor;
+
+            // get the interpolated points.
+            (Point3d? start, Point3d? end) = _gradeBeamService.PromptForSpacingPoints(CurrentContext);
+            if (start == null || end == null)
+            {
+                ed.WriteMessage("No points selected.");
+                return;
+            }
+            var spaces = _gradeBeamService.PromptForEqualSpacingCount(CurrentContext);
+            if (spaces <= 1)
+            {
+                ed.WriteMessage("At least 2 spaces are required.");
+                return;
+            }
+            var dir = _gradeBeamService.PromptForSpacingDirection(CurrentContext);
+            if (dir == null)
+            {
+                ed.WriteMessage("No direction selected.");
+                return;
+            }
+
+            Vector3d vec = end.Value - start.Value;
+            var length = vec.Length;
+
+
+            OnDrawNewRequested(CurrentContext, new SpacingRequest()
+            {
+                Count = spaces.Value,
+                Direction = dir.Value,
+                MaxSpa = (Math.Abs(length) / (spaces.Value - 1)),
+                MinSpa = (Math.Abs(length) / (spaces.Value - 1)),
+                Start = start.Value,
+                End = end.Value
+
+            });
+        }
 
         private void BtnSaveModel_Click()
         {
@@ -798,8 +778,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             }));
         }
 
-        #endregion
-
         private void RefreshGradeBeamSummary()
         {
             var context = CurrentContext;
@@ -810,5 +788,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
             GradeBeamSummary.UpdateSummary(quantity, total_length);
         }
+
+        #endregion
     }
 }

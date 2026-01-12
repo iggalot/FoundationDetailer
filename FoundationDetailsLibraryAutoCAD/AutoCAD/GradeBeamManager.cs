@@ -2,15 +2,14 @@
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
-using Autodesk.AutoCAD.Windows;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using FoundationDetailsLibraryAutoCAD.Data;
 using FoundationDetailsLibraryAutoCAD.Managers;
+using FoundationDetailsLibraryAutoCAD.Services;
 using FoundationDetailsLibraryAutoCAD.UI.Controls.EqualSpacingGBControl;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Windows.Threading;
 
 namespace FoundationDetailer.AutoCAD
 {
@@ -36,6 +35,11 @@ namespace FoundationDetailer.AutoCAD
             return pl;
         }
 
+        /// <summary>
+        /// Need for inheritance from EntityJig
+        /// </summary>
+        /// <param name="prompts"></param>
+        /// <returns></returns>
         protected override SamplerStatus Sampler(JigPrompts prompts)
         {
             var opts = new JigPromptPointOptions("\nSelect second point:")
@@ -55,6 +59,10 @@ namespace FoundationDetailer.AutoCAD
             return SamplerStatus.OK;
         }
 
+        /// <summary>
+        /// Need for inheritance from EntityJig
+        /// </summary>
+        /// <returns></returns>
         protected override bool Update()
         {
             // Update preview polyline geometry
@@ -75,55 +83,6 @@ namespace FoundationDetailer.AutoCAD
         public void Initialize(FoundationContext context)
         {
 
-        }
-
-        /// <summary>
-        /// Creates horizontal and vertical grade beams for a closed boundary polyline.
-        /// </summary>
-        public void CreateBothGridlines(FoundationContext context, Polyline boundary, double horiz_min, double horiz_max, double vert_min, double vert_max, int vertexCount)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-            if (boundary == null) return;
-
-            var doc = context.Document;
-            var db = doc.Database;
-
-            int horiz_count = 0;
-            int vert_count = 0;
-
-            try
-            {
-                using (doc.LockDocument())
-                using (Transaction tr = db.TransactionManager.StartTransaction())
-                {
-                    // Register RegApp once per document
-                    RegisterGradeBeamRegApp(doc, tr);
-
-                    // Compute gridline points
-                    var (horizontalLines, verticalLines) = FoundationDetailsLibraryAutoCAD.Managers.GridlineManager.ComputeBothGridlines(boundary, horiz_min, horiz_max, vert_min, vert_max, vertexCount);
-
-                    // Create DB polylines with XData
-                    foreach (var pts in horizontalLines)
-                    {
-                        CreateDbLine(context, pts, tr);
-                        horiz_count++;
-                    }
-
-                    foreach (var pts in verticalLines)
-                    {
-                        CreateDbLine(context, pts, tr);
-                        vert_count++;
-                    }
-
-                    tr.Commit();
-                }
-
-                doc.Editor.WriteMessage($"\nGrade beams created: horizontal={horiz_count}, vertical={vert_count}");
-            }
-            catch (Exception ex)
-            {
-                doc.Editor.WriteMessage($"\nError creating grade beams: {ex.Message}");
-            }
         }
 
         // -------------------------
@@ -147,48 +106,6 @@ namespace FoundationDetailer.AutoCAD
             }
 
             _regAppRegistered.Add(doc);
-        }
-
-        public void CreateDbLine(FoundationContext context, List<Point3d> points, Transaction tr)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-            if (points == null || points.Count < 2) return;
-
-            var doc = context.Document;
-            var db = doc.Database;
-
-            var pl = new Polyline();
-
-            for (int i = 0; i < points.Count; i++)
-                pl.AddVertexAt(i, new Point2d(points[i].X, points[i].Y), 0, 0, 0);
-
-            pl.Closed = false; // grade beams are open
-
-            // Add to model space
-            var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-            var btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
-            btr.AppendEntity(pl);
-            tr.AddNewlyCreatedDBObject(pl, true);
-
-            // Attach XData to mark as grade beam
-            SetGradeBeamXData(pl.ObjectId, tr);
-
-            // Store reference in dictionary
-            if (!_gradeBeams.ContainsKey(doc))
-                _gradeBeams[doc] = new List<ObjectId>();
-            _gradeBeams[doc].Add(pl.ObjectId);
-
-            // Store the grade beams in its NOD
-            FoundationEntityData.Write(tr, pl, NODManager.KEY_GRADEBEAM_SUBDICT);
-            AddGradeBeamCenterlineHandleToNOD(context, pl.ObjectId, tr);
-        }
-
-        private void SetGradeBeamXData(ObjectId id, Transaction tr)
-        {
-            if (id.IsNull) return;
-
-            var ent = (Entity)tr.GetObject(id, OpenMode.ForWrite);
-            ent.XData = new ResultBuffer(new TypedValue((int)DxfCode.ExtendedDataRegAppName, NODManager.KEY_GRADEBEAM_SUBDICT));
         }
 
         /// <summary>
@@ -264,33 +181,93 @@ namespace FoundationDetailer.AutoCAD
 
         }
 
-
-
-
-
-        public void CreatePreliminary(FoundationContext context, Polyline boundary, double hMin, double hMax, double vMin, double vMax, int vertexCount = 5)
+        public List<Polyline> CreatePreliminaryGradeBeamLayout(
+            FoundationContext context,
+            Polyline boundary,
+            double horizMin,
+            double horizMax,
+            double vertMin,
+            double vertMax,
+            int vertexCount = 5)
         {
-            if (boundary == null)
-                throw new ArgumentNullException(nameof(boundary));
+            if (boundary == null) throw new ArgumentNullException(nameof(boundary));
+            if (context?.Document == null) throw new ArgumentNullException(nameof(context));
 
-            try
+            var db = context.Document.Database;
+            List<Polyline> createdBeams = new List<Polyline>();
+
+            // --- Compute horizontal and vertical gridlines using GridlineManager ---
+            var gridlines = GridlineManager.ComputeBothGridlines(
+                boundary,
+                horizMin,
+                horizMax,
+                vertMin,
+                vertMax,
+                vertexCount
+            );
+
+            using (context.Document.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
             {
-                CreateBothGridlines(context, boundary, hMin, hMax, vMin, vMax, vertexCount);
-                context.Document.Editor.WriteMessage("\nGrade beams created successfully.");
+                // --- Horizontal grade beams ---
+                foreach (var linePts in gridlines.Horizontal)
+                {
+                    List<Point2d> verts = linePts.Select(p => new Point2d(p.X, p.Y)).ToList();
+                    Polyline pl = CreatePolylineFromVertices(verts);
+                    RegisterGradeBeam(context, pl, tr, appendToModelSpace: true);
+                    createdBeams.Add(pl);
+                }
+
+                // --- Vertical grade beams ---
+                foreach (var linePts in gridlines.Vertical)
+                {
+                    List<Point2d> verts = linePts.Select(p => new Point2d(p.X, p.Y)).ToList();
+                    Polyline pl = CreatePolylineFromVertices(verts);
+                    RegisterGradeBeam(context, pl, tr, appendToModelSpace: true);
+                    createdBeams.Add(pl);
+                }
+
+                tr.Commit();
             }
-            catch (Autodesk.AutoCAD.Runtime.Exception ex)
-            {
-                context.Document.Editor.WriteMessage($"\nError creating grade beams: {ex.Message}");
-            }
+
+            return createdBeams;
         }
 
-        public void ClearAll(FoundationContext context)
+
+        /// <summary>
+        /// Creates a new Polyline from a list of 2D points and copies basic properties from an optional source entity.
+        /// </summary>
+        internal Polyline CreatePolylineFromVertices(List<Point2d> verts, Entity source = null)
+        {
+            if (verts == null || verts.Count < 2)
+                throw new ArgumentException("Vertex list must have at least 2 points");
+
+            Polyline pl = new Polyline();
+
+            for (int i = 0; i < verts.Count; i++)
+                pl.AddVertexAt(i, verts[i], 0, 0, 0);
+
+            if (source != null)
+            {
+                pl.LayerId = source.LayerId;
+                pl.Color = source.Color;
+                pl.LinetypeId = source.LinetypeId;
+                pl.LineWeight = source.LineWeight;
+            }
+
+            return pl;
+        }
+
+
+        public void ClearAllGradeBeams(FoundationContext context)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
 
             var doc = context.Document;
+            if (doc == null) return;
 
             var db = context.Document.Database;
+            if(db == null) return;
 
             using (doc.LockDocument())
             {
@@ -370,6 +347,32 @@ namespace FoundationDetailer.AutoCAD
             return (quantity, totalLength);
         }
 
+        internal Polyline RegisterGradeBeam(
+            FoundationContext context,
+            Polyline pl,
+            Transaction tr,
+            bool appendToModelSpace = false)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (pl == null) throw new ArgumentNullException(nameof(pl));
+
+            Database db = context.Document.Database;
+
+            // --- Append to ModelSpace if requested ---
+            if (appendToModelSpace)
+            {
+                ModelSpaceWriterService.AppendToModelSpace(tr, db, pl);
+            }
+
+            // --- Write grade beam metadata (domain-specific) ---
+            FoundationEntityData.Write(tr, pl, NODManager.KEY_GRADEBEAM_SUBDICT);
+
+            // --- Add centerline handle (domain-specific) ---
+            AddGradeBeamCenterlineHandleToNOD(context, pl.ObjectId, tr);
+
+            return pl;
+        }
+
         ///Adds a new gradebeam object between the two selected user points <summary>
         /// 
         /// </summary>
@@ -389,39 +392,28 @@ namespace FoundationDetailer.AutoCAD
             using (context.Document.LockDocument())
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-                var btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
-
-                // Create the polyline
+                // Create the interpolated Polyline
                 Polyline pl = new Polyline();
                 for (int i = 0; i < vertexCount; i++)
                 {
-                    double t = (double)i / (vertexCount - 1); // linear interpolation
+                    double t = (double)i / (vertexCount - 1);
                     double x = start.X + (end.X - start.X) * t;
                     double y = start.Y + (end.Y - start.Y) * t;
-                    double z = start.Z + (end.Z - start.Z) * t;
-
                     pl.AddVertexAt(i, new Point2d(x, y), 0, 0, 0);
                 }
 
-                btr.AppendEntity(pl);
-                tr.AddNewlyCreatedDBObject(pl, true);
-
-                FoundationEntityData.Write(tr, pl, NODManager.KEY_GRADEBEAM_SUBDICT);
-                AddGradeBeamCenterlineHandleToNOD(context, pl.Id, tr);  // add the grade beam to the NOD.
+                // Register in NOD and append to ModelSpace
+                RegisterGradeBeam(context, pl, tr, appendToModelSpace: true);
 
                 tr.Commit();
-
                 return pl;
             }
-
-            return null;
         }
 
         // ---------------------------
         // GradeBeam service function
         // ---------------------------
-        internal void AddExistingPolylineAsGradeBeam(
+        internal void AddExistingAsGradeBeam(
             FoundationContext context,
             ObjectId polylineId,
             Transaction tr)
@@ -429,20 +421,51 @@ namespace FoundationDetailer.AutoCAD
             if (context == null) throw new ArgumentNullException(nameof(context));
             if (polylineId.IsNull) throw new ArgumentException("Invalid Polyline ObjectId.", nameof(polylineId));
 
-            Database db = context.Document.Database;
-
             Polyline pl = tr.GetObject(polylineId, OpenMode.ForRead) as Polyline;
             if (pl == null)
                 throw new ArgumentException("Object is not a Polyline.", nameof(polylineId));
 
-            string gradeBeamHandle = polylineId.Handle.ToString();
-
-            // Write metadata / GradeBeam info
-            FoundationEntityData.Write(tr, pl, NODManager.KEY_GRADEBEAM_SUBDICT);
-
-            // Add centerline handle to NOD
-            AddGradeBeamCenterlineHandleToNOD(context, polylineId, tr);
+            // Just register in NOD, no append needed
+            RegisterGradeBeam(context, pl, tr, appendToModelSpace: false);
         }
+
+        internal void ConvertToGradeBeam(
+            FoundationContext context,
+            ObjectId oldEntityId,
+            int vertexCount,
+            Transaction tr)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (oldEntityId.IsNull) throw new ArgumentException("Invalid ObjectId.", nameof(oldEntityId));
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+
+            var db = context.Document.Database;
+            var oldEnt = tr.GetObject(oldEntityId, OpenMode.ForRead) as Entity;
+            if (oldEnt == null)
+                throw new ArgumentException("Object is not a valid entity.", nameof(oldEntityId));
+
+            // --- Convert old entity to new Polyline ---
+            var verts = PolylineConversionService.GetVertices(oldEnt);
+
+            // Ensure minimum vertex count
+            verts = PolylineConversionService.EnsureMinimumVertices(verts, vertexCount);
+
+            Polyline newPl = PolylineConversionService.CreatePolylineFromVertices(verts, oldEnt);
+
+            // --- Append to ModelSpace (infrastructure) if needed ---
+            ModelSpaceWriterService.AppendToModelSpace(tr, db, newPl);
+
+            // --- Write GradeBeam metadata and register in NOD ---
+            RegisterGradeBeam(context, newPl, tr, appendToModelSpace: false);
+
+            // --- Remove old GradeBeam NOD entry if it exists ---
+            NODManager.EraseGradeBeamEntry(tr, db, oldEnt.Handle.ToString());
+
+            // --- Delete old entity from ModelSpace ---
+            oldEnt.UpgradeOpen();
+            oldEnt.Erase();
+        }
+
 
 
 
