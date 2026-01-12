@@ -1,17 +1,14 @@
-﻿using Autodesk.AutoCAD.ApplicationServices;
+﻿// RULE: Never iterate DBDictionary directly.
+// Always use EnumerateDictionary(...)
+
+using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
-using Autodesk.AutoCAD.EditorInput;
-using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Runtime;
-using FoundationDetailer.UI.Windows;
 using FoundationDetailsLibraryAutoCAD.Data;
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Text;
-using System.Windows;
 using static FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.HandleHandler;
 
 [assembly: CommandClass(typeof(FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.NODCore))]
@@ -87,8 +84,10 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                     if (root == null)
                         return results;
 
-                    foreach (DBDictionaryEntry groupEntry in root)
+                    foreach (var (groupName, groupId) in EnumerateDictionary(root))
                     {
+                        var groupEntry = new DBDictionaryEntry(groupName, groupId);
+
                         ScanGroupDictionary(
                             context,
                             tr,
@@ -97,6 +96,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                             results
                         );
                     }
+
 
                     tr.Commit(); // read-only but still correct
                 }
@@ -127,10 +127,10 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         }
 
         private static void ScanGroupDictionary(FoundationContext context,
-    Transaction tr,
-    Database db,
-    DBDictionaryEntry groupEntry,
-    List<HandleEntry> results)
+            Transaction tr,
+            Database db,
+            DBDictionaryEntry groupEntry,
+            List<HandleEntry> results)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
 
@@ -146,14 +146,14 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             if (subDict == null)
                 return;
 
-            foreach (DBDictionaryEntry entry in subDict)
+            foreach (var (handleKey, _) in EnumerateDictionary(subDict))
             {
                 HandleEntry result = ValidateHandle(
                     context,
                     tr,
                     db,
                     groupEntry.Key,
-                    entry.Key
+                    handleKey
                 );
 
                 results.Add(result);
@@ -282,10 +282,9 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
 
-            foreach (DBDictionaryEntry entry in dict)
+            foreach (var (_, id) in EnumerateDictionary(dict))
             {
-                DBObject obj =
-                    tr.GetObject(entry.Value, OpenMode.ForRead);
+                DBObject obj = tr.GetObject(id, OpenMode.ForRead);
 
                 if (obj is DBDictionary subDict)
                 {
@@ -440,54 +439,86 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         /// <summary>
         /// Recursively exports a DBDictionary, serializing Entities, XRecords, and subdictionaries.
         /// </summary>
-        internal static Dictionary<string, object> ToDictionaryRepresentation(DBDictionary dict, Transaction tr)
+        internal static Dictionary<string, object> ToDictionaryRepresentation(
+            DBDictionary dict,
+            Transaction tr)
         {
             var result = new Dictionary<string, object>();
 
-            foreach (DBDictionaryEntry entry in dict)
+            if (dict == null || tr == null)
+                return result;
+
+            foreach (var (key, id) in EnumerateDictionary(dict))
             {
-                DBObject obj = tr.GetObject(entry.Value, OpenMode.ForRead);
+                DBObject obj;
+                try
+                {
+                    obj = tr.GetObject(id, OpenMode.ForRead);
+                }
+                catch
+                {
+                    result[key] = new Dictionary<string, string>
+        {
+            { "Type", "UnreadableObject" }
+        };
+                    continue;
+                }
 
                 if (obj is DBDictionary subDict)
                 {
-                    // Recurse into subdictionary
-                    result[entry.Key] = ToDictionaryRepresentation(subDict, tr);
+                    result[key] = ToDictionaryRepresentation(subDict, tr);
                 }
                 else if (obj is Entity ent)
                 {
-                    // Leaf entity (e.g., FD_CENTERLINE)
-                    result[entry.Key] = new Dictionary<string, string>
-            {
-                { "Type", ent.GetType().Name }, // e.g., "Polyline"
-                { "Handle", ent.Handle.ToString().ToUpperInvariant() }
-            };
+                    result[key] = new Dictionary<string, string>
+        {
+            { "Type", ent.GetType().Name },
+            { "Handle", ent.Handle.ToString().ToUpperInvariant() }
+        };
                 }
                 else if (obj is Xrecord xr)
                 {
-                    object[] data = new object[0];
+                    var data = new List<object>();
                     if (xr.Data != null)
                     {
-                        data = xr.Data.Cast<TypedValue>().Select(v => v.Value?.ToString() ?? "").ToArray();
+                        foreach (TypedValue tv in xr.Data)
+                            data.Add(tv.Value);
                     }
 
-                    result[entry.Key] = new Dictionary<string, object>
-                    {
-                        { "Type", "XRecord" },
-                        { "Data", data }
-                    };
+                    result[key] = new Dictionary<string, object>
+        {
+            { "Type", "XRecord" },
+            { "Data", data.ToArray() }
+        };
                 }
                 else
                 {
-                    // Unknown object type, just store type name
-                    result[entry.Key] = new Dictionary<string, string>
-            {
-                { "Type", obj.GetType().Name }
-            };
+                    result[key] = new Dictionary<string, string>
+        {
+            { "Type", obj.GetType().Name }
+        };
                 }
             }
 
             return result;
         }
+
+        internal static IEnumerable<(string Key, ObjectId Id)> EnumerateDictionary(DBDictionary dict)
+        {
+            if (dict == null)
+                yield break;
+
+            foreach (DictionaryEntry entry in dict)
+            {
+                if (entry.Key is string key &&
+                    entry.Value is ObjectId id &&
+                    id.IsValid && !id.IsNull)
+                {
+                    yield return (key, id);
+                }
+            }
+        }
+
 
         // ==========================================================
         //  GET SUBDICTIONARY
@@ -632,11 +663,10 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             }
 
             // Collect keys first (cannot modify while iterating)
-            var keys = new List<string>();
-            foreach (DBDictionaryEntry entry in subDict)
-                keys.Add(entry.Key);
+            var keys = EnumerateDictionary(subDict)
+                       .Select(e => e.Key)
+                       .ToList();
 
-            // Remove each entry
             foreach (string key in keys)
             {
                 try
@@ -644,10 +674,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                     var obj = tr.GetObject(subDict.GetAt(key), OpenMode.ForWrite);
                     obj.Erase();
                 }
-                catch
-                {
-                    // Ignore individual failures
-                }
+                catch { }
             }
 
             return true;
@@ -674,13 +701,11 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             if (subDict == null)
                 return validIds;
 
-            foreach (DBDictionaryEntry entry in subDict)
+            foreach (var (handleKey, _) in EnumerateDictionary(subDict))
             {
-                // Attempt to resolve the dictionary key into an ObjectId
-                if (!TryGetObjectIdFromHandleString(context, db, entry.Key, out ObjectId id))
+                if (!TryGetObjectIdFromHandleString(context, db, handleKey, out ObjectId id))
                     continue;
 
-                // Verify the ObjectId can be opened and is not erased
                 if (IsValidReadableObject(tr, id))
                     validIds.Add(id);
             }
@@ -843,16 +868,15 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 return false;
 
             // Take the first valid ObjectId
-            foreach (DBDictionaryEntry entry in subDict)
+            foreach (var (handleKey, _) in EnumerateDictionary(subDict))
             {
-                if (TryGetObjectIdFromHandleString(context, db, entry.Key, out oid)
+                if (TryGetObjectIdFromHandleString(context, db, handleKey, out oid)
                     && IsValidReadableObject(tr, oid))
                 {
                     return true;
                 }
-
-                break; // Only check the first entry
             }
+
 
             return false;
         }
@@ -914,12 +938,10 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 return 0;
 
             // Collect keys first (handles) to avoid modifying dictionary while iterating
-            var handles = new List<string>();
-            foreach (DictionaryEntry entry in subDict)
-            {
-                if (entry.Key is string key)
-                    handles.Add(key);
-            }
+            var handles = EnumerateDictionary(subDict)
+                          .Select(e => e.Key)
+                          .ToList();
+
             foreach (string handleStr in handles)
             {
                 if (!TryGetObjectIdFromHandleString(context, db, handleStr, out ObjectId id))
