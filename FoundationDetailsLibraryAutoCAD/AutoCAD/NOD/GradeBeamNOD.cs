@@ -156,32 +156,43 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
             string centerlineHandle = centerlineId.Handle.ToString();
 
+            // Open the top-level NOD dictionary
             DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
-            DBDictionary root = NODCore.GetOrCreateSubDictionary(tr, nod, NODCore.ROOT);
-            DBDictionary gradebeamDict = NODCore.GetOrCreateSubDictionary(tr, root, NODCore.KEY_GRADEBEAM_SUBDICT);
-            DBDictionary handleDict = NODCore.GetOrCreateSubDictionary(tr, gradebeamDict, gradeBeamHandle);
 
-            // Attach the existing centerline entity to the handle directory
-            // ------------------------------------------------
-            // CENTERLINE HANDLE (XRecord, persistent)
-            // ------------------------------------------------
+            // Use nested helper to get the handle-level dictionary
+            DBDictionary handleDict = NODCore.GetOrCreateNestedSubDictionary(
+                tr,
+                nod,
+                NODCore.ROOT,
+                NODCore.KEY_GRADEBEAM_SUBDICT,
+                gradeBeamHandle
+            );
+
+            // Attach the existing centerline entity as an Xrecord
             if (!handleDict.Contains(NODCore.KEY_CENTERLINE))
             {
-                Xrecord xrec = new Xrecord();
-                xrec.Data = new ResultBuffer(
-                    new TypedValue((int)DxfCode.Text, centerlineHandle));
+                Xrecord xrec = new Xrecord
+                {
+                    Data = new ResultBuffer(
+                        new TypedValue((int)DxfCode.Text, centerlineHandle))
+                };
 
                 handleDict.SetAt(NODCore.KEY_CENTERLINE, xrec);
                 tr.AddNewlyCreatedDBObject(xrec, true);
             }
 
-            // Ensure FD_EDGES sub dictionar exists
-            NODCore.GetOrCreateSubDictionary(tr, handleDict, NODCore.KEY_EDGES_SUBDICT);
+            // Ensure FD_EDGES subdictionary exists (nested helper can be used here too)
+            NODCore.GetOrCreateNestedSubDictionary(
+                tr,
+                handleDict,
+                NODCore.KEY_EDGES_SUBDICT
+            );
 
-            // Add metadata Xrecord for future use -- this is a single xrecord and not a subdictionary at this time
+            // Add metadata Xrecord for future use
             NODCore.GetOrCreateMetadataXrecord(tr, handleDict, NODCore.KEY_METADATA_SUBDICT);
-
         }
+
+
 
         internal static void EraseGradeBeamEntry(
     Transaction tr,

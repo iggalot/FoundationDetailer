@@ -205,22 +205,22 @@ namespace FoundationDetailer.AutoCAD
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
 
-            var doc = context.Document;
-            if (doc == null) return;
-
-            var db = context.Document.Database;
+            var db = context.Document?.Database;
             if (db == null) return;
 
-            using (doc.LockDocument())
+            using (context.Document.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
             {
-                using (Transaction tr = db.TransactionManager.StartTransaction())
-                {
-                    NODCore.DeleteEntitiesInSubDictionary(context, tr, db, NODCore.KEY_GRADEBEAM_SUBDICT);
-                    NODCore.ClearFoundationSubDictionary(context, db, NODCore.KEY_GRADEBEAM_SUBDICT);
-                    tr.Commit();
-                }
+                // Delete entities stored under the GradeBeam subdictionary
+                NODCore.DeleteEntitiesInSubDictionary(context, tr, db, NODCore.KEY_GRADEBEAM_SUBDICT);
+
+                // Clear the GradeBeam subdictionary itself
+                NODCore.ClearFoundationSubDictionaryInternal(tr, db, NODCore.KEY_GRADEBEAM_SUBDICT);
+
+                tr.Commit();
             }
         }
+
 
         public bool HasAnyGradeBeams(FoundationContext context)
         {
@@ -258,29 +258,44 @@ namespace FoundationDetailer.AutoCAD
             using (context.Document.LockDocument())
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                // Get the KEY_GRADEBEAM_SUBDICT sub-dictionary
-                var subDict = NODCore.GetSubDictionary(tr, db, NODCore.KEY_GRADEBEAM_SUBDICT);
-                if (subDict == null)
+                // Get the ROOT dictionary
+                var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+                var root = NODCore.GetOrCreateNestedSubDictionary(tr, nod, NODCore.ROOT);
+
+                // Get the top-level GradeBeam dictionary (contains all grade beam handles)
+                var gradebeamDict = NODCore.GetOrCreateNestedSubDictionary(tr, root, NODCore.KEY_GRADEBEAM_SUBDICT);
+
+                if (gradebeamDict == null)
                     return (0, 0);
 
-                // Get all valid ObjectIds using your helper
-                var validIds = NODCore.GetAllValidObjectIdsFromSubDictionary(context, tr, db, subDict);
-
-                quantity = validIds.Count;
-
-                foreach (var oid in validIds)
+                // Loop over all individual grade beams (sub-dictionaries keyed by handle)
+                foreach (DBDictionaryEntry entry in gradebeamDict)
                 {
-                    var ent = tr.GetObject(oid, OpenMode.ForRead) as Autodesk.AutoCAD.DatabaseServices.Entity;
+                    if (!(tr.GetObject(entry.Value, OpenMode.ForRead) is DBDictionary handleDict))
+                        continue;
 
-                    if (ent is Autodesk.AutoCAD.DatabaseServices.Line line)
+                    // Collect all ObjectIds in this handleDict
+                    foreach (DBDictionaryEntry subEntry in handleDict)
                     {
-                        totalLength += line.Length;
+                        if (tr.GetObject(subEntry.Value, OpenMode.ForRead) is Entity ent)
+                        {
+                            quantity++;
+
+                            if (ent is Line line)
+                            {
+                                totalLength += line.Length;
+                            }
+                            else if (ent is Polyline pl)
+                            {
+                                totalLength += MathHelperManager.ComputePolylineLength(pl);
+                            }
+                            // Extend for other entity types if needed
+                        }
+                        else if (tr.GetObject(subEntry.Value, OpenMode.ForRead) is Xrecord xr)
+                        {
+                            // Optionally handle Xrecords if they store length info
+                        }
                     }
-                    else if (ent is Autodesk.AutoCAD.DatabaseServices.Polyline pl)
-                    {
-                        totalLength += MathHelperManager.ComputePolylineLength(pl);
-                    }
-                    // Extend for other beam types if needed
                 }
 
                 tr.Commit();

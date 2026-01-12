@@ -6,6 +6,7 @@ using Autodesk.AutoCAD.Runtime;
 using FoundationDetailer.UI.Windows;
 using FoundationDetailsLibraryAutoCAD.Data;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -38,35 +39,35 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         public static void InitFoundationNOD(FoundationContext context, Transaction tr)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
-
-
             if (tr == null) throw new ArgumentNullException(nameof(tr));
 
-            var doc = context.Document;
-            var model = context.Model;
-            var db = doc.Database;
-            var ed = doc.Editor;
-
-            if (tr == null) return;
+            var db = context.Document.Database;
+            var ed = context.Document.Editor;
 
             try
             {
-                // create the root dictionary
-                var rootDict = GetOrCreateRootDictionary(tr, db);
+                // Ensure the root dictionary exists
+                var rootDict = NODCore.GetOrCreateNestedSubDictionary(
+                    tr,
+                    (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite),
+                    NODCore.ROOT
+                );
 
-                // create the sub dictionaries
-                foreach (var sub_dir in KNOWN_SUBDIRS)
+                // Ensure all known subdirectories exist under the root
+                foreach (var subKey in KNOWN_SUBDIRS)
                 {
-                    var gradeBeamsDict = GetOrCreateSubDictionary(tr, rootDict, sub_dir);
+                    NODCore.GetOrCreateNestedSubDictionary(tr, rootDict, subKey);
                 }
 
                 ed.WriteMessage("\nEE_Foundation NOD structure initialized successfully.");
             }
-            catch (System.Exception ex)
+            catch (Autodesk.AutoCAD.Runtime.Exception ex)
             {
                 ed.WriteMessage($"\nTransaction failed: {ex.Message}");
             }
         }
+
+
 
         public static List<HandleEntry> ScanFoundationNod(FoundationContext context)
         {
@@ -433,77 +434,8 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         // ==========================================================
         //  REMOVE ENTIRE BtnQueryNOD_Click STRUCTURE
         // ==========================================================
-        public static void EraseFoundationNOD()
-        {
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            Database db = doc.Database;
 
-            using (Transaction tr = db.TransactionManager.StartTransaction())
-            {
-                try
-                {
-                    DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
-                    if (nod.Contains(ROOT))
-                    {
-                        DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
-                        root.Erase();
-                    }
-                    tr.Commit();
-                    MessageBox.Show("EE_Foundation dictionary erased.");
-                }
-                catch (System.Exception ex)
-                {
-                    doc.Editor.WriteMessage($"\nTransaction failed: {ex.Message}");
-                }
-            }
-        }
 
-        /// <summary>
-        /// Erases a specified subdictionary under EE_Foundation.
-        /// </summary>
-        public static void EraseFoundationSubDictionary(string subDictionaryName)
-        {
-            if (string.IsNullOrWhiteSpace(subDictionaryName))
-                throw new ArgumentException("Subdictionary name cannot be null or empty.", nameof(subDictionaryName));
-
-            subDictionaryName = subDictionaryName.Trim().ToUpperInvariant();
-
-            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-            Database db = doc.Database;
-            Editor ed = doc.Editor;
-
-            using (Transaction tr = db.TransactionManager.StartTransaction())
-            {
-                try
-                {
-                    DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
-
-                    if (!nod.Contains(ROOT))
-                    {
-                        ed.WriteMessage("\nEE_Foundation root dictionary does not exist.");
-                        return;
-                    }
-
-                    DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
-
-                    if (!root.Contains(subDictionaryName))
-                    {
-                        ed.WriteMessage($"\nSubdictionary {subDictionaryName} does not exist.");
-                        return;
-                    }
-
-                    DBDictionary subDict = (DBDictionary)tr.GetObject(root.GetAt(subDictionaryName), OpenMode.ForWrite);
-                    subDict.Erase();
-                    tr.Commit();
-
-                    ed.WriteMessage($"\nSubdictionary {subDictionaryName} erased.");
-                }
-                catch (System.Exception ex)
-                {
-                    ed.WriteMessage($"\nTransaction failed: {ex.Message}");
-                }
-            }
-        }
 
         /// <summary>
         /// Recursively exports a DBDictionary, serializing Entities, XRecords, and subdictionaries.
@@ -573,53 +505,38 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         // ==========================================================
         //  HELPER UTILITIES
         // ==========================================================
-        internal static DBDictionary GetOrCreateRootDictionary(Transaction tr, Database db)
-        {
-            if (tr == null || db == null)
-                return null;
-
-            // Open the top-level Named Objects Dictionary
-            DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
-            if (nod == null)
-                return null;
-
-            // Check if EE_Foundation exists
-            if (!nod.Contains(ROOT))
-            {
-                DBDictionary root = new DBDictionary();
-                nod.SetAt(ROOT, root);
-                tr.AddNewlyCreatedDBObject(root, true);
-
-                Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-                doc.Editor.WriteMessage("\nCreated root dictionary: " + ROOT);
-                return root;
-            }
-
-            // Return existing EE_Foundation
-            return (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForWrite);
-        }
 
         /// <summary>
         /// Ensures a subdictionary exists under another subdictionary (nested).
         /// </summary>
-        internal static DBDictionary GetOrCreateSubDictionary(
-            Transaction tr,
-            DBDictionary parentDict,
-            string subKey)
+
+
+        internal static DBDictionary GetOrCreateNestedSubDictionary(Transaction tr, DBDictionary root, params string[] keys)
         {
-            if (tr == null || parentDict == null || string.IsNullOrWhiteSpace(subKey))
+            if (tr == null || root == null || keys == null || keys.Length == 0)
                 return null;
 
-            if (!parentDict.Contains(subKey))
+            DBDictionary current = root;
+
+            foreach (string key in keys)
             {
-                DBDictionary sub = new DBDictionary();
-                parentDict.SetAt(subKey, sub);
-                tr.AddNewlyCreatedDBObject(sub, true);
-                return sub;
+                if (!current.Contains(key))
+                {
+                    var sub = new DBDictionary();
+                    current.SetAt(key, sub);
+                    tr.AddNewlyCreatedDBObject(sub, true);
+                    current = sub;
+                }
+                else
+                {
+                    current = (DBDictionary)tr.GetObject(current.GetAt(key), OpenMode.ForWrite);
+                }
             }
 
-            return (DBDictionary)tr.GetObject(parentDict.GetAt(subKey), OpenMode.ForWrite);
+            return current;
         }
+
+
 
         internal static Xrecord GetOrCreateMetadataXrecord(
             Transaction tr,
@@ -659,24 +576,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         // --------------------------------------------------------
         //  Generic helper to get or create a subdictionary under "EE_Foundation"
         // --------------------------------------------------------
-        internal static DBDictionary GetSubDictionary(Transaction tr, Database db, string subKey)
-        {
-            if (tr == null || db == null || string.IsNullOrWhiteSpace(subKey))
-                return null;
 
-            // Get the top-level NOD
-            DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-            if (nod == null || !nod.Contains(ROOT))
-                return null;
-
-            // Get the root EE_Foundation dictionary
-            DBDictionary root = (DBDictionary)tr.GetObject(nod.GetAt(ROOT), OpenMode.ForRead);
-            if (root == null || !root.Contains(subKey))
-                return null;
-
-            // Return the subdictionary (FD_BOUNDARY or FD_GRADEBEAM)
-            return (DBDictionary)tr.GetObject(root.GetAt(subKey), OpenMode.ForRead);
-        }
 
         /// <summary>
         /// Adds a handle as an Xrecord to a dictionary if it doesn't exist.
@@ -711,57 +611,48 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             // Normalize name
             subDictName = subDictName.Trim().ToUpperInvariant();
 
-            // Get subdictionary
-            DBDictionary subDict = GetSubDictionary(tr, db, subDictName);
-            if (subDict == null)
+            // Open the top-level NOD
+            var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+
+            // Get the EE_Foundation root dictionary
+            var root = NODCore.GetOrCreateNestedSubDictionary(tr, nod, NODCore.ROOT);
+            if (root == null)
                 return false;
 
-            // Must open for write
-            if (!subDict.IsWriteEnabled)
-                subDict.UpgradeOpen();
+            // Get the requested subdictionary (no creation, just read/write if exists)
+            DBDictionary subDict;
+            try
+            {
+                subDict = (DBDictionary)tr.GetObject(root.GetAt(subDictName), OpenMode.ForWrite);
+            }
+            catch
+            {
+                // Subdictionary does not exist
+                return false;
+            }
 
             // Collect keys first (cannot modify while iterating)
             var keys = new List<string>();
             foreach (DBDictionaryEntry entry in subDict)
-            {
                 keys.Add(entry.Key);
-            }
 
             // Remove each entry
             foreach (string key in keys)
             {
                 try
                 {
-                    DBObject obj = tr.GetObject(subDict.GetAt(key), OpenMode.ForWrite);
+                    var obj = tr.GetObject(subDict.GetAt(key), OpenMode.ForWrite);
                     obj.Erase();
                 }
                 catch
                 {
-                    // Ignore individual failures, continue clearing
+                    // Ignore individual failures
                 }
             }
 
             return true;
         }
 
-        internal static bool ClearFoundationSubDictionary(FoundationContext context,
-            Database db,
-            string subDictName)
-        {
-            if (db == null) throw new ArgumentNullException(nameof(db));
-
-            Document doc = context.Document;
-
-            using (doc.LockDocument())
-            using (Transaction tr = db.TransactionManager.StartTransaction())
-            {
-                bool result =
-                    ClearFoundationSubDictionaryInternal(tr, db, subDictName);
-
-                tr.Commit();
-                return result;
-            }
-        }
 
         /// <summary>
         /// Returns all valid, non-erased ObjectIds from handle strings stored in a sub-dictionary.
@@ -919,31 +810,53 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         /// <param name="subDictKey">Key identifying the sub-dictionary.</param>
         /// <param name="oid">Receives the ObjectId of the first valid entity if found.</param>
         /// <returns>True if a valid entity is found; otherwise false.</returns>
-        public static bool TryGetFirstEntity(FoundationContext context,
-            Transaction tr, Database db, string subDictKey, out ObjectId oid)
+        public static bool TryGetFirstEntity(
+            FoundationContext context,
+            Transaction tr,
+            Database db,
+            string subDictKey,
+            out ObjectId oid)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
             if (tr == null) throw new ArgumentNullException(nameof(tr));
+            if (db == null) throw new ArgumentNullException(nameof(db));
+            if (string.IsNullOrWhiteSpace(subDictKey))
+            {
+                oid = ObjectId.Null;
+                return false;
+            }
 
             oid = ObjectId.Null;
 
-            // Retrieve the requested sub-dictionary
-            var subDict = GetSubDictionary(tr, db, subDictKey);
+            // Get the subdictionary under the root
+            var rootDict = NODCore.GetOrCreateNestedSubDictionary(
+                tr,
+                (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite),
+                NODCore.ROOT
+            );
+
+            if (rootDict == null || !rootDict.Contains(subDictKey))
+                return false;
+
+            var subDict = (DBDictionary)tr.GetObject(rootDict.GetAt(subDictKey), OpenMode.ForRead);
             if (subDict == null || subDict.Count == 0)
                 return false;
 
-            // Evaluate the first entry only
+            // Take the first valid ObjectId
             foreach (DBDictionaryEntry entry in subDict)
             {
                 if (TryGetObjectIdFromHandleString(context, db, entry.Key, out oid)
                     && IsValidReadableObject(tr, oid))
+                {
                     return true;
+                }
 
-                break;
+                break; // Only check the first entry
             }
 
             return false;
         }
+
 
         // ==========================================================
         // REMOVE SPECIFIC HANDLE (Dynamic Sub-Dictionary)
@@ -984,18 +897,29 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             if (context == null) throw new ArgumentNullException(nameof(context));
             if (tr == null) throw new ArgumentNullException(nameof(tr));
             if (db == null) throw new ArgumentNullException(nameof(db));
-            if (string.IsNullOrWhiteSpace(subDictName)) throw new ArgumentException(nameof(subDictName));
+            if (string.IsNullOrWhiteSpace(subDictName))
+                throw new ArgumentException("Subdictionary name required.", nameof(subDictName));
 
             int deletedCount = 0;
 
-            DBDictionary subDict = GetSubDictionary(tr, db, subDictName);
-            if (subDict == null)
+            // Get the subdictionary using the nested helper
+            DBDictionary subDict = NODCore.GetOrCreateNestedSubDictionary(
+                tr,
+                (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite),
+                NODCore.ROOT,
+                subDictName
+            );
+
+            if (subDict == null || subDict.Count == 0)
                 return 0;
 
+            // Collect keys first (handles) to avoid modifying dictionary while iterating
             var handles = new List<string>();
-            foreach (DBDictionaryEntry entry in subDict)
-                handles.Add(entry.Key);
-
+            foreach (DictionaryEntry entry in subDict)
+            {
+                if (entry.Key is string key)
+                    handles.Add(key);
+            }
             foreach (string handleStr in handles)
             {
                 if (!TryGetObjectIdFromHandleString(context, db, handleStr, out ObjectId id))
@@ -1006,16 +930,19 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
                 try
                 {
-                    Entity ent = tr.GetObject(id, OpenMode.ForWrite) as Entity;
-                    if (ent == null) continue;
+                    // Erase the entity
+                    if (id.IsValid && !id.IsErased)
+                    {
+                        Entity ent = tr.GetObject(id, OpenMode.ForWrite) as Entity;
+                        ent?.Erase();
+                        deletedCount++;
+                    }
 
-                    ent.Erase();
-                    deletedCount++;
-
+                    // Optionally remove the Xrecord / handle from the NOD
                     if (removeHandlesFromNod && subDict.Contains(handleStr))
                     {
-                        DBObject xr = tr.GetObject(subDict.GetAt(handleStr), OpenMode.ForWrite);
-                        xr.Erase();
+                        DBObject obj = tr.GetObject(subDict.GetAt(handleStr), OpenMode.ForWrite);
+                        obj?.Erase();
                     }
                 }
                 catch
@@ -1026,6 +953,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
             return deletedCount;
         }
+
 
 
         internal static int DeleteEntitiesFromFoundationSubDictionary(FoundationContext context,

@@ -131,7 +131,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 
                             if (value is Newtonsoft.Json.Linq.JObject obj)
                             {
-                                DBDictionary subDict = NODCore.GetOrCreateSubDictionary(tr, root, key);
+                                DBDictionary subDict = NODCore.GetOrCreateNestedSubDictionary(tr, root, key);
                                 RestoreDictionaryFromJson(context, tr, subDict, obj, db);
                             }
                             else
@@ -208,7 +208,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                         else
                         {
                             // Subdictionary: recurse
-                            DBDictionary subDict = NODCore.GetOrCreateSubDictionary(tr, dict, key);
+                            DBDictionary subDict = NODCore.GetOrCreateNestedSubDictionary(tr, dict, key);
                             RestoreDictionaryFromJson(context, tr, subDict, innerObj, db);
                         }
                     }

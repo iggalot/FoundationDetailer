@@ -114,17 +114,17 @@ namespace FoundationDetailsLibraryAutoCAD.Commands
             if (context == null) throw new ArgumentNullException(nameof(context));
 
             var doc = context.Document;
-            var model = context.Model;
-
             if (doc == null) return;
 
             var db = doc.Database;
             var ed = doc.Editor;
 
             // Prompt for sub-dictionary name
-            PromptStringOptions psoSub = new PromptStringOptions("\nEnter sub-dictionary name:");
-            psoSub.AllowSpaces = false;
-            PromptResult resSub = ed.GetString(psoSub);
+            var psoSub = new PromptStringOptions("\nEnter sub-dictionary name:")
+            {
+                AllowSpaces = false
+            };
+            var resSub = ed.GetString(psoSub);
             if (resSub.Status != PromptStatus.OK) return;
 
             string subDictName = resSub.StringResult.Trim().ToUpperInvariant();
@@ -137,14 +137,15 @@ namespace FoundationDetailsLibraryAutoCAD.Commands
             }
 
             // Prompt for handle to remove
-            PromptStringOptions psoHandle = new PromptStringOptions("\nEnter handle to remove:");
-            psoHandle.AllowSpaces = false;
-            PromptResult resHandle = ed.GetString(psoHandle);
+            var psoHandle = new PromptStringOptions("\nEnter handle to remove:")
+            {
+                AllowSpaces = false
+            };
+            var resHandle = ed.GetString(psoHandle);
             if (resHandle.Status != PromptStatus.OK) return;
 
             string handleStr = resHandle.StringResult.Trim();
-            Handle handle;
-            if (!NODCore.TryParseHandle(context, handleStr, out handle))
+            if (!NODCore.TryParseHandle(context, handleStr, out Handle handle))
             {
                 ed.WriteMessage("\nInvalid handle string.");
                 return;
@@ -154,8 +155,14 @@ namespace FoundationDetailsLibraryAutoCAD.Commands
             {
                 try
                 {
-                    // Retrieve the sub-dictionary dynamically
-                    DBDictionary subDict = NODCore.GetSubDictionary(tr, db, subDictName);
+                    // Use nested helper to get the subdictionary under the root
+                    DBDictionary subDict = NODCore.GetOrCreateNestedSubDictionary(
+                        tr,
+                        (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite),
+                        NODCore.ROOT,
+                        subDictName
+                    );
+
                     if (subDict == null || !subDict.Contains(handleStr))
                     {
                         ed.WriteMessage($"\nHandle {handleStr} not found in sub-dictionary {subDictName}.");
