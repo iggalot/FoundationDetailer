@@ -1,5 +1,10 @@
+using Autodesk.AutoCAD.ApplicationServices;
+using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Runtime;
 using Autodesk.AutoCAD.Windows;
+using FoundationDetailsLibraryAutoCAD.AutoCAD.NOD;
+using FoundationDetailsLibraryAutoCAD.Data;
 using FoundationDetailsLibraryAutoCAD.UI;
 using System;
 using System.Windows.Forms;
@@ -71,6 +76,139 @@ namespace FoundationDetailsLibraryAutoCAD.Commands
                 _paletteSet.Visible = true;
             }
         }
-        
+
+        [CommandMethod("DeleteFoundationEntities")]
+        public void DeleteFoundationEntitiesCommand(FoundationContext context)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            var doc = context.Document;
+            var model = context.Model;
+
+            if (doc == null) return;
+
+            var db = doc.Database;
+            var ed = doc.Editor;
+
+            PromptStringOptions pso =
+                new PromptStringOptions("\nEnter foundation sub-dictionary:");
+            pso.AllowSpaces = false;
+
+            var res = ed.GetString(pso);
+            if (res.Status != PromptStatus.OK)
+                return;
+
+            string sub = res.StringResult.Trim().ToUpperInvariant();
+
+            int count = NODCore.DeleteEntitiesFromFoundationSubDictionary(
+                context,
+                doc.Database,
+                sub,
+                removeHandlesFromNod: true);
+
+            ed.WriteMessage($"\nDeleted {count} entities from {sub}.");
+        }
+
+        [CommandMethod("RemoveNODRecordManual")]
+        public void RemoveNODRecordManual(FoundationContext context)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var model = context.Model;
+
+            if (doc == null) return;
+
+            var db = doc.Database;
+            var ed = doc.Editor;
+
+            // Prompt for sub-dictionary name
+            PromptStringOptions psoSub = new PromptStringOptions("\nEnter sub-dictionary name:");
+            psoSub.AllowSpaces = false;
+            PromptResult resSub = ed.GetString(psoSub);
+            if (resSub.Status != PromptStatus.OK) return;
+
+            string subDictName = resSub.StringResult.Trim().ToUpperInvariant();
+
+            // Validate against known sub-dictionaries dynamically
+            if (Array.IndexOf(NODCore.KNOWN_SUBDIRS, subDictName) < 0)
+            {
+                ed.WriteMessage("\nInvalid sub-dictionary. Must be one of: " + string.Join(", ", NODCore.KNOWN_SUBDIRS));
+                return;
+            }
+
+            // Prompt for handle to remove
+            PromptStringOptions psoHandle = new PromptStringOptions("\nEnter handle to remove:");
+            psoHandle.AllowSpaces = false;
+            PromptResult resHandle = ed.GetString(psoHandle);
+            if (resHandle.Status != PromptStatus.OK) return;
+
+            string handleStr = resHandle.StringResult.Trim();
+            Handle handle;
+            if (!NODCore.TryParseHandle(context, handleStr, out handle))
+            {
+                ed.WriteMessage("\nInvalid handle string.");
+                return;
+            }
+
+            using (Transaction tr = db.TransactionManager.StartTransaction())
+            {
+                try
+                {
+                    // Retrieve the sub-dictionary dynamically
+                    DBDictionary subDict = NODCore.GetSubDictionary(tr, db, subDictName);
+                    if (subDict == null || !subDict.Contains(handleStr))
+                    {
+                        ed.WriteMessage($"\nHandle {handleStr} not found in sub-dictionary {subDictName}.");
+                        return;
+                    }
+
+                    // Erase the Xrecord associated with the handle
+                    Xrecord xr = (Xrecord)tr.GetObject(subDict.GetAt(handleStr), OpenMode.ForWrite);
+                    xr.Erase();
+
+                    tr.Commit();
+                    ed.WriteMessage($"\nHandle {handleStr} successfully removed from {subDictName}.");
+                }
+                catch (System.Exception ex)
+                {
+                    ed.WriteMessage($"\nTransaction failed: {ex.Message}");
+                }
+            }
+        }
+
+        [CommandMethod("ClearFoundationSubDict")]
+        public static void ClearFoundationSubDictCommand()
+        {
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            Editor ed = doc.Editor;
+            Database db = doc.Database;
+
+            PromptStringOptions pso =
+                new PromptStringOptions("\nEnter sub-dictionary to clear:");
+            pso.AllowSpaces = false;
+
+            PromptResult res = ed.GetString(pso);
+            if (res.Status != PromptStatus.OK)
+                return;
+
+            string subName = res.StringResult.Trim().ToUpperInvariant();
+
+            using (doc.LockDocument())
+            using (Transaction tr = db.TransactionManager.StartTransaction())
+            {
+                if (NODCore.ClearFoundationSubDictionaryInternal(tr, db, subName))
+                {
+                    ed.WriteMessage($"\nSubdictionary {subName} cleared.");
+                }
+                else
+                {
+                    ed.WriteMessage($"\nSubdictionary {subName} not found.");
+                }
+
+                tr.Commit();
+            }
+        }
+
+
     }
 }

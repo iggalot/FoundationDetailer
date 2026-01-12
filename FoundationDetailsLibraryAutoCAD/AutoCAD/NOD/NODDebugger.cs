@@ -1,10 +1,11 @@
-﻿using Autodesk.AutoCAD.DatabaseServices;
+﻿using Autodesk.AutoCAD.ApplicationServices;
+using Autodesk.AutoCAD.DatabaseServices;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 
-namespace FoundationDetailsLibraryAutoCAD.AutoCAD
+namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 {
     /// <summary>
     /// Tool for displaying and debugging the current drawings NOD structure.
@@ -85,5 +86,73 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 }
             }
         }
+
+        public static void DebugSetImpliedSelection(
+Document doc,
+IEnumerable<ObjectId> ids,
+string tag = null)
+        {
+            if (doc == null || ids == null)
+                return;
+
+            var ed = doc.Editor;
+
+            ed.WriteMessage($"\n[Selection Debug] {tag ?? ""}");
+
+            int index = 0;
+
+            foreach (var id in ids)
+            {
+                index++;
+
+                try
+                {
+                    // Basic validity checks
+                    if (id.IsNull)
+                    {
+                        ed.WriteMessage($"\n  #{index}: NULL ObjectId");
+                        continue;
+                    }
+
+                    if (!id.IsValid)
+                    {
+                        ed.WriteMessage($"\n  #{index}: INVALID ObjectId ({id})");
+                        continue;
+                    }
+
+                    if (id.IsErased)
+                    {
+                        ed.WriteMessage($"\n  #{index}: ERASED ObjectId ({id})");
+                        continue;
+                    }
+
+                    if (id.Database != doc.Database)
+                    {
+                        ed.WriteMessage($"\n  #{index}: WRONG DATABASE ({id})");
+                        continue;
+                    }
+
+                    // Try selecting JUST this ID
+                    ed.SetImpliedSelection(new[] { id });
+
+                    ed.WriteMessage(
+                        $"\n  #{index}: OK ({id.Handle})");
+                }
+                catch (Autodesk.AutoCAD.Runtime.Exception ex)
+                {
+                    ed.WriteMessage(
+                        $"\n  #{index}: FAILED ({id.Handle}) → {ex.ErrorStatus}");
+                }
+                catch (System.Exception ex)
+                {
+                    ed.WriteMessage(
+                        $"\n  #{index}: FAILED ({id.Handle}) → {ex.Message}");
+                }
+            }
+
+            // Clear selection at the end (optional)
+            try { ed.SetImpliedSelection(Array.Empty<ObjectId>()); } catch { }
+        }
+
     }
 }

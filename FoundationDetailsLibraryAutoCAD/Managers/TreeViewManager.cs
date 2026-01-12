@@ -1,5 +1,5 @@
 ﻿using Autodesk.AutoCAD.DatabaseServices;
-using FoundationDetailsLibraryAutoCAD.AutoCAD;
+using FoundationDetailsLibraryAutoCAD.AutoCAD.NOD;
 using FoundationDetailsLibraryAutoCAD.Data;
 using FoundationDetailsLibraryAutoCAD.UI.Controls;
 using System;
@@ -14,14 +14,14 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
         internal readonly Dictionary<string, Func<TreeNodeInfo, TreeViewItem>> _controlMap =
             new Dictionary<string, Func<TreeNodeInfo, TreeViewItem>>
             {
-                { NODManager.KEY_BOUNDARY_SUBDICT, leafInfo =>
+                { NODCore.KEY_BOUNDARY_SUBDICT, leafInfo =>
                     new TreeViewItem
                     {
                         Header = new PolylineTreeItemControl { DataContext = new PolylineTreeItemViewModel((Polyline)leafInfo.Entity) },
                         Tag = leafInfo
                     }
                 },
-                { NODManager.KEY_GRADEBEAM_SUBDICT, leafInfo =>
+                { NODCore.KEY_GRADEBEAM_SUBDICT, leafInfo =>
                     new TreeViewItem
                     {
                         Header = new PolylineTreeItemControl { DataContext = new PolylineTreeItemViewModel((Polyline)leafInfo.Entity) },
@@ -62,13 +62,13 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
 
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                var root = NODManager.GetFoundationRoot(context, tr);
+                var root = NODCore.GetFoundationRoot(context, tr);
                 if (root == null) return;
 
                 var nodeMap = new Dictionary<string, TreeViewItem>();
                 TreeViewItem rootNode = new TreeViewItem
                 {
-                    Header = NODManager.ROOT,
+                    Header = NODCore.ROOT,
                     IsExpanded = true
                 };
 

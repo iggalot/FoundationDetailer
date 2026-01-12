@@ -2,7 +2,7 @@
 using FoundationDetailsLibraryAutoCAD.Data;
 using System.Collections.Generic;
 
-namespace FoundationDetailsLibraryAutoCAD.AutoCAD
+namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 {
     internal static class NODHelper
     {
@@ -18,10 +18,10 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             var db = doc.Database;
 
             var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-            if (!nod.Contains(NODManager.ROOT))
+            if (!nod.Contains(NODCore.ROOT))
                 return false;
 
-            var root = (DBDictionary)tr.GetObject(nod.GetAt(NODManager.ROOT), OpenMode.ForRead);
+            var root = (DBDictionary)tr.GetObject(nod.GetAt(NODCore.ROOT), OpenMode.ForRead);
             if (!root.Contains(subdictKey))
                 return false;
 

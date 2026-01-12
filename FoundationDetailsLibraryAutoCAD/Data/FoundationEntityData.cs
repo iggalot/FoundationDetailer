@@ -1,5 +1,6 @@
 ﻿using Autodesk.AutoCAD.DatabaseServices;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
+using FoundationDetailsLibraryAutoCAD.AutoCAD.NOD;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -208,8 +209,8 @@ namespace FoundationDetailsLibraryAutoCAD.Data
                 {
                     // Try to resolve as an entity handle
                     ObjectId? id = null;
-                    if (NODManager.TryGetObjectIdFromHandleString(context, db, entry.Key, out ObjectId objId) &&
-                        NODManager.IsValidReadableObject(tr, objId))
+                    if (NODCore.TryGetObjectIdFromHandleString(context, db, entry.Key, out ObjectId objId) &&
+                        NODCore.IsValidReadableObject(tr, objId))
                     {
                         id = objId;
                     }

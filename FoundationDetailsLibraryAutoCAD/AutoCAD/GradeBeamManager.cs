@@ -3,6 +3,7 @@ using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
+using FoundationDetailsLibraryAutoCAD.AutoCAD.NOD;
 using FoundationDetailsLibraryAutoCAD.Data;
 using FoundationDetailsLibraryAutoCAD.Managers;
 using FoundationDetailsLibraryAutoCAD.Services;
@@ -99,10 +100,10 @@ namespace FoundationDetailer.AutoCAD
             }
 
             // --- Write grade beam metadata (domain-specific) ---
-            FoundationEntityData.Write(tr, pl, NODManager.KEY_GRADEBEAM_SUBDICT);
+            FoundationEntityData.Write(tr, pl, NODCore.KEY_GRADEBEAM_SUBDICT);
 
             // --- Add centerline handle (domain-specific) ---
-            NODManager.AddGradeBeamCenterlineHandleToNOD(context, pl.ObjectId, tr);
+            GradeBeamNOD.AddGradeBeamCenterlineHandleToNOD(context, pl.ObjectId, tr);
 
             return pl;
         }
@@ -193,7 +194,7 @@ namespace FoundationDetailer.AutoCAD
             RegisterGradeBeam(context, newPl, tr, appendToModelSpace: false);
 
             // --- Remove old GradeBeam NOD entry if it exists ---
-            NODManager.EraseGradeBeamEntry(tr, db, oldEnt.Handle.ToString());
+            GradeBeamNOD.EraseGradeBeamEntry(tr, db, oldEnt.Handle.ToString());
 
             // --- Delete old entity from ModelSpace ---
             oldEnt.UpgradeOpen();
@@ -214,8 +215,8 @@ namespace FoundationDetailer.AutoCAD
             {
                 using (Transaction tr = db.TransactionManager.StartTransaction())
                 {
-                    NODManager.DeleteEntitiesFromFoundationSubDictionary(context, tr, db, NODManager.KEY_GRADEBEAM_SUBDICT);
-                    NODManager.ClearFoundationSubDictionary(context, db, NODManager.KEY_GRADEBEAM_SUBDICT);
+                    NODCore.DeleteEntitiesInSubDictionary(context, tr, db, NODCore.KEY_GRADEBEAM_SUBDICT);
+                    NODCore.ClearFoundationSubDictionary(context, db, NODCore.KEY_GRADEBEAM_SUBDICT);
                     tr.Commit();
                 }
             }
@@ -233,11 +234,11 @@ namespace FoundationDetailer.AutoCAD
             using (doc.LockDocument())
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                exists = NODManager.TryGetFirstEntity(
+                exists = NODCore.TryGetFirstEntity(
                     context,
                     tr,
                     db,
-                    NODManager.KEY_GRADEBEAM_SUBDICT,  // The sub-dictionary key for grade beams
+                    NODCore.KEY_GRADEBEAM_SUBDICT,  // The sub-dictionary key for grade beams
                     out ObjectId oid
                 );
 
@@ -258,12 +259,12 @@ namespace FoundationDetailer.AutoCAD
             using (var tr = db.TransactionManager.StartTransaction())
             {
                 // Get the KEY_GRADEBEAM_SUBDICT sub-dictionary
-                var subDict = NODManager.GetSubDictionary(tr, db, NODManager.KEY_GRADEBEAM_SUBDICT);
+                var subDict = NODCore.GetSubDictionary(tr, db, NODCore.KEY_GRADEBEAM_SUBDICT);
                 if (subDict == null)
                     return (0, 0);
 
                 // Get all valid ObjectIds using your helper
-                var validIds = NODManager.GetAllValidObjectIdsFromSubDictionary(context, tr, db, subDict);
+                var validIds = NODCore.GetAllValidObjectIdsFromSubDictionary(context, tr, db, subDict);
 
                 quantity = validIds.Count;
 
@@ -297,7 +298,7 @@ namespace FoundationDetailer.AutoCAD
             var ed = doc.Editor;
 
             // STEP 1 — Collect grade beams
-            if (!NODManager.TryGetGradeBeams(context, out List<Polyline> beams) ||
+            if (!GradeBeamNOD.TryGetGradeBeamPolylines(context, out List<Polyline> beams) ||
                 beams == null || beams.Count == 0)
             {
                 ed.WriteMessage("\n[GradeBeam] No grade beams found.");
@@ -325,56 +326,28 @@ namespace FoundationDetailer.AutoCAD
 
         }
 
-
-
-
-
-
-
-
-
-
-        public static bool TryGetGradeBeams(
-            FoundationContext context,
-            out List<Polyline> gradeBeams)
+        // Track which documents have already registered the RegApp
+        private readonly HashSet<Document> _regAppRegistered = new HashSet<Document>();
+        /// <summary>
+        /// Registers the FD_GRADEBEAM RegApp if not already registered for this document.
+        /// </summary>
+        public void RegisterGradeBeamRegApp(Document doc, Transaction tr)
         {
-            gradeBeams = new List<Polyline>();
+            if (_regAppRegistered.Contains(doc)) return;
 
-            if (context == null)
-                return false;
-
-            var doc = context.Document;
             var db = doc.Database;
-
-            using (doc.LockDocument())
-            using (var tr = db.TransactionManager.StartTransaction())
+            var rat = (RegAppTable)tr.GetObject(db.RegAppTableId, OpenMode.ForWrite);
+            if (!rat.Has(NODCore.KEY_GRADEBEAM_SUBDICT))
             {
-                if (!NODManager.TryGetAllGradeBeamHandles(context, tr, out var handles))
-                    return false;
-
-                foreach (string handleStr in handles)
-                {
-                    if (!NODManager.TryGetObjectIdFromHandleString(
-                            context, db, handleStr, out ObjectId oid))
-                        continue;
-
-                    if (oid.IsNull || oid.IsErased || !oid.IsValid)
-                        continue;
-
-                    var pl = tr.GetObject(oid, OpenMode.ForRead, false) as Polyline;
-                    if (pl != null)
-                        gradeBeams.Add(pl);
-                }
-
-                return gradeBeams.Count > 0;
+                var ratr = new RegAppTableRecord { Name = NODCore.KEY_GRADEBEAM_SUBDICT };
+                rat.Add(ratr);
+                tr.AddNewlyCreatedDBObject(ratr, true);
             }
+
+            _regAppRegistered.Add(doc);
         }
 
-
-
-
     }
-
 }
 
 

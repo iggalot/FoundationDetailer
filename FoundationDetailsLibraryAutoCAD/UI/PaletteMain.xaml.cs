@@ -4,25 +4,19 @@ using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using FoundationDetailer.AutoCAD;
 using FoundationDetailer.Managers;
-using FoundationDetailer.UI.Controls;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
+using FoundationDetailsLibraryAutoCAD.AutoCAD.NOD;
 using FoundationDetailsLibraryAutoCAD.Data;
 using FoundationDetailsLibraryAutoCAD.Managers;
 using FoundationDetailsLibraryAutoCAD.Services;
-using FoundationDetailsLibraryAutoCAD.UI.Controls;
 using FoundationDetailsLibraryAutoCAD.UI.Controls.EqualSpacingGBControl;
-using FoundationDetailsLibraryAutoCAD.UI.Controls.GradeBeamSummaryControl;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
-using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Threading;
-using static FoundationDetailsLibraryAutoCAD.AutoCAD.NODManager;
-using static FoundationDetailsLibraryAutoCAD.Managers.TreeViewManager;
 using static FoundationDetailsLibraryAutoCAD.UI.Controls.PrelimGBControl.PrelimGradeBeamControl;
 
 namespace FoundationDetailsLibraryAutoCAD.UI
@@ -65,7 +59,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             var context = CurrentContext;
             using (var tr = context.Document.Database.TransactionManager.StartTransaction())
             {
-                NODManager.InitFoundationNOD(context, tr);
+                NODCore.InitFoundationNOD(context, tr);
                 tr.Commit();
             }
 
@@ -487,7 +481,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             using (var tr = doc.Database.TransactionManager.StartTransaction())
             {
                 var treeMgr = new TreeViewManager();
-                var root = NODManager.GetFoundationRoot(context, tr);
+                var root = NODCore.GetFoundationRoot(context, tr);
                 if (root == null) return;
 
                 var nodeMap = new Dictionary<string, TreeViewItem>();
@@ -495,9 +489,9 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 // Root node
                 var rootNode = new TreeViewItem
                 {
-                    Header = NODManager.ROOT,
+                    Header = NODCore.ROOT,
                     IsExpanded = true,
-                    Tag = new TreeViewManager.TreeNodeInfo(NODManager.ROOT, true)
+                    Tag = new TreeViewManager.TreeNodeInfo(NODCore.ROOT, true)
                 };
 
                 TreeViewExtensionData.Items.Add(rootNode);
@@ -610,8 +604,8 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         private void BtnQueryNOD_Click()
         {
             var context = CurrentContext;
-            NODManager.CleanFoundationNOD(context);
-            NODManager.ViewFoundationNOD(context); // optional debug
+            NODCore.CleanFoundationNOD(context);
+            NODViewer.ViewFoundationNOD(context); // optional debug
 
             var doc = context?.Document;
             if(doc == null) return;
@@ -621,7 +615,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
-                DBDictionary root = NODManager.GetFoundationRoot(context, tr);
+                DBDictionary root = NODCore.GetFoundationRoot(context, tr);
                 string tree = NODDebugger.DumpDictionaryTree(root, tr, "EE_Foundation");
                 Console.WriteLine(tree);
             }
@@ -665,7 +659,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                     // CHECK: already a GradeBeam?
                     // --------------------------------------------
                     bool alreadyInTree =
-                        NODManager.IsHandleAlreadyInTree(
+                        NODCore.IsHandleAlreadyInTree(
                             CurrentContext,
                             tr,
                             db.NamedObjectsDictionaryId,
@@ -711,19 +705,19 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             var ed = doc.Editor;
 
             // get the interpolated points.
-            (Point3d? start, Point3d? end) = AutoCADPromptService.PromptForSpacingPoints(CurrentContext);
+            (Point3d? start, Point3d? end) = AutoCADEditorPromptService.PromptForSpacingPoints(CurrentContext);
             if (start == null || end == null)
             {
                 ed.WriteMessage("No points selected.");
                 return;
             }
-            var spaces = AutoCADPromptService.PromptForEqualSpacingCount(CurrentContext);
+            var spaces = AutoCADEditorPromptService.PromptForEqualSpacingCount(CurrentContext);
             if (spaces <= 1)
             {
                 ed.WriteMessage("At least 2 spaces are required.");
                 return;
             }
-            var dir = AutoCADPromptService.PromptForSpacingDirection(CurrentContext);
+            var dir = AutoCADEditorPromptService.PromptForSpacingDirection(CurrentContext);
             if (dir == null)
             {
                 ed.WriteMessage("No direction selected.");
