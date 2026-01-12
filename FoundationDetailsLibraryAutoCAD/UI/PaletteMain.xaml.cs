@@ -658,12 +658,15 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                     // --------------------------------------------
                     // CHECK: already a GradeBeam?
                     // --------------------------------------------
-                    bool alreadyInTree =
-                        NODCore.IsHandleAlreadyInTree(
-                            CurrentContext,
-                            tr,
-                            db.NamedObjectsDictionaryId,
-                            handle);
+                    // Open the NamedObjectsDictionary as a DBDictionary
+                    var nod = tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead) as DBDictionary;
+
+                    // Check if the handle exists anywhere in the NOD
+                    bool alreadyInTree = nod != null && NODScanner.ContainsHandle(
+                        CurrentContext,
+                        tr,
+                        nod,
+                        handle);
 
                     if (alreadyInTree)
                     {

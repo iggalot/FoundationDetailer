@@ -4,6 +4,7 @@ using FoundationDetailsLibraryAutoCAD.AutoCAD.NOD;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using static FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.HandleHandler;
 
 namespace FoundationDetailsLibraryAutoCAD.Data
 {
@@ -165,15 +166,16 @@ namespace FoundationDetailsLibraryAutoCAD.Data
 
             return rootItem;
         }
-        private static ObservableCollection<ExtensionDataItem> ProcessDictionary(FoundationContext context, Transaction tr, DBDictionary dict, Database db)
+        private static ObservableCollection<ExtensionDataItem> ProcessDictionary(
+            FoundationContext context,
+            Transaction tr,
+            DBDictionary dict,
+            Database db)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
             if (tr == null) throw new ArgumentNullException(nameof(tr));
             if (dict == null) throw new ArgumentNullException(nameof(dict));
             if (db == null) throw new ArgumentNullException(nameof(db));
-
-            var doc = context.Document;
-            var model = context.Model;
 
             var items = new ObservableCollection<ExtensionDataItem>();
 
@@ -183,42 +185,42 @@ namespace FoundationDetailsLibraryAutoCAD.Data
 
                 if (obj is DBDictionary subDict)
                 {
-                    var subItem = new ExtensionDataItem
+                    items.Add(new ExtensionDataItem
                     {
                         Name = entry.Key,
                         Type = "Subdictionary",
                         Children = ProcessDictionary(context, tr, subDict, db)
-                    };
-                    items.Add(subItem);
+                    });
                 }
                 else if (obj is Xrecord xr)
                 {
                     var xrValues = new List<string>();
-                    foreach (TypedValue tv in xr.Data)
-                        xrValues.Add($"[{tv.TypeCode}: {tv.Value}]");
-
-                    var xrItem = new ExtensionDataItem
+                    if (xr.Data != null)
                     {
-                        Name = entry.Key,
-                        Type = "XRecord",
-                        Value = xrValues
-                    };
-                    items.Add(xrItem);
-                }
-                else
-                {
-                    // Try to resolve as an entity handle
-                    ObjectId? id = null;
-                    if (NODCore.TryGetObjectIdFromHandleString(context, db, entry.Key, out ObjectId objId) &&
-                        NODCore.IsValidReadableObject(tr, objId))
-                    {
-                        id = objId;
+                        foreach (TypedValue tv in xr.Data)
+                            xrValues.Add($"[{tv.TypeCode}: {tv.Value}]");
                     }
 
                     items.Add(new ExtensionDataItem
                     {
                         Name = entry.Key,
-                        Type = obj.GetType().Name,
+                        Type = "XRecord",
+                        Value = xrValues
+                    });
+                }
+                else
+                {
+                    // Use ValidateHandleOrId and explicitly assign nullable ObjectId
+                    var handleEntry = NODCore.ValidateHandleOrId(context, tr, db, "ProcessDictionary", entry.Key);
+
+                    ObjectId? id = null;
+                    if (handleEntry.Status == HandleStatus.Valid)
+                        id = handleEntry.Id;
+
+                    items.Add(new ExtensionDataItem
+                    {
+                        Name = entry.Key,
+                        Type = obj?.GetType().Name ?? "Unknown",
                         Value = null,
                         ObjectId = id
                     });

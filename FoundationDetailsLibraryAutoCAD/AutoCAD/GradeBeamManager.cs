@@ -234,7 +234,7 @@ namespace FoundationDetailer.AutoCAD
             using (doc.LockDocument())
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                exists = NODCore.TryGetFirstEntity(
+                exists = NODScanner.TryGetFirstEntity(
                     context,
                     tr,
                     db,

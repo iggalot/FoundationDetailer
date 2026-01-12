@@ -321,7 +321,7 @@ namespace FoundationDetailer.Managers
                 using (var tr = db.TransactionManager.StartTransaction())
                 {
                     // Delegate the dictionary and handle lookup to NODManager
-                    if (!NODCore.TryGetFirstEntity(context, tr, db, NODCore.KEY_BOUNDARY_SUBDICT, out ObjectId oid))
+                    if (!NODScanner.TryGetFirstEntity(context, tr, db, NODCore.KEY_BOUNDARY_SUBDICT, out ObjectId oid))
                         return false;
 
                     if (oid.IsNull || oid.IsErased || !oid.IsValid)

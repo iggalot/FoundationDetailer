@@ -70,6 +70,8 @@
     <Compile Include="AutoCAD\NOD\NODDebugger.cs" />
     <Compile Include="AutoCAD\NOD\NODHelper.cs" />
     <Compile Include="AutoCAD\NOD\GradeBeamNOD.cs" />
+    <Compile Include="AutoCAD\NOD\NODIssueValidator.cs" />
+    <Compile Include="AutoCAD\NOD\NODScanner.cs" />
     <Compile Include="AutoCAD\NOD\NODViewer.cs" />
     <Compile Include="AutoCAD\NOD\TraversalResult.cs" />
     <Compile Include="AutoCAD\SelectionService.cs" />

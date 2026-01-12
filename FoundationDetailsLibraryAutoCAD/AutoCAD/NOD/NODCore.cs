@@ -71,89 +71,35 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             Transaction tr,
             Database db,
             DBDictionary dict)
-                {
-                    foreach (string handleKey in EnumerateHandleKeys(dict))
-                    {
-                        if (!TryGetObjectIdFromHandleString(context, db, handleKey, out ObjectId id))
-                            continue;
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+            if (db == null) throw new ArgumentNullException(nameof(db));
+            if (dict == null) yield break;
 
-                        if (IsValidReadableObject(tr, id))
-                            yield return id;
-                    }
-                }
+            // Use ProcessDictionaryEntries to recurse and handle each entry
+            foreach (var id in NODScanner.ProcessDictionaryEntries(context, tr, db, dict, "EnumerateValidEntityIds",
+                (handleKey, objId) =>
+                {
+                    var entry = ValidateHandleOrId(context, tr, db, "EnumerateValidEntityIds", handleKey);
+                    return entry.Status == HandleStatus.Valid ? entry.Id : ObjectId.Null;
+                },
+                recurseSubDictionaries: true))
+            {
+                if (!id.IsNull)
+                    yield return id;
+            }
+        }
+
+
 
         #endregion
 
         #region Validation
-        private static HandleEntry ValidateHandle(FoundationContext context,
-            Transaction tr,
-            Database db,
-            string groupName,
-            string handleStr)
-                {
-                    if (context == null) throw new ArgumentNullException(nameof(context));
 
-                    var result = new HandleEntry
-                    {
-                        GroupName = groupName,
-                        HandleKey = handleStr
-                    };
-
-                    // 1. Handle format check (HEX only)
-                    if (!IsValidHexHandle(handleStr))
-                    {
-                        result.Status = HandleStatus.Invalid;
-                        return result;
-                    }
-
-                    // 2. Resolve handle -> ObjectId
-                    ObjectId id;
-                    try
-                    {
-                        if (!TryGetObjectIdFromHandleString(context, db, handleStr, out id))
-                        {
-                            result.Status = HandleStatus.Invalid;
-                            return result;
-                        }
-                    }
-                    catch
-                    {
-                        // Unexpected failure resolving handle
-                        result.Status = HandleStatus.Error;
-                        return result;
-                    }
-
-                    result.Id = id;
-
-                    // 3. Attempt to open object
-                    try
-                    {
-                        DBObject obj = tr.GetObject(id, OpenMode.ForRead, false);
-
-                        if (obj == null || obj.IsErased)
-                        {
-                            result.Status = HandleStatus.Missing;
-                            return result;
-                        }
-
-                        result.Status = HandleStatus.Valid;
-                        return result;
-                    }
-                    catch (Autodesk.AutoCAD.Runtime.Exception)
-                    {
-                        // Expected AutoCAD case:
-                        // hard-erased / purged / zombie ObjectId
-                        result.Status = HandleStatus.Missing;
-                        return result;
-                    }
-                    catch
-                    {
-                        // Unexpected failure (transaction misuse, DB corruption, etc.)
-                        result.Status = HandleStatus.Error;
-                        return result;
-                    }
-                }
-
+        /// <summary>
+        /// Checks if a string is a valid hexadecimal handle.
+        /// </summary>
         private static bool IsValidHexHandle(string handle)
         {
             if (string.IsNullOrWhiteSpace(handle))
@@ -162,7 +108,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             for (int i = 0; i < handle.Length; i++)
             {
                 char c = handle[i];
-
                 bool isHex =
                     (c >= '0' && c <= '9') ||
                     (c >= 'A' && c <= 'F') ||
@@ -176,30 +121,98 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         }
 
         /// <summary>
-        /// Checks if an ObjectId is valid, readable, and not erased within a transaction.
+        /// Tries to resolve a handle string to an ObjectId.
         /// </summary>
-        /// <param name="tr">Active AutoCAD transaction.</param>
-        /// <param name="id">ObjectId to validate.</param>
-        /// <returns>True if valid and readable; otherwise false.</returns>
-        internal static bool IsValidReadableObject(Transaction tr, ObjectId id)
+        private static bool TryResolveHandleToObjectId(
+            FoundationContext context,
+            Database db,
+            string handleStr,
+            out ObjectId id)
         {
-            // Quick structural checks
-            if (id.IsNull || !id.IsValid)
+            id = ObjectId.Null;
+
+            if (!IsValidHexHandle(handleStr))
                 return false;
 
             try
             {
-                // Attempt to open the object for read
-                var obj = tr.GetObject(id, OpenMode.ForRead, false);
-                return obj != null && !obj.IsErased;
+                long handleValue = Convert.ToInt64(handleStr, 16);
+                Handle h = new Handle(handleValue);
+                id = db.GetObjectId(false, h, 0);
+                return !id.IsNull && id.IsValid;
             }
-            catch (Autodesk.AutoCAD.Runtime.Exception)
+            catch
             {
-                // Covers stale ObjectIds, wrong database, or invalid access
+                id = ObjectId.Null;
                 return false;
             }
         }
+
+        /// <summary>
+        /// Unified validation for either a handle string or an ObjectId.
+        /// Returns a <see cref="HandleEntry"/> with status indicating validity, missing, or invalid.
+        /// </summary>
+        internal static HandleEntry ValidateHandleOrId(
+            FoundationContext context,
+            Transaction tr,
+            Database db,
+            string groupName,
+            string handleStr,
+            ObjectId id = default(ObjectId))
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var result = new HandleEntry
+            {
+                GroupName = groupName,
+                HandleKey = handleStr ?? string.Empty,
+                Id = id
+            };
+
+            // If a handle string is provided, resolve it to ObjectId
+            if (!string.IsNullOrEmpty(handleStr))
+            {
+                if (!TryResolveHandleToObjectId(context, db, handleStr, out ObjectId resolvedId))
+                {
+                    result.Status = HandleStatus.Invalid;
+                    return result;
+                }
+
+                result.Id = resolvedId;
+            }
+
+            // If ObjectId is null or invalid
+            if (result.Id.IsNull || !result.Id.IsValid)
+            {
+                result.Status = HandleStatus.Invalid;
+                return result;
+            }
+
+            // Attempt to open the object safely
+            try
+            {
+                DBObject obj = tr.GetObject(result.Id, OpenMode.ForRead, false);
+                if (obj == null || obj.IsErased)
+                {
+                    result.Status = HandleStatus.Missing;
+                    return result;
+                }
+            }
+            catch
+            {
+                // Covers stale, wrong database, or corrupted ObjectIds
+                result.Status = HandleStatus.Missing;
+                return result;
+            }
+
+            // Everything passed
+            result.Status = HandleStatus.Valid;
+            return result;
+        }
+
+
         #endregion
+
 
         #region Handle Resolution
         /// <summary>
@@ -347,7 +360,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 OpenMode.ForRead);
         }
 
-        private static DBDictionary GetFoundationRootDictionary(
+        internal static DBDictionary GetFoundationRootDictionary(
         Transaction tr,
         Database db)
         {
@@ -427,245 +440,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 }
         #endregion
 
-        #region  Scan and Query Operations
 
-        public static List<HandleEntry> ScanFoundationNod(FoundationContext context)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-
-            var doc = context.Document;
-            var model = context.Model;
-            var db = doc.Database;
-
-            var results = new List<HandleEntry>();
-
-            using (Transaction tr = db.TransactionManager.StartTransaction())
-            {
-                try
-                {
-                    DBDictionary root = GetFoundationRootDictionary(tr, db);
-                    if (root == null)
-                        return results;
-
-                    foreach (var (groupName, groupId) in EnumerateDictionary(root))
-                    {
-                        var groupEntry = new DBDictionaryEntry(groupName, groupId);
-
-                        ScanGroupDictionary(
-                            context,
-                            tr,
-                            db,
-                            groupEntry,
-                            results
-                        );
-                    }
-
-
-                    tr.Commit(); // read-only but still correct
-                }
-                catch (System.Exception ex)
-                {
-                    doc.Editor.WriteMessage(
-                        $"\n[EE_FOUNDATION] Scan failed: {ex.Message}"
-                    );
-                }
-            }
-
-            return results;
-        }
-
-        private static void ScanGroupDictionary(FoundationContext context,
-    Transaction tr,
-    Database db,
-    DBDictionaryEntry groupEntry,
-    List<HandleEntry> results)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-
-            var doc = context.Document;
-            var model = context.Model;
-
-            if (doc == null) return;
-
-            var subDict = tr.GetObject(
-                groupEntry.Value,
-                OpenMode.ForRead) as DBDictionary;
-
-            if (subDict == null)
-                return;
-
-            foreach (var (handleKey, _) in EnumerateDictionary(subDict))
-            {
-                HandleEntry result = ValidateHandle(
-                    context,
-                    tr,
-                    db,
-                    groupEntry.Key,
-                    handleKey
-                );
-
-                results.Add(result);
-            }
-        }
-
-
-
-        /// <summary>
-        /// Recursively scans any dictionary or subtree in the NOD for a stored handle.
-        /// </summary>
-        /// <param name="tr">Active transaction</param>
-        /// <param name="rootDictId">ObjectId of the dictionary to scan (can be NamedObjectsDictionary or any sub-dictionary)</param>
-        /// <param name="targetHandle">Handle stored as text in XRecord</param>
-        /// <returns>True if handle exists anywhere in the subtree</returns>
-        internal static bool IsHandleAlreadyInTree(FoundationContext context,
-            Transaction tr,
-            ObjectId rootDictId,
-            string targetHandle)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-
-            if (rootDictId.IsNull || !rootDictId.IsValid)
-                return false;
-
-            DBObject rootObj = tr.GetObject(rootDictId, OpenMode.ForRead);
-            if (!(rootObj is DBDictionary rootDict))
-                return false;
-
-            return ScanDictionaryForHandle(context, tr, rootDict, targetHandle);
-        }
-
-        private static bool ScanDictionaryForHandle(
-            FoundationContext context,
-            Transaction tr,
-            DBDictionary dict,
-            string targetHandle)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-
-            foreach (var (_, id) in EnumerateDictionary(dict))
-            {
-                DBObject obj = tr.GetObject(id, OpenMode.ForRead);
-
-                if (obj is DBDictionary subDict)
-                {
-                    if (ScanDictionaryForHandle(context, tr, subDict, targetHandle))
-                        return true;
-                }
-                else if (obj is Xrecord xrec)
-                {
-                    if (XrecordContainsHandle(xrec, targetHandle))
-                        return true;
-                }
-            }
-
-            return false;
-        }
-
-        private static bool XrecordContainsHandle(
-            Xrecord xrec,
-            string targetHandle)
-        {
-            if (xrec.Data == null)
-                return false;
-
-            foreach (TypedValue tv in xrec.Data)
-            {
-                if (tv.TypeCode == (int)DxfCode.Text &&
-                    tv.Value is string s &&
-                    s.Equals(targetHandle, StringComparison.OrdinalIgnoreCase))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        /// <summary>
-        /// Returns all valid, non-erased ObjectIds from handle strings stored in a sub-dictionary.
-        /// Invalid handle_strings, erased objects, or stale references are ignored.
-        /// </summary>
-        /// <param name="tr">Active AutoCAD transaction for object validation.</param>
-        /// <param name="db">Database in which handle_strings are resolved.</param>
-        /// <param name="subDict">Sub-dictionary containing handle strings; null returns empty list.</param>
-        /// <returns>List of valid, readable ObjectIds.</returns>
-        internal static List<ObjectId> GetAllValidObjectIdsFromSubDictionary(FoundationContext context,
-            Transaction tr, Database db, DBDictionary subDict)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-
-            var validIds = new List<ObjectId>();
-
-            // Missing sub-dictionary is not an error; return empty result
-            if (subDict == null)
-                return validIds;
-
-            foreach (var (handleKey, _) in EnumerateDictionary(subDict))
-            {
-                if (!TryGetObjectIdFromHandleString(context, db, handleKey, out ObjectId id))
-                    continue;
-
-                if (IsValidReadableObject(tr, id))
-                    validIds.Add(id);
-            }
-
-            return validIds;
-        }
-
-        /// <summary>
-        /// Retrieves the first valid, readable entity from a named sub-dictionary.
-        /// </summary>
-        /// <param name="tr">Active AutoCAD transaction.</param>
-        /// <param name="db">Database containing the sub-dictionary.</param>
-        /// <param name="subDictKey">Key identifying the sub-dictionary.</param>
-        /// <param name="oid">Receives the ObjectId of the first valid entity if found.</param>
-        /// <returns>True if a valid entity is found; otherwise false.</returns>
-        public static bool TryGetFirstEntity(
-            FoundationContext context,
-            Transaction tr,
-            Database db,
-            string subDictKey,
-            out ObjectId oid)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-            if (tr == null) throw new ArgumentNullException(nameof(tr));
-            if (db == null) throw new ArgumentNullException(nameof(db));
-            if (string.IsNullOrWhiteSpace(subDictKey))
-            {
-                oid = ObjectId.Null;
-                return false;
-            }
-
-            oid = ObjectId.Null;
-
-            // Get the subdictionary under the root
-            var rootDict = NODCore.GetOrCreateNestedSubDictionary(
-                tr,
-                (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite),
-                NODCore.ROOT
-            );
-
-            if (rootDict == null || !rootDict.Contains(subDictKey))
-                return false;
-
-            var subDict = (DBDictionary)tr.GetObject(rootDict.GetAt(subDictKey), OpenMode.ForRead);
-            if (subDict == null || subDict.Count == 0)
-                return false;
-
-            // Take the first valid ObjectId
-            foreach (var (handleKey, _) in EnumerateDictionary(subDict))
-            {
-                if (TryGetObjectIdFromHandleString(context, db, handleKey, out oid)
-                    && IsValidReadableObject(tr, oid))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        #endregion
 
         #region Cleanup and Mutation
 
@@ -837,7 +612,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
             int deletedCount = 0;
 
-            // Get the subdictionary using the nested helper
+            // Get the subdictionary safely
             DBDictionary subDict = NODCore.GetOrCreateNestedSubDictionary(
                 tr,
                 (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite),
@@ -848,30 +623,29 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             if (subDict == null || subDict.Count == 0)
                 return 0;
 
-            // Collect keys first (handles) to avoid modifying dictionary while iterating
-            var handles = EnumerateDictionary(subDict)
-                          .Select(e => e.Key)
-                          .ToList();
+            // Copy keys first to avoid modifying dictionary during iteration
+            var handleKeys = EnumerateDictionary(subDict).Select(e => e.Key).ToList();
 
-            foreach (string handleStr in handles)
+            foreach (string handleStr in handleKeys)
             {
-                if (!TryGetObjectIdFromHandleString(context, db, handleStr, out ObjectId id))
-                    continue;
+                // Unified validation
+                HandleEntry entry = ValidateHandleOrId(context, tr, db, subDictName, handleStr);
 
-                if (!IsValidReadableObject(tr, id))
+                // Only delete valid entities
+                if (entry.Status != HandleStatus.Valid)
                     continue;
 
                 try
                 {
                     // Erase the entity
-                    if (id.IsValid && !id.IsErased)
+                    if (entry.Id.IsValid && !entry.Id.IsErased)
                     {
-                        Entity ent = tr.GetObject(id, OpenMode.ForWrite) as Entity;
+                        Entity ent = tr.GetObject(entry.Id, OpenMode.ForWrite) as Entity;
                         ent?.Erase();
                         deletedCount++;
                     }
 
-                    // Optionally remove the Xrecord / handle from the NOD
+                    // Optionally remove the Xrecord / handle from the dictionary
                     if (removeHandlesFromNod && subDict.Contains(handleStr))
                     {
                         DBObject obj = tr.GetObject(subDict.GetAt(handleStr), OpenMode.ForWrite);
@@ -886,6 +660,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
             return deletedCount;
         }
+
 
         internal static int DeleteEntitiesFromFoundationSubDictionary(FoundationContext context,
             Database db,
@@ -916,16 +691,18 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         #region High-Level Operations
         public static List<HandleEntry> IterateFoundationNod(FoundationContext context, bool cleanStale = false)
         {
-            // PASS 1 — Read-only scan
-            List<HandleEntry> results = ScanFoundationNod(context);
+            if (context == null) throw new ArgumentNullException(nameof(context));
 
-            // PASS 2 — Explicit cleanup (only if requested)
+            // PASS 1 — Read-only scan
+            var results = NODScanner.ScanFoundationNod(context);
+
+            // PASS 2 — Cleanup if requested
             if (cleanStale && results.Count > 0)
             {
                 CleanupFoundationNod(context, results);
 
                 // Rescan so results reflect cleaned NOD
-                results = ScanFoundationNod(context);
+                results = NODScanner.ScanFoundationNod(context);
             }
 
             return results;
@@ -935,13 +712,10 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
 
-            var doc = context.Document;
-            var model = context.Model;
-            var db = doc.Database;
-
-            var entries = IterateFoundationNod(context, cleanStale: true);
-            CleanupFoundationNod(context, entries);
+            // Iterate with cleanup enabled — no need to call Cleanup again manually
+            IterateFoundationNod(context, cleanStale: true);
         }
+
 
         #endregion
 
