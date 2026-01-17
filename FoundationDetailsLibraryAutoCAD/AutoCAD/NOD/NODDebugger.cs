@@ -18,15 +18,13 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         /// </summary>
         public static string DumpDictionaryTree(DBDictionary dict, Transaction tr, string dictName = null)
         {
-            if (dict == null || tr == null)
-                return string.Empty;
+            if (dict == null || tr == null) return string.Empty;
 
             StringBuilder sb = new StringBuilder();
             string rootName = dictName ?? "[Root Dictionary]";
             sb.AppendLine(rootName + " [Dictionary]");
 
             DumpDictionaryRecursive(dict, tr, sb, "", true);
-
             return sb.ToString();
         }
 
@@ -34,34 +32,52 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         {
             if (dict == null) return;
 
-            // Collect entries and sort: dictionaries first, then entities/others; alphabetical by key
-            List<DBDictionaryEntry> entries = new List<DBDictionaryEntry>();
+            // Step 1: Collect all entries and their safely read objects
+            var safeEntries = new List<Tuple<DBDictionaryEntry, DBObject>>();
+
             foreach (DBDictionaryEntry entry in dict)
             {
-                entries.Add(entry);
+                DBObject obj = null;
+
+                if (entry.Value != ObjectId.Null && entry.Value.IsValid && !entry.Value.IsErased)
+                {
+                    try
+                    {
+                        obj = tr.GetObject(entry.Value, OpenMode.ForRead) as DBObject;
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception ex)
+                    {
+                        // Mark as unreadable
+                        obj = null;
+                    }
+                    catch
+                    {
+                        obj = null;
+                    }
+                }
+
+                safeEntries.Add(Tuple.Create(entry, obj));
             }
 
-            List<DBDictionaryEntry> sortedEntries = entries
-                .OrderBy(delegate (DBDictionaryEntry e)
-                {
-                    DBObject obj = (DBObject)tr.GetObject(e.Value, OpenMode.ForRead);
-                    return (obj is DBDictionary) ? 0 : 1; // dictionaries first
-                })
-                .ThenBy(delegate (DBDictionaryEntry e) { return e.Key; }, StringComparer.OrdinalIgnoreCase)
+            // Step 2: Sort entries: dictionaries first, then others, alphabetically by key
+            var sorted = safeEntries
+                .OrderBy(t => (t.Item2 is DBDictionary) ? 0 : 1)
+                .ThenBy(t => t.Item1.Key, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            int count = sortedEntries.Count;
+            int count = sorted.Count;
             int idx = 0;
 
-            foreach (DBDictionaryEntry entry in sortedEntries)
+            foreach (var tuple in sorted)
             {
                 idx++;
                 bool entryIsLast = (idx == count);
 
+                var entry = tuple.Item1;
+                var obj = tuple.Item2;
+
                 string branch = entryIsLast ? "└─ " : "├─ ";
                 string childIndent = indent + (entryIsLast ? "   " : "│  ");
-
-                DBObject obj = (DBObject)tr.GetObject(entry.Value, OpenMode.ForRead);
 
                 string typeDesc;
                 if (obj is DBDictionary)
@@ -72,17 +88,25 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 {
                     typeDesc = "[Entity] (ID: " + ((Entity)obj).ObjectId.ToString() + ")";
                 }
+                else if (obj is Xrecord)
+                {
+                    typeDesc = "[XRecord]";
+                }
+                else if (obj == null)
+                {
+                    typeDesc = "[Unreadable]";
+                }
                 else
                 {
-                    typeDesc = "[" + (obj != null ? obj.GetType().Name : "null") + "]";
+                    typeDesc = "[" + obj.GetType().Name + "]";
                 }
 
                 sb.AppendLine(indent + branch + entry.Key + " " + typeDesc);
 
-                // Recurse if this entry is a subdictionary
-                if (obj is DBDictionary)
+                // Step 3: Recurse into subdictionaries safely
+                if (obj is DBDictionary subDict)
                 {
-                    DumpDictionaryRecursive((DBDictionary)obj, tr, sb, childIndent, true);
+                    DumpDictionaryRecursive(subDict, tr, sb, childIndent, true);
                 }
             }
         }

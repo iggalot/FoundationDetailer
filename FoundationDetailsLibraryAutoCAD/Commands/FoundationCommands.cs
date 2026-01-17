@@ -4,6 +4,7 @@ using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Runtime;
 using Autodesk.AutoCAD.Windows;
 using FoundationDetailsLibraryAutoCAD.AutoCAD.NOD;
+using FoundationDetailsLibraryAutoCAD.AutoCAD.Testing;
 using FoundationDetailsLibraryAutoCAD.Data;
 using FoundationDetailsLibraryAutoCAD.UI;
 using System;
@@ -130,9 +131,9 @@ namespace FoundationDetailsLibraryAutoCAD.Commands
             string subDictName = resSub.StringResult.Trim().ToUpperInvariant();
 
             // Validate against known sub-dictionaries dynamically
-            if (Array.IndexOf(NODCore.KNOWN_SUBDIRS, subDictName) < 0)
+            if (Array.IndexOf(NODCore.KNOWN_ROOT_SUBDIRS, subDictName) < 0)
             {
-                ed.WriteMessage("\nInvalid sub-dictionary. Must be one of: " + string.Join(", ", NODCore.KNOWN_SUBDIRS));
+                ed.WriteMessage("\nInvalid sub-dictionary. Must be one of: " + string.Join(", ", NODCore.KNOWN_ROOT_SUBDIRS));
                 return;
             }
 
@@ -214,6 +215,21 @@ namespace FoundationDetailsLibraryAutoCAD.Commands
 
                 tr.Commit();
             }
+        }
+
+        [CommandMethod("TEST_GRADEBEAM")]
+        public void TestGradeBeamCommand(FoundationContext context)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            if (doc == null) return;
+
+            var db = doc.Database;
+            var ed = doc.Editor;
+
+            // Run the test
+            FoundationTestTools.TestGradeBeamJsonRoundTrip(context);
         }
 
 

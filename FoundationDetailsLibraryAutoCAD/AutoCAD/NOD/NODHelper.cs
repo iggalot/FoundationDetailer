@@ -6,7 +6,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 {
     internal static class NODHelper
     {
-        public static bool TryGetSubdictEntries(
+        internal static bool TryGetSubdictEntries(
             FoundationContext context,
             string subdictKey,
             Transaction tr,
@@ -26,11 +26,40 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 return false;
 
             var subdict = (DBDictionary)tr.GetObject(root.GetAt(subdictKey), OpenMode.ForRead);
-            foreach (DBDictionaryEntry entry in subdict)
-                entryKeys.Add(entry.Key);
+
+            // Recursively collect all keys
+            CollectDictionaryKeys(subdict, entryKeys, tr);
 
             return entryKeys.Count > 0;
         }
+
+        private static void CollectDictionaryKeys(DBDictionary dict, List<string> keys, Transaction tr)
+        {
+            foreach (DBDictionaryEntry entry in dict)
+            {
+                keys.Add(entry.Key);
+
+                ObjectId id = dict.GetAt(entry.Key);
+                if (!id.IsValid || id.IsErased)
+                    continue;
+
+                DBObject obj;
+                try
+                {
+                    obj = tr.GetObject(id, OpenMode.ForRead);
+                }
+                catch
+                {
+                    continue; // skip unreadable objects
+                }
+
+                if (obj is DBDictionary subDict)
+                {
+                    CollectDictionaryKeys(subDict, keys, tr);
+                }
+            }
+        }
+
     }
 
 }

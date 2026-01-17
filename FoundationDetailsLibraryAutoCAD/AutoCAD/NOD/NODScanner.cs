@@ -50,7 +50,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                             subDict,
                             groupName,
                             (handleKey, id) => NODCore.ValidateHandleOrId(context, tr, db, groupName, handleKey),
-                            false
+                            true
                         ));
                     }
 
@@ -106,7 +106,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         /// Enumerates a DBDictionary as key-value pairs.
         /// C# 7.3 compatible (no tuple deconstruction).
         /// </summary>
-        private static IEnumerable<KeyValuePair<string, ObjectId>> EnumerateDictionary(DBDictionary dict)
+        internal static IEnumerable<KeyValuePair<string, ObjectId>> EnumerateDictionary(DBDictionary dict)
         {
             foreach (DBDictionaryEntry entry in dict)
             {
@@ -178,7 +178,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         /// Non-dictionary entries are passed to the handler. Nested dictionaries are processed if <paramref name="recurseSubDictionaries"/> is true.
         /// </remarks>
 
-        private static ObservableCollection<ExtensionDataItem> ProcessDictionary(
+        internal static ObservableCollection<ExtensionDataItem> ProcessDictionary(
             FoundationContext context,
             Transaction tr,
             DBDictionary dict,

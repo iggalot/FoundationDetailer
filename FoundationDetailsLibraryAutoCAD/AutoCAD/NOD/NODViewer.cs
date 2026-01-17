@@ -1,59 +1,85 @@
-﻿using Autodesk.AutoCAD.Runtime;
+﻿using Autodesk.AutoCAD.DatabaseServices;
 using FoundationDetailer.UI.Windows;
 using FoundationDetailsLibraryAutoCAD.Data;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
+using static FoundationDetailsLibraryAutoCAD.Data.FoundationEntityData;
 
 namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 {
     public class NODViewer
     {
         // ==========================================================
-        //  VIEW NOD CONTENT helper function
+        // VIEW NOD CONTENT - fully recursive using existing ProcessDictionary
         // ==========================================================
         public static void ViewFoundationNOD(FoundationContext context)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
 
             var doc = context.Document;
-            var model = context.Model;
             var db = doc.Database;
 
-            // Get all entries across all subdictionaries
-            var entries = NODCore.IterateFoundationNod(context, cleanStale: true);
-
-            // Group entries by subdictionary name
-            var grouped = entries
-                .GroupBy(x => x.GroupName)
-                .ToDictionary(g => g.Key, g => g.ToList());
-
-            StringBuilder sb = new StringBuilder();
-            sb.AppendLine("=== EE_Foundation Contents ===");
-
-            foreach (string subDir in NODCore.KNOWN_SUBDIRS)
+            using (var tr = db.TransactionManager.StartTransaction())
             {
-                sb.AppendLine();
-                sb.AppendLine($"[{subDir}]");
-
-                if (!grouped.ContainsKey(subDir) || grouped[subDir].Count == 0)
+                var rootDict = NODCore.GetFoundationRootDictionary(tr, db);
+                if (rootDict == null)
                 {
-                    sb.AppendLine("   No Objects");
-                    continue;
+                    ScrollableMessageBox.Show("No EE_Foundation dictionary found.");
+                    return;
                 }
 
-                foreach (var e in grouped[subDir])
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine("=== EE_Foundation Contents ===");
+
+                // Process each top-level subdictionary (BOUNDARY, GRADEBEAM, etc.)
+                foreach (var kvp in NODScanner.EnumerateDictionary(rootDict))
                 {
-                    sb.AppendLine($"   {e.HandleKey} : {e.Status}");
+                    string rootName = kvp.Key;
+                    sb.AppendLine();
+                    sb.AppendLine($"[{rootName}]");
+
+                    var subDict = tr.GetObject(kvp.Value, OpenMode.ForRead) as DBDictionary;
+                    if (subDict == null || subDict.Count == 0)
+                    {
+                        sb.AppendLine("   No Objects");
+                        continue;
+                    }
+
+                    // Use your existing ProcessDictionary to get the tree
+                    var treeItems = NODScanner.ProcessDictionary(context, tr, subDict, db);
+
+                    // Recursively print the tree
+                    PrintTree(sb, treeItems, indentLevel: 1);
+                }
+
+                ScrollableMessageBox.Show(sb.ToString());
+                tr.Commit();
+            }
+        }
+
+        // ==========================================================
+        // Helper to recursively print ExtensionDataItem tree
+        // ==========================================================
+        private static void PrintTree(StringBuilder sb, IEnumerable<ExtensionDataItem> items, int indentLevel)
+        {
+            string indent = new string(' ', indentLevel * 3); // 3 spaces per level
+
+            foreach (var item in items)
+            {
+                if (item.Children != null && item.Children.Count > 0)
+                {
+                    sb.AppendLine($"{indent}{item.Name} : {item.Type}");
+                    // Cast ObservableCollection to IEnumerable
+                    PrintTree(sb, (IEnumerable<ExtensionDataItem>)item.Children, indentLevel + 1);
+                }
+                else
+                {
+                    sb.AppendLine($"{indent}{item.Name} : {item.Type}");
                 }
             }
-
-            //MessageBox.Show(sb.ToString(), "EE_Foundation Viewer");
-            ScrollableMessageBox.Show(sb.ToString());
-
         }
+
 
     }
 }

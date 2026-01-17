@@ -62,7 +62,7 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
 
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                var root = NODCore.GetFoundationRoot(context, tr);
+                var root = NODCore.GetFoundationRoot(tr, db);
                 if (root == null) return;
 
                 var nodeMap = new Dictionary<string, TreeViewItem>();

@@ -6,6 +6,7 @@ using FoundationDetailer.AutoCAD;
 using FoundationDetailer.Managers;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using FoundationDetailsLibraryAutoCAD.AutoCAD.NOD;
+using FoundationDetailsLibraryAutoCAD.AutoCAD.Testing;
 using FoundationDetailsLibraryAutoCAD.Data;
 using FoundationDetailsLibraryAutoCAD.Managers;
 using FoundationDetailsLibraryAutoCAD.Services;
@@ -86,6 +87,10 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             var context = CurrentContext;
 
             BtnQuery.Click += (s, e) => BtnQueryNOD_Click();
+            BtnTest.Click += (s, e) => BtnTest_Click();
+            BtnEraseNODFully.Click += (s, e) => BtnEraseNODFully_Click();
+
+
             BtnSelectBoundary.Click += (s, e) => BtnDefineFoundationBoundary_Click();
             BtnSave.Click += (s, e) => BtnSaveModel_Click();
             BtnLoad.Click += (s, e) => BtnLoadModel_Click();
@@ -104,7 +109,20 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
         }
 
+        private void BtnEraseNODFully_Click()
+        {
+            NODCleaner.ClearFoundationNOD(CurrentContext);
+        }
 
+        private void BtnTest_Click()
+        {
+            FoundationTestTools.TestGradeBeamNOD(CurrentContext);
+
+            //FoundationTestTools.TestDumpGradeBeamNod(CurrentContext);
+            FoundationTestTools.TestGradeBeamJsonRoundTrip(CurrentContext);
+
+
+        }
 
         private void OnDrawNewRequested(FoundationContext context, SpacingRequest request)
         {
@@ -474,6 +492,8 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         {
             var context = CurrentContext;
             var doc = context?.Document;
+            var db = doc?.Database;
+
             if (doc == null) return;
 
             TreeViewExtensionData.Items.Clear();
@@ -481,7 +501,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             using (var tr = doc.Database.TransactionManager.StartTransaction())
             {
                 var treeMgr = new TreeViewManager();
-                var root = NODCore.GetFoundationRoot(context, tr);
+                var root = NODCore.GetFoundationRoot(tr, db);
                 if (root == null) return;
 
                 var nodeMap = new Dictionary<string, TreeViewItem>();
@@ -615,7 +635,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
-                DBDictionary root = NODCore.GetFoundationRoot(context, tr);
+                DBDictionary root = NODCore.GetFoundationRoot(tr, db);
                 string tree = NODDebugger.DumpDictionaryTree(root, tr, "EE_Foundation");
                 Console.WriteLine(tree);
             }
