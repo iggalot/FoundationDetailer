@@ -4,6 +4,7 @@ using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using FoundationDetailer.AutoCAD;
 using FoundationDetailer.Managers;
+using FoundationDetailer.UI.Windows;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using FoundationDetailsLibraryAutoCAD.AutoCAD.NOD;
 using FoundationDetailsLibraryAutoCAD.AutoCAD.Testing;
@@ -13,6 +14,7 @@ using FoundationDetailsLibraryAutoCAD.Services;
 using FoundationDetailsLibraryAutoCAD.UI.Controls.EqualSpacingGBControl;
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
@@ -86,7 +88,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         {
             var context = CurrentContext;
 
-            BtnQuery.Click += (s, e) => BtnQueryNOD_Click();
+            BtnQuery.Click += BtnQueryNOD_Click;
             BtnTest.Click += (s, e) => BtnTest_Click();
             BtnEraseNODFully.Click += (s, e) => BtnEraseNODFully_Click();
 
@@ -109,20 +111,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
         }
 
-        private void BtnEraseNODFully_Click()
-        {
-            NODCleaner.ClearFoundationNOD(CurrentContext);
-        }
 
-        private void BtnTest_Click()
-        {
-            FoundationTestTools.TestGradeBeamNOD(CurrentContext);
-
-            //FoundationTestTools.TestDumpGradeBeamNod(CurrentContext);
-            FoundationTestTools.TestGradeBeamJsonRoundTrip(CurrentContext);
-
-
-        }
 
         private void OnDrawNewRequested(FoundationContext context, SpacingRequest request)
         {
@@ -448,11 +437,11 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             if (!(e.NewValue is TreeViewItem tvi))
                 return;
 
-            // TreeNodeInfo holds the Entity
+            // TreeNodeInfo holds the NODObjectWrapper
             if (!(tvi.Tag is TreeViewManager.TreeNodeInfo nodeInfo))
                 return;
 
-            Entity ent = nodeInfo.Entity;
+            Entity ent = nodeInfo.NODObject?.Entity;
             if (ent == null)
                 return;
 
@@ -492,111 +481,28 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         {
             var context = CurrentContext;
             var doc = context?.Document;
-            var db = doc?.Database;
-
             if (doc == null) return;
+
+            var db = doc.Database;
 
             TreeViewExtensionData.Items.Clear();
 
-            using (var tr = doc.Database.TransactionManager.StartTransaction())
+            using (var tr = db.TransactionManager.StartTransaction())
             {
-                var treeMgr = new TreeViewManager();
-                var root = NODCore.GetFoundationRoot(tr, db);
-                if (root == null) return;
+                var rootDict = NODCore.GetFoundationRoot(tr, db);
+                if (rootDict == null)
+                    return;
 
-                var nodeMap = new Dictionary<string, TreeViewItem>();
+                // --- Rebuild the ExtensionDataItem tree ---
+                var treeData = NODTraversal.BuildTree(context, tr, rootDict, db);
 
-                // Root node
-                var rootNode = new TreeViewItem
-                {
-                    Header = NODCore.ROOT,
-                    IsExpanded = true,
-                    Tag = new TreeViewManager.TreeNodeInfo(NODCore.ROOT, true)
-                };
+                // --- Pass the transaction into TreeViewManager ---
+                var treeMgr = new TreeViewManager(tr);
 
-                TreeViewExtensionData.Items.Add(rootNode);
-
-                // Recursive build for all subdictionaries & entities
-                BuildTreeRecursiveWithEntities(root, rootNode, tr, nodeMap, treeMgr, "");
-
-                // Count immediate children for each dictionary node
-                var branchCounts = new Dictionary<TreeViewItem, int>();
-                foreach (var kvp in nodeMap)
-                {
-                    var node = kvp.Value;
-                    if (node.Tag is TreeViewManager.TreeNodeInfo info && info.IsDictionary)
-                    {
-                        int count = 0;
-                        foreach (TreeViewItem child in node.Items)
-                        {
-                            if (child.Tag is TreeViewManager.TreeNodeInfo) count++;
-                        }
-                        branchCounts[node] = count;
-                    }
-                }
-
-                // Update headers with counts
-                foreach (var kvp in branchCounts)
-                {
-                    var node = kvp.Key;
-                    int count = kvp.Value;
-
-                    var tb = new TextBlock();
-                    tb.Inlines.Add(new Run($" ({count}) ") { FontWeight = FontWeights.Bold });
-                    tb.Inlines.Add(new Run(node.Header.ToString()));
-                    node.Header = tb;
-                }
+                // --- Populate TreeView ---
+                treeMgr.PopulateFromData(TreeViewExtensionData, treeData);
 
                 tr.Commit();
-            }
-        }
-
-        /// <summary>
-        /// Recursively builds the TreeView for a dictionary and its subdictionaries/entities.
-        /// </summary>
-        private static void BuildTreeRecursiveWithEntities(
-            DBDictionary dict,
-            TreeViewItem parentNode,
-            Transaction tr,
-            Dictionary<string, TreeViewItem> nodeMap,
-            TreeViewManager treeMgr,
-            string pathSoFar)
-        {
-            foreach (DBDictionaryEntry entry in dict)
-            {
-                string entryKey = entry.Key;
-                string fullPath = string.IsNullOrEmpty(pathSoFar) ? entryKey : $"{pathSoFar}/{entryKey}";
-
-                DBObject obj = tr.GetObject(entry.Value, OpenMode.ForRead);
-
-                var node = new TreeViewItem
-                {
-                    Header = entryKey,
-                    Tag = new TreeViewManager.TreeNodeInfo(entryKey, obj is DBDictionary)
-                };
-
-                parentNode.Items.Add(node);
-                nodeMap[fullPath] = node;
-
-                if (obj is DBDictionary subDict)
-                {
-                    // Recurse into subdictionary
-                    BuildTreeRecursiveWithEntities(subDict, node, tr, nodeMap, treeMgr, fullPath);
-                }
-                else
-                {
-                    // Leaf entity (Entity or Xrecord)
-                    if (obj is Entity ent)
-                    {
-                        node.Tag = new TreeViewManager.TreeNodeInfo(entryKey, false) { Entity = ent };
-                        node.Header = $"{entryKey} ({ent.Handle})";
-                    }
-                    else if (obj is Xrecord xr)
-                    {
-                        node.Tag = new TreeViewManager.TreeNodeInfo(entryKey, false);
-                        node.Header = $"{entryKey} (Xrecord)";
-                    }
-                }
             }
         }
 
@@ -618,32 +524,59 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 TxtStatus.Text = error;
         }
 
+        private void BtnEraseNODFully_Click()
+        {
+            NODCleaner.ClearFoundationNOD(CurrentContext);
+        }
+
+        private void BtnTest_Click()
+        {
+            FoundationTestTools.TestGradeBeamNOD(CurrentContext);
+
+            //FoundationTestTools.TestDumpGradeBeamNod(CurrentContext);
+            FoundationTestTools.TestGradeBeamJsonRoundTrip(CurrentContext);
+        }
+
         /// <summary>
         /// Queries the NOD for a list of handles in each subdirectory.
         /// </summary>
-        private void BtnQueryNOD_Click()
+        private void BtnQueryNOD_Click(object sender, RoutedEventArgs e)
         {
             var context = CurrentContext;
-            NODCore.CleanFoundationNOD(context);
-            NODViewer.ViewFoundationNOD(context); // optional debug
+            if (context == null)
+                return;
 
-            var doc = context?.Document;
-            if(doc == null) return;
+            var doc = context.Document;
+            if (doc == null)
+                return;
 
-            var db = doc?.Database;
-            if(db == null) return;
+            var db = doc.Database;
 
-            using (Transaction tr = db.TransactionManager.StartTransaction())
+            using (doc.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
             {
-                DBDictionary root = NODCore.GetFoundationRoot(tr, db);
-                string tree = NODDebugger.DumpDictionaryTree(root, tr, "EE_Foundation");
-                Console.WriteLine(tree);
+                var rootDict = NODCore.GetFoundationRoot(tr, db);
+                if (rootDict == null)
+                {
+                    ScrollableMessageBox.Show("No EE_Foundation dictionary found.");
+                    return;
+                }
+
+                // --- Build structured NOD tree ---
+                var treeData = NODTraversal.BuildTree(context, tr, rootDict, db);
+
+                // --- Pass the transaction into the TreeViewManager ---
+                var treeMgr = new TreeViewManager(tr);
+
+                // --- Update TreeView UI ---
+                treeMgr.PopulateFromData(TreeViewExtensionData, treeData);
+
+                tr.Commit();
             }
-
-            // Updates the TreeView for the handles.
-            UpdateTreeViewUI();
-
         }
+
+
+
 
         // ---------------------------
         // Button click handler

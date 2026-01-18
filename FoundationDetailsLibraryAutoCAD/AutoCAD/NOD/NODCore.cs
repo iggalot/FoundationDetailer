@@ -166,6 +166,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 Id = id
             };
 
+            // Resolve handle string to ObjectId if provided
             if (!string.IsNullOrEmpty(handleStr))
             {
                 if (!TryResolveHandleToObjectId(context, db, handleStr, out ObjectId resolved))
@@ -176,6 +177,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 result.Id = resolved;
             }
 
+            // Check for valid ObjectId
             if (result.Id.IsNull || !result.Id.IsValid)
             {
                 result.Status = HandleStatus.Invalid;
@@ -184,22 +186,29 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
             try
             {
+                // Attempt to fetch the entity
                 var obj = tr.GetObject(result.Id, OpenMode.ForRead, false);
                 if (obj == null || obj.IsErased)
                 {
                     result.Status = HandleStatus.Missing;
                     return result;
                 }
+
+                // If it's an Entity, store it
+                if (obj is Entity ent)
+                    result.Entity = ent;
+
+                result.Status = HandleStatus.Valid;
             }
             catch
             {
                 result.Status = HandleStatus.Missing;
-                return result;
+                result.Entity = null;
             }
 
-            result.Status = HandleStatus.Valid;
             return result;
         }
+
 
         #endregion
 

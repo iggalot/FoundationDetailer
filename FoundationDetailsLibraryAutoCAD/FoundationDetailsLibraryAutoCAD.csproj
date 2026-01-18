@@ -72,9 +72,10 @@
     <Compile Include="AutoCAD\NOD\NODHelper.cs" />
     <Compile Include="AutoCAD\NOD\GradeBeamNOD.cs" />
     <Compile Include="AutoCAD\NOD\NODIssueValidator.cs" />
+    <Compile Include="AutoCAD\NOD\NODObjectWrapper.cs" />
     <Compile Include="AutoCAD\NOD\NODScanner.cs" />
+    <Compile Include="AutoCAD\NOD\NODTraversal.cs" />
     <Compile Include="AutoCAD\NOD\NODViewer.cs" />
-    <Compile Include="AutoCAD\NOD\TraversalResult.cs" />
     <Compile Include="AutoCAD\SelectionService.cs" />
     <Compile Include="AutoCAD\Testing\FoundationTestTools.cs" />
     <Compile Include="Data\FoundationContext.cs" />
