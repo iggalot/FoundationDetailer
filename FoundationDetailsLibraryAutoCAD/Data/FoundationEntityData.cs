@@ -149,23 +149,29 @@ namespace FoundationDetailsLibraryAutoCAD.Data
         /// <summary>
         /// Gets all ExtensionDictionary data for an entity in a structured object.
         /// </summary>
-        public static ExtensionDataItem GetExtensionData(FoundationContext context, Entity ent, Transaction tr)
+        public static ExtensionDataItem GetExtensionData(
+            FoundationContext context,
+            Entity ent,
+            Transaction tr)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
-
             if (ent == null || ent.ExtensionDictionary.IsNull)
                 return null;
 
             var dict = (DBDictionary)tr.GetObject(ent.ExtensionDictionary, OpenMode.ForRead);
+
             var rootItem = new ExtensionDataItem
             {
                 Name = $"Entity {ent.Handle}",
                 Type = "Entity",
-                Children = ProcessDictionary(context, tr, dict, ent.Database)
+                Children = ProcessDictionary(context, tr, dict, ent.Database),
+                ObjectId = ent.ObjectId,
+                NODObject = new NODObjectWrapper(ent)
             };
 
             return rootItem;
         }
+
         private static ObservableCollection<ExtensionDataItem> ProcessDictionary(
             FoundationContext context,
             Transaction tr,
@@ -205,43 +211,73 @@ namespace FoundationDetailsLibraryAutoCAD.Data
                     {
                         Name = entry.Key,
                         Type = "XRecord",
-                        Value = xrValues
+                        Value = xrValues,
+                        ObjectId = entry.Value,
+                        NODObject = new NODObjectWrapper(xr)
+                    });
+                }
+                else if (obj is Entity ent)
+                {
+                    items.Add(new ExtensionDataItem
+                    {
+                        Name = entry.Key,
+                        Type = ent.GetType().Name,
+                        ObjectId = ent.ObjectId,
+                        NODObject = new NODObjectWrapper(ent)
                     });
                 }
                 else
                 {
-                    // Use ValidateHandleOrId and explicitly assign nullable ObjectId
+                    // fallback: attempt to resolve handle via NODCore
                     var handleEntry = NODCore.ValidateHandleOrId(context, tr, db, "ProcessDictionary", entry.Key);
 
-                    ObjectId? id = null;
+                    ObjectId objectId = ObjectId.Null;
+                    NODObjectWrapper wrapper = null;
+
                     if (handleEntry.Status == HandleStatus.Valid)
-                        id = handleEntry.Id;
+                    {
+                        objectId = handleEntry.Id;
+
+                        // Try to get Entity if possible
+                        try
+                        {
+                            var resolvedObj = tr.GetObject(objectId, OpenMode.ForRead);
+                            if (resolvedObj is Entity e)
+                                wrapper = new NODObjectWrapper(e);
+                            else if (resolvedObj is Xrecord xr2)
+                                wrapper = new NODObjectWrapper(xr2);
+                        }
+                        catch
+                        {
+                            // unreadable, leave wrapper null
+                        }
+                    }
 
                     items.Add(new ExtensionDataItem
                     {
                         Name = entry.Key,
                         Type = obj?.GetType().Name ?? "Unknown",
-                        Value = null,
-                        ObjectId = id
+                        ObjectId = objectId,
+                        NODObject = wrapper
                     });
                 }
             }
 
             return items;
         }
+    }
 
+    /// <summary>
+    /// Represents an item in an ExtensionDictionary
+    /// </summary>
+    public class ExtensionDataItem
+    {
+        public string Name { get; set; }
+        public string Type { get; set; }          // e.g., XRecord, Subdictionary, etc.
+        public object Value { get; set; }         // For XRecord, could be List<TypedValue>
+        public ObservableCollection<ExtensionDataItem> Children { get; set; } = new ObservableCollection<ExtensionDataItem>();
+        public ObjectId? ObjectId { get; set; }   // Nullable ObjectId for entities
+        public NODObjectWrapper NODObject { get; set; }  // <--- New
 
-        /// <summary>
-        /// Represents an item in an ExtensionDictionary
-        /// </summary>
-        public class ExtensionDataItem
-        {
-            public string Name { get; set; }
-            public string Type { get; set; }          // e.g., XRecord, Subdictionary, etc.
-            public object Value { get; set; }         // For XRecord, could be List<TypedValue>
-            public ObservableCollection<ExtensionDataItem> Children { get; set; } = new ObservableCollection<ExtensionDataItem>();
-            public ObjectId? ObjectId { get; set; }   // Nullable ObjectId for entities
-
-        }
     }
 }

@@ -25,17 +25,24 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         //  CONSTANTS
         // ==========================================================
         public const string ROOT = "EE_Foundation";
+
         public const string KEY_BOUNDARY_SUBDICT = "FD_BOUNDARY";
         public const string KEY_GRADEBEAM_SUBDICT = "FD_GRADEBEAM";
-        public const string KEY_BEAMSTRAND_SUBDICT = "FD_BEAMSTRAND";
-        public const string KEY_SLABSTRAND_SUBDICT = "FD_SLABSTRAND";
-        public const string KEY_REBAR = "FD_REBAR";
+        //public const string KEY_SLABSTRAND_SUBDICT = "FD_SLABSTRAND";
+        //public const string KEY_REBAR = "FD_REBAR";
 
         public const string KEY_CENTERLINE = "FD_CENTERLINE";
         public const string KEY_EDGES_SUBDICT = "FD_EDGES";
-        public const string KEY_METADATA_SUBDICT = "FD_METADATA"; // for storing future data in the NOD
+        public const string KEY_BEAMSTRAND_SUBDICT = "FD_BEAMSTRAND";
+        public const string KEY_METADATA_SUBDICT = "FD_METADATA";
 
-        public static readonly string[] KNOWN_SUBDIRS = { KEY_BOUNDARY_SUBDICT, KEY_GRADEBEAM_SUBDICT, KEY_BEAMSTRAND_SUBDICT, KEY_SLABSTRAND_SUBDICT, KEY_REBAR };
+        public static readonly string[] KNOWN_ROOT_SUBDIRS =
+        {
+            KEY_BOUNDARY_SUBDICT,
+            KEY_GRADEBEAM_SUBDICT,
+            //KEY_SLABSTRAND_SUBDICT,
+            //KEY_REBAR
+        };
         #endregion
 
 
@@ -66,6 +73,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                     yield return key;
             }
         }
+
         internal static IEnumerable<ObjectId> EnumerateValidEntityIds(
             FoundationContext context,
             Transaction tr,
@@ -77,9 +85,9 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             if (db == null) throw new ArgumentNullException(nameof(db));
             if (dict == null) yield break;
 
-            // Use ProcessDictionaryEntries to recurse and handle each entry
-            foreach (var id in NODScanner.ProcessDictionaryEntries(context, tr, db, dict, "EnumerateValidEntityIds",
-                (handleKey, objId) =>
+            foreach (var id in NODScanner.ProcessDictionaryEntries(
+                context, tr, db, dict, "EnumerateValidEntityIds",
+                (handleKey, _) =>
                 {
                     var entry = ValidateHandleOrId(context, tr, db, "EnumerateValidEntityIds", handleKey);
                     return entry.Status == HandleStatus.Valid ? entry.Id : ObjectId.Null;
@@ -105,19 +113,10 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             if (string.IsNullOrWhiteSpace(handle))
                 return false;
 
-            for (int i = 0; i < handle.Length; i++)
-            {
-                char c = handle[i];
-                bool isHex =
-                    (c >= '0' && c <= '9') ||
-                    (c >= 'A' && c <= 'F') ||
-                    (c >= 'a' && c <= 'f');
-
-                if (!isHex)
-                    return false;
-            }
-
-            return true;
+            return handle.All(c =>
+                (c >= '0' && c <= '9') ||
+                (c >= 'A' && c <= 'F') ||
+                (c >= 'a' && c <= 'f'));
         }
 
         /// <summary>
@@ -136,14 +135,12 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
             try
             {
-                long handleValue = Convert.ToInt64(handleStr, 16);
-                Handle h = new Handle(handleValue);
-                id = db.GetObjectId(false, h, 0);
-                return !id.IsNull && id.IsValid;
+                var handle = new Handle(Convert.ToInt64(handleStr, 16));
+                id = db.GetObjectId(false, handle, 0);
+                return id.IsValid && !id.IsNull;
             }
             catch
             {
-                id = ObjectId.Null;
                 return false;
             }
         }
@@ -158,7 +155,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             Database db,
             string groupName,
             string handleStr,
-            ObjectId id = default(ObjectId))
+            ObjectId id = default)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
 
@@ -169,44 +166,46 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 Id = id
             };
 
-            // If a handle string is provided, resolve it to ObjectId
+            // Resolve handle string to ObjectId if provided
             if (!string.IsNullOrEmpty(handleStr))
             {
-                if (!TryResolveHandleToObjectId(context, db, handleStr, out ObjectId resolvedId))
+                if (!TryResolveHandleToObjectId(context, db, handleStr, out ObjectId resolved))
                 {
                     result.Status = HandleStatus.Invalid;
                     return result;
                 }
-
-                result.Id = resolvedId;
+                result.Id = resolved;
             }
 
-            // If ObjectId is null or invalid
+            // Check for valid ObjectId
             if (result.Id.IsNull || !result.Id.IsValid)
             {
                 result.Status = HandleStatus.Invalid;
                 return result;
             }
 
-            // Attempt to open the object safely
             try
             {
-                DBObject obj = tr.GetObject(result.Id, OpenMode.ForRead, false);
+                // Attempt to fetch the entity
+                var obj = tr.GetObject(result.Id, OpenMode.ForRead, false);
                 if (obj == null || obj.IsErased)
                 {
                     result.Status = HandleStatus.Missing;
                     return result;
                 }
+
+                // If it's an Entity, store it
+                if (obj is Entity ent)
+                    result.Entity = ent;
+
+                result.Status = HandleStatus.Valid;
             }
             catch
             {
-                // Covers stale, wrong database, or corrupted ObjectIds
                 result.Status = HandleStatus.Missing;
-                return result;
+                result.Entity = null;
             }
 
-            // Everything passed
-            result.Status = HandleStatus.Valid;
             return result;
         }
 
@@ -309,55 +308,31 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
         #region NOD Structure Creation and Retrieval
 
-        public static void InitFoundationNOD(FoundationContext context, Transaction tr)
+        public static DBDictionary InitFoundationNOD(FoundationContext context, Transaction tr)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
             if (tr == null) throw new ArgumentNullException(nameof(tr));
 
             var db = context.Document.Database;
-            var ed = context.Document.Editor;
-
-            try
-            {
-                // Ensure the root dictionary exists
-                var rootDict = NODCore.GetOrCreateNestedSubDictionary(
-                    tr,
-                    (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite),
-                    NODCore.ROOT
-                );
-
-                // Ensure all known subdirectories exist under the root
-                foreach (var subKey in KNOWN_SUBDIRS)
-                {
-                    NODCore.GetOrCreateNestedSubDictionary(tr, rootDict, subKey);
-                }
-
-                ed.WriteMessage("\nEE_Foundation NOD structure initialized successfully.");
-            }
-            catch (Autodesk.AutoCAD.Runtime.Exception ex)
-            {
-                ed.WriteMessage($"\nTransaction failed: {ex.Message}");
-            }
-        }
-        internal static DBDictionary GetFoundationRoot(FoundationContext context, Transaction tr)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-            if (tr == null) throw new ArgumentNullException(nameof(tr));
-
-            var doc = context.Document;
-            var model = context.Model;
-            var db = doc.Database;
 
             var nod = (DBDictionary)tr.GetObject(
-                db.NamedObjectsDictionaryId,
-                OpenMode.ForRead);
+                db.NamedObjectsDictionaryId, OpenMode.ForWrite);
 
-            if (!nod.Contains(NODCore.ROOT))
+            var root = GetOrCreateNestedSubDictionary(tr, nod, ROOT);
+
+            foreach (var key in KNOWN_ROOT_SUBDIRS)
+                GetOrCreateNestedSubDictionary(tr, root, key);
+
+            return root;
+        }
+
+        internal static DBDictionary GetFoundationRoot(Transaction tr, Database db)
+        {
+            var nod = tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead) as DBDictionary;
+            if (nod == null || !nod.Contains(ROOT))
                 return null;
 
-            return (DBDictionary)tr.GetObject(
-                nod.GetAt(NODCore.ROOT),
-                OpenMode.ForRead);
+            return tr.GetObject(nod.GetAt(ROOT), OpenMode.ForRead) as DBDictionary;
         }
 
         internal static DBDictionary GetFoundationRootDictionary(
@@ -379,14 +354,17 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         /// <summary>
         /// Ensures a subdictionary exists under another subdictionary (nested).
         /// </summary>
-        internal static DBDictionary GetOrCreateNestedSubDictionary(Transaction tr, DBDictionary root, params string[] keys)
+        internal static DBDictionary GetOrCreateNestedSubDictionary(
+            Transaction tr,
+            DBDictionary root,
+            params string[] keys)
         {
             if (tr == null || root == null || keys == null || keys.Length == 0)
                 return null;
 
-            DBDictionary current = root;
+            var current = root;
 
-            foreach (string key in keys)
+            foreach (var key in keys)
             {
                 if (!current.Contains(key))
                 {
@@ -403,6 +381,41 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
             return current;
         }
+
+        internal static DBDictionary GetOrCreateGradeBeamNode(
+            Transaction tr,
+            DBDictionary gradeBeamRoot,
+            string centerlineHandle)
+        {
+            var gbNode = GetOrCreateNestedSubDictionary(
+                tr, gradeBeamRoot, centerlineHandle);
+
+            var cl = GetOrCreateNestedSubDictionary(tr, gbNode, KEY_CENTERLINE);
+            var edges = GetOrCreateNestedSubDictionary(tr, gbNode, KEY_EDGES_SUBDICT);
+            var strands = GetOrCreateNestedSubDictionary(tr, gbNode, KEY_BEAMSTRAND_SUBDICT);
+
+            AddHandleToMetadataDictionary(tr, cl, centerlineHandle);
+
+            return gbNode;
+        }
+
+        internal static void AddHandleToMetadataDictionary(
+    Transaction tr,
+    DBDictionary dict,
+    string handle)
+        {
+            if (!dict.Contains(handle))
+            {
+                var xr = new Xrecord
+                {
+                    Data = new ResultBuffer(
+                        new TypedValue((int)DxfCode.Handle, handle))
+                };
+                dict.SetAt(handle, xr);
+                tr.AddNewlyCreatedDBObject(xr, true);
+            }
+        }
+
 
         internal static Xrecord GetOrCreateMetadataXrecord(
             Transaction tr,
@@ -438,6 +451,9 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
                     return repairedRecord;
                 }
+
+
+
         #endregion
 
 
@@ -574,24 +590,82 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         }
 
 
-        /// <summary>
-        /// Adds a handle as an Xrecord to a dictionary if it doesn't exist.
-        /// </summary>
-        internal static void AddHandleToMetadataDictionary(Transaction tr, DBDictionary dict, string handle)
-        {
-            if (!dict.Contains(handle))
-            {
-                Xrecord xr = new Xrecord
-                {
-                    Data = new ResultBuffer(new TypedValue((int)DxfCode.Handle, handle))
-                };
-                dict.SetAt(handle, xr);
-                tr.AddNewlyCreatedDBObject(xr, true);
-            }
-        }
         #endregion
 
         #region Entity Deletion
+        internal static int DeleteEntitiesFromDictionaryCore(
+    FoundationContext context,
+    Transaction tr,
+    Database db,
+    DBDictionary dict,
+    string contextName,
+    bool recursive,
+    bool removeHandles)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+            if (db == null) throw new ArgumentNullException(nameof(db));
+            if (dict == null) return 0;
+
+            int count = 0;
+
+            // Snapshot keys to avoid mutation issues
+            var entries = EnumerateDictionary(dict).ToList();
+
+            foreach (var (key, id) in entries)
+            {
+                DBObject obj;
+                try
+                {
+                    obj = tr.GetObject(id, OpenMode.ForRead);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                // Recurse if requested
+                if (recursive && obj is DBDictionary subDict)
+                {
+                    count += DeleteEntitiesFromDictionaryCore(
+                        context,
+                        tr,
+                        db,
+                        subDict,
+                        contextName,
+                        recursive,
+                        removeHandles);
+                    continue;
+                }
+
+                // Validate handle
+                HandleEntry entry = ValidateHandleOrId(context, tr, db, contextName, key);
+                if (entry.Status != HandleStatus.Valid)
+                    continue;
+
+                try
+                {
+                    if (entry.Id.IsValid && !entry.Id.IsErased)
+                    {
+                        Entity ent = tr.GetObject(entry.Id, OpenMode.ForWrite) as Entity;
+                        ent?.Erase();
+                        count++;
+                    }
+
+                    if (removeHandles && dict.Contains(key))
+                    {
+                        DBObject handleObj = tr.GetObject(dict.GetAt(key), OpenMode.ForWrite);
+                        handleObj?.Erase();
+                    }
+                }
+                catch
+                {
+                    // intentionally ignore individual failures
+                }
+            }
+
+            return count;
+        }
 
         /// <summary>
         /// Deletes all entities referenced by a foundation subdictionary.
@@ -604,65 +678,35 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             string subDictName,
             bool removeHandlesFromNod = true)
         {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-            if (tr == null) throw new ArgumentNullException(nameof(tr));
-            if (db == null) throw new ArgumentNullException(nameof(db));
             if (string.IsNullOrWhiteSpace(subDictName))
                 throw new ArgumentException("Subdictionary name required.", nameof(subDictName));
 
-            int deletedCount = 0;
+            DBDictionary root = (DBDictionary)tr.GetObject(
+                db.NamedObjectsDictionaryId,
+                OpenMode.ForWrite);
 
-            // Get the subdictionary safely
             DBDictionary subDict = NODCore.GetOrCreateNestedSubDictionary(
                 tr,
-                (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite),
+                root,
                 NODCore.ROOT,
-                subDictName
-            );
+                subDictName);
 
             if (subDict == null || subDict.Count == 0)
                 return 0;
 
-            // Copy keys first to avoid modifying dictionary during iteration
-            var handleKeys = EnumerateDictionary(subDict).Select(e => e.Key).ToList();
-
-            foreach (string handleStr in handleKeys)
-            {
-                // Unified validation
-                HandleEntry entry = ValidateHandleOrId(context, tr, db, subDictName, handleStr);
-
-                // Only delete valid entities
-                if (entry.Status != HandleStatus.Valid)
-                    continue;
-
-                try
-                {
-                    // Erase the entity
-                    if (entry.Id.IsValid && !entry.Id.IsErased)
-                    {
-                        Entity ent = tr.GetObject(entry.Id, OpenMode.ForWrite) as Entity;
-                        ent?.Erase();
-                        deletedCount++;
-                    }
-
-                    // Optionally remove the Xrecord / handle from the dictionary
-                    if (removeHandlesFromNod && subDict.Contains(handleStr))
-                    {
-                        DBObject obj = tr.GetObject(subDict.GetAt(handleStr), OpenMode.ForWrite);
-                        obj?.Erase();
-                    }
-                }
-                catch
-                {
-                    // Ignore individual failures
-                }
-            }
-
-            return deletedCount;
+            return DeleteEntitiesFromDictionaryCore(
+                context,
+                tr,
+                db,
+                subDict,
+                subDictName,
+                recursive: false,
+                removeHandles: removeHandlesFromNod);
         }
 
 
-        internal static int DeleteEntitiesFromFoundationSubDictionary(FoundationContext context,
+        internal static int DeleteEntitiesFromFoundationSubDictionary(
+            FoundationContext context,
             Database db,
             string subDictName,
             bool removeHandlesFromNod = true)
@@ -685,6 +729,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 return count;
             }
         }
+
 
         #endregion
 
@@ -724,69 +769,67 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         /// <summary>
         /// Recursively exports a DBDictionary, serializing Entities, XRecords, and subdictionaries.
         /// </summary>
-        internal static Dictionary<string, object> ToDictionaryRepresentation(
-            DBDictionary dict,
-            Transaction tr)
+        internal static Dictionary<string, object> ToDictionaryRepresentation(DBDictionary dict, Transaction tr)
         {
             var result = new Dictionary<string, object>();
 
-            if (dict == null || tr == null)
-                return result;
-
-            foreach (var (key, id) in EnumerateDictionary(dict))
+            foreach (DBDictionaryEntry entry in dict)
             {
                 DBObject obj;
                 try
                 {
-                    obj = tr.GetObject(id, OpenMode.ForRead);
+                    obj = tr.GetObject(entry.Value, OpenMode.ForRead);
                 }
                 catch
                 {
-                    result[key] = new Dictionary<string, string>
-        {
-            { "Type", "UnreadableObject" }
-        };
-                    continue;
+                    continue; // skip unreadable objects
                 }
 
                 if (obj is DBDictionary subDict)
                 {
-                    result[key] = ToDictionaryRepresentation(subDict, tr);
-                }
-                else if (obj is Entity ent)
-                {
-                    result[key] = new Dictionary<string, string>
-        {
-            { "Type", ent.GetType().Name },
-            { "Handle", ent.Handle.ToString().ToUpperInvariant() }
-        };
+                    // Always mark type as "Dictionary" for nested dictionaries
+                    result[entry.Key] = new Dictionary<string, object>
+            {
+                { "Type", "Dictionary" },
+                { "Children", ToDictionaryRepresentation(subDict, tr) } // recurse
+            };
                 }
                 else if (obj is Xrecord xr)
                 {
-                    var data = new List<object>();
+                    var dataList = new List<string>();
                     if (xr.Data != null)
                     {
                         foreach (TypedValue tv in xr.Data)
-                            data.Add(tv.Value);
+                            dataList.Add(tv.Value?.ToString());
                     }
 
-                    result[key] = new Dictionary<string, object>
-        {
-            { "Type", "XRecord" },
-            { "Data", data.ToArray() }
-        };
+                    result[entry.Key] = new Dictionary<string, object>
+            {
+                { "Type", "XRecord" },
+                { "Data", dataList }
+            };
+                }
+                else if (obj is Entity ent)
+                {
+                    result[entry.Key] = new Dictionary<string, object>
+            {
+                { "Type", "Entity" },
+                { "Handle", ent.Handle.ToString() }
+            };
                 }
                 else
                 {
-                    result[key] = new Dictionary<string, string>
-        {
-            { "Type", obj.GetType().Name }
-        };
+                    // fallback for unexpected object types
+                    result[entry.Key] = new Dictionary<string, object>
+            {
+                { "Type", obj != null ? obj.GetType().Name : "Unknown" }
+            };
                 }
             }
 
             return result;
         }
+
 
 
         #endregion

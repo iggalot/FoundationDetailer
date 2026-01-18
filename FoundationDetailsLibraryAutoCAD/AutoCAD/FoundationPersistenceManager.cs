@@ -155,70 +155,75 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         /// <summary>
         /// Recursively restores subdictionaries, entities, and Xrecords from a JSON JObject.
         /// </summary>
-        private static void RestoreDictionaryFromJson(FoundationContext context, Transaction tr, DBDictionary dict, Newtonsoft.Json.Linq.JObject jsonObj, Database db)
+        private static void RestoreDictionaryFromJson(
+            FoundationContext context,
+            Transaction tr,
+            DBDictionary dict,
+            Newtonsoft.Json.Linq.JObject jsonObj,
+            Database db)
         {
             foreach (var kvp in jsonObj)
             {
                 string key = kvp.Key;
-                var value = kvp.Value;
+                var value = kvp.Value as Newtonsoft.Json.Linq.JObject;
+                if (value == null)
+                    continue;
+
+                string type = value.Value<string>("Type");
 
                 try
                 {
-                    if (value is Newtonsoft.Json.Linq.JObject innerObj)
+                    if (type == "Dictionary")
                     {
-                        // Determine type
-                        string type = innerObj.Value<string>("Type");
-
-                        if (type == "XRecord")
-                        {
-                            // Recreate metadata Xrecord
-                            Xrecord xr;
-                            if (dict.Contains(key))
-                                xr = tr.GetObject(dict.GetAt(key), OpenMode.ForWrite) as Xrecord;
-                            else
-                            {
-                                xr = new Xrecord();
-                                dict.SetAt(key, xr);
-                                tr.AddNewlyCreatedDBObject(xr, true);
-                            }
-
-                            var dataArray = innerObj["Data"] as Newtonsoft.Json.Linq.JArray;
-                            if (dataArray != null)
-                            {
-                                var rb = new ResultBuffer();
-                                foreach (var v in dataArray)
-                                    rb.Add(new TypedValue((int)DxfCode.Text, v.ToString())); // Use Text as generic
-                                xr.Data = rb;
-                            }
-                        }
-                        else if (type == "Polyline" || type == "Entity")
-                        {
-                            // Try to get the ObjectId from handle string
-                            string handleStr = innerObj.Value<string>("Handle");
-                            if (!string.IsNullOrEmpty(handleStr) && db.TryGetObjectId(new Handle(Convert.ToInt64(handleStr, 16)), out ObjectId id))
-                            {
-                                if (id.IsValid && !id.IsErased)
-                                {
-                                    Entity ent = tr.GetObject(id, OpenMode.ForWrite) as Entity;
-                                    if (ent != null)
-                                        dict.SetAt(key, ent); // Attach entity directly
-                                }
-                            }
-                        }
+                        // Create or get subdictionary
+                        DBDictionary subDict = NODCore.GetOrCreateNestedSubDictionary(tr, dict, key);
+                        var children = value["Children"] as Newtonsoft.Json.Linq.JObject;
+                        if (children != null)
+                            RestoreDictionaryFromJson(context, tr, subDict, children, db);
+                    }
+                    else if (type == "XRecord")
+                    {
+                        Xrecord xr;
+                        if (dict.Contains(key))
+                            xr = tr.GetObject(dict.GetAt(key), OpenMode.ForWrite) as Xrecord;
                         else
                         {
-                            // Subdictionary: recurse
-                            DBDictionary subDict = NODCore.GetOrCreateNestedSubDictionary(tr, dict, key);
-                            RestoreDictionaryFromJson(context, tr, subDict, innerObj, db);
+                            xr = new Xrecord();
+                            dict.SetAt(key, xr);
+                            tr.AddNewlyCreatedDBObject(xr, true);
+                        }
+
+                        var dataArray = value["Data"] as Newtonsoft.Json.Linq.JArray;
+                        if (dataArray != null)
+                        {
+                            var rb = new ResultBuffer();
+                            foreach (var v in dataArray)
+                                rb.Add(new TypedValue((int)DxfCode.Text, v.ToString()));
+                            xr.Data = rb;
+                        }
+                    }
+                    else if (type == "Entity")
+                    {
+                        string handleStr = value.Value<string>("Handle");
+                        if (!string.IsNullOrEmpty(handleStr) && db.TryGetObjectId(new Handle(Convert.ToInt64(handleStr, 16)), out ObjectId id))
+                        {
+                            if (id.IsValid && !id.IsErased)
+                            {
+                                Entity ent = tr.GetObject(id, OpenMode.ForWrite) as Entity;
+                                if (ent != null)
+                                    dict.SetAt(key, ent); // attach entity
+                            }
                         }
                     }
                 }
                 catch
                 {
-                    // Skip corrupted or invalid entries
                     context.Document.Editor.WriteMessage($"\nSkipping invalid NOD item: {key}");
                 }
             }
         }
+
+
+
     }
 }

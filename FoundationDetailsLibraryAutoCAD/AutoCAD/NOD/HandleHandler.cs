@@ -18,20 +18,8 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             public string HandleKey { get; set; }   // handle string
             public string Status { get; set; }      // Valid | Missing | Invalid | Error
             public ObjectId Id { get; set; }         // only set when valid
+            public Handle Handle { get; set; }     
+            public Entity Entity { get; set; }      
         }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     }
 }
