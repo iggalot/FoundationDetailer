@@ -571,6 +571,12 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 // --- Update TreeView UI ---
                 treeMgr.PopulateFromData(TreeViewExtensionData, treeData);
 
+                // --- Convert the tree to a string ---
+                string treeString = NODTraversal.TreeToString(treeData);
+
+                // --- Show in a MessageBox ---
+                ScrollableMessageBox.Show(treeString, "NOD Tree Structure");
+
                 tr.Commit();
             }
         }

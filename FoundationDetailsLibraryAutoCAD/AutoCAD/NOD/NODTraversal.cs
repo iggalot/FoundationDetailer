@@ -94,8 +94,22 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
             foreach (var item in tree)
             {
-                sb.AppendLine($"{indent}{item.Name} : {item.Type}");
+                int subDictCount = 0;
+                if (item.Children != null)
+                {
+                    foreach (var c in item.Children)
+                    {
+                        if (c.Type == "Subdictionary")
+                            subDictCount++;
+                    }
+                }
 
+                sb.AppendLine($"{indent}{item.Name} ({item.Type})" +
+                    (subDictCount > 0 ? $" [{subDictCount} sub-dictionaries]" : "") +
+                    (item.ObjectId.HasValue ? $" [Id: {item.ObjectId.Value.Handle}]" : "") +
+                    (item.NODObject != null ? $" [{item.NODObject.Type}]" : ""));
+
+                // --- Recurse into children ---
                 if (item.Children != null && item.Children.Count > 0)
                 {
                     sb.Append(TreeToString(item.Children, indentLevel + 1));
@@ -104,6 +118,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
             return sb.ToString();
         }
+
 
         /// <summary>
         /// Builds both TreeView data and a debug string at once.
