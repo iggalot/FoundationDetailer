@@ -28,8 +28,8 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
         public const string KEY_BOUNDARY_SUBDICT = "FD_BOUNDARY";
         public const string KEY_GRADEBEAM_SUBDICT = "FD_GRADEBEAM";
-        public const string KEY_SLABSTRAND_SUBDICT = "FD_SLABSTRAND";
-        public const string KEY_REBAR = "FD_REBAR";
+        //public const string KEY_SLABSTRAND_SUBDICT = "FD_SLABSTRAND";
+        //public const string KEY_REBAR = "FD_REBAR";
 
         public const string KEY_CENTERLINE = "FD_CENTERLINE";
         public const string KEY_EDGES_SUBDICT = "FD_EDGES";
@@ -40,8 +40,8 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         {
             KEY_BOUNDARY_SUBDICT,
             KEY_GRADEBEAM_SUBDICT,
-            KEY_SLABSTRAND_SUBDICT,
-            KEY_REBAR
+            //KEY_SLABSTRAND_SUBDICT,
+            //KEY_REBAR
         };
         #endregion
 

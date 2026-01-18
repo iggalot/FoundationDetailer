@@ -34,14 +34,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         private FoundationContext CurrentContext => FoundationContext.For(Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument);
 
 
-        private double ParseDoubleOrDefault(string text, double defaultValue)
-        {
-            if (double.TryParse(text, out double val))
-                return val;
-            return defaultValue;
-        }
-
-
         public PaletteMain()
         {
             InitializeComponent();
@@ -110,8 +102,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             BtnConvertExisting.Click += BtnConvertToPolyline_Click;
 
         }
-
-
 
         private void OnDrawNewRequested(FoundationContext context, SpacingRequest request)
         {
@@ -184,45 +174,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                     // Add the grade beam
                     _gradeBeamService.AddInterpolatedGradeBeam(context, start, end, 5);
                 }
-
-                tr.Commit();
-            }
-
-            // Refresh the UI asynchronously
-            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
-        }
-
-        private void OnDrawExistingRequested(FoundationContext context, Polyline existing_pl)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-            if (existing_pl == null) throw new ArgumentNullException(nameof(existing_pl));
-
-            // Get boundary polyline
-            if (!_boundaryService.TryGetBoundary(context, out Polyline boundary))
-                return;
-
-            // Get bounding box
-            var ext = boundary.GeometricExtents;
-            double minX = ext.MinPoint.X;
-            double maxX = ext.MaxPoint.X;
-            double minY = ext.MinPoint.Y;
-            double maxY = ext.MaxPoint.Y;
-
-            Document doc = context.Document;
-            Database db = doc.Database;
-
-            using (doc.LockDocument())
-            using (Transaction tr = db.TransactionManager.StartTransaction())
-            {
-                // This is the real ObjectId in the drawing database
-                ObjectId selectedId = existing_pl.ObjectId;
-                //Editor ed = context.Document.Editor;
-                //ed.WriteMessage($"\nObjectId of existing_pl: {existing_pl.ObjectId}");
-                //ed.WriteMessage($"\nType: {existing_pl.GetType().Name}");
-                //MessageBox.Show($"\nObjectId of existing_pl: {existing_pl.ObjectId}");
-                //MessageBox.Show($"\nType: {existing_pl.GetType().Name}");
-                // Add the grade beam
-                _gradeBeamService.AddExistingAsGradeBeam(context, selectedId, tr);
 
                 tr.Commit();
             }
@@ -519,7 +470,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         {
             var context = CurrentContext;
             if (_boundaryService.SelectBoundary(context, out string error))
-                Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+                PolylineBoundaryManager.RaiseBoundaryChanged();
             else if (!string.IsNullOrEmpty(error))
                 TxtStatus.Text = error;
         }
