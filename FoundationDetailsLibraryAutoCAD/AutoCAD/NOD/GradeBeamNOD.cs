@@ -449,15 +449,12 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             return false;
         }
 
-
-
-
         public static void StoreEdgeObjects(
             FoundationContext context,
             Transaction tr,
             ObjectId centerlineId,
-            ObjectId leftEdgeId,
-            ObjectId rightEdgeId)
+            IEnumerable<ObjectId> leftEdgeIds,
+            IEnumerable<ObjectId> rightEdgeIds)
         {
             if (context == null || tr == null) throw new ArgumentNullException();
             if (centerlineId.IsNull) throw new ArgumentNullException(nameof(centerlineId));
@@ -465,8 +462,8 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             var db = context.Document.Database;
             var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
 
-            // Use your generic GetOrCreateNestedSubDictionary
-            var handleDict = NODCore.GetOrCreateNestedSubDictionary(
+            // Get the GradeBeam dictionary
+            var gradebeamDict = NODCore.GetOrCreateNestedSubDictionary(
                 tr,
                 nod,
                 NODCore.ROOT,
@@ -477,26 +474,38 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             // Ensure edges subdictionary exists
             var edgesDict = NODCore.GetOrCreateNestedSubDictionary(
                 tr,
-                handleDict,
+                gradebeamDict,
                 NODCore.KEY_EDGES_SUBDICT
             );
 
-            // Store left and right edges as Xrecords
-            void AddEdge(string key, ObjectId id)
+            // Helper to add edge Xrecord with multiple handles
+            void AddEdge(string keyPrefix, IEnumerable<ObjectId> ids)
             {
-                if (!edgesDict.Contains(key))
+                if (ids == null) return;
+
+                var typedValues = new List<TypedValue>();
+                foreach (var id in ids)
                 {
-                    var xrec = new Xrecord
-                    {
-                        Data = new ResultBuffer(new TypedValue((int)DxfCode.Text, id.Handle.ToString()))
-                    };
-                    edgesDict.SetAt(key, xrec);
-                    tr.AddNewlyCreatedDBObject(xrec, true);
+                    if (!id.IsNull)
+                        typedValues.Add(new TypedValue((int)DxfCode.Text, id.Handle.ToString()));
                 }
+
+                if (typedValues.Count == 0) return;
+
+                // Use a unique key per edge, e.g., LEFT_0, RIGHT_0
+                string key = keyPrefix;
+                int counter = 0;
+                while (edgesDict.Contains(key))
+                    key = $"{keyPrefix}_{++counter}";
+
+                var xrec = new Xrecord { Data = new ResultBuffer(typedValues.ToArray()) };
+                edgesDict.SetAt(key, xrec);
+                tr.AddNewlyCreatedDBObject(xrec, true);
             }
 
-            AddEdge(NODCore.KEY_EDGES_SUBDICT, leftEdgeId);
-            AddEdge(NODCore.KEY_EDGES_SUBDICT, rightEdgeId);
+            AddEdge("LEFT", leftEdgeIds);
+            AddEdge("RIGHT", rightEdgeIds);
         }
+
     }
 }

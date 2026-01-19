@@ -16,73 +16,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
     public static class NODTraversal
     {
         /// <summary>
-        /// Recursively builds the NOD tree as an ObservableCollection for TreeView binding.
-        /// </summary>
-        internal static ObservableCollection<ExtensionDataItem> BuildTree(
-            FoundationContext context,
-            Transaction tr,
-            DBDictionary dict,
-            Database db)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-            if (tr == null) throw new ArgumentNullException(nameof(tr));
-            if (dict == null) throw new ArgumentNullException(nameof(dict));
-            if (db == null) throw new ArgumentNullException(nameof(db));
-
-            var items = new ObservableCollection<ExtensionDataItem>();
-
-            foreach (var kvp in NODScanner.EnumerateDictionary(dict))
-            {
-                string key = kvp.Key;
-                ObjectId id = kvp.Value;
-
-                DBObject obj = null;
-                try
-                {
-                    obj = tr.GetObject(id, OpenMode.ForRead);
-                }
-                catch
-                {
-                    // Unreadable object
-                }
-
-                if (obj is DBDictionary subDict)
-                {
-                    var childItem = new ExtensionDataItem
-                    {
-                        Name = key,
-                        Type = "Subdictionary",
-                        Children = BuildTree(context, tr, subDict, db)
-                    };
-                    items.Add(childItem);
-                }
-                else if (obj is Entity || obj is Xrecord)
-                {
-                    var entry = NODCore.ValidateHandleOrId(context, tr, db, "BuildTree", key);
-                    var childItem = new ExtensionDataItem
-                    {
-                        Name = key,
-                        Type = obj?.GetType().Name ?? "Unknown",
-                        ObjectId = entry.Status == HandleStatus.Valid ? entry.Id : ObjectId.Null
-                    };
-                    items.Add(childItem);
-                }
-                else
-                {
-                    // fallback
-                    items.Add(new ExtensionDataItem
-                    {
-                        Name = key,
-                        Type = "Unreadable",
-                        ObjectId = ObjectId.Null
-                    });
-                }
-            }
-
-            return items;
-        }
-
-        /// <summary>
         /// Converts an ObservableCollection tree into a formatted string for debugging/logging.
         /// </summary>
         internal static string TreeToString(IEnumerable<ExtensionDataItem> tree, int indentLevel = 0)
@@ -90,10 +23,11 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             if (tree == null) return string.Empty;
 
             StringBuilder sb = new StringBuilder();
-            string indent = new string(' ', indentLevel * 3);
+            string indent = new string(' ', indentLevel * 3); // 3 spaces per level
 
             foreach (var item in tree)
             {
+                // Count subdictionaries in children
                 int subDictCount = 0;
                 if (item.Children != null)
                 {
@@ -104,12 +38,18 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                     }
                 }
 
+                // Format handles if present
+                string handlesText = string.Empty;
+                if (item.Value is List<string> handleList && handleList.Count > 0)
+                {
+                    handlesText = $" [Handles: {string.Join(", ", handleList)}]";
+                }
+
                 sb.AppendLine($"{indent}{item.Name} ({item.Type})" +
                     (subDictCount > 0 ? $" [{subDictCount} sub-dictionaries]" : "") +
-                    (item.ObjectId.HasValue ? $" [Id: {item.ObjectId.Value.Handle}]" : "") +
-                    (item.NODObject != null ? $" [{item.NODObject.Type}]" : ""));
+                    handlesText);
 
-                // --- Recurse into children ---
+                // Recurse into children
                 if (item.Children != null && item.Children.Count > 0)
                 {
                     sb.Append(TreeToString(item.Children, indentLevel + 1));
@@ -118,124 +58,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
             return sb.ToString();
         }
-
-
-        /// <summary>
-        /// Builds both TreeView data and a debug string at once.
-        /// </summary>
-        internal static void GetTreeAndDebug(
-            FoundationContext context,
-            Transaction tr,
-            DBDictionary root,
-            Database db,
-            out ObservableCollection<ExtensionDataItem> treeData,
-            out string debugString)
-        {
-            treeData = BuildTree(context, tr, root, db);
-            debugString = TreeToString(treeData);
-        }
-
-        internal static NODTraversalResult TraverseFoundation(
-    FoundationContext context,
-    Transaction tr,
-    DBDictionary root,
-    Database db)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-            if (tr == null) throw new ArgumentNullException(nameof(tr));
-            if (root == null) throw new ArgumentNullException(nameof(root));
-            if (db == null) throw new ArgumentNullException(nameof(db));
-
-            var results = new List<TraversalResult>();
-
-            var tree = BuildTreeAndValidate(
-                context,
-                tr,
-                root,
-                db,
-                results,
-                path: NODCore.ROOT);
-
-            return new NODTraversalResult(tree, results);
-        }
-
-        private static ObservableCollection<ExtensionDataItem> BuildTreeAndValidate(
-    FoundationContext context,
-    Transaction tr,
-    DBDictionary dict,
-    Database db,
-    List<TraversalResult> results,
-    string path)
-        {
-            var items = new ObservableCollection<ExtensionDataItem>();
-
-            foreach (var kvp in NODScanner.EnumerateDictionary(dict))
-            {
-                string key = kvp.Key;
-                ObjectId id = kvp.Value;
-                string fullPath = $"{path}/{key}";
-
-                DBObject obj = null;
-                try
-                {
-                    obj = tr.GetObject(id, OpenMode.ForRead);
-                }
-                catch
-                {
-                    items.Add(new ExtensionDataItem
-                    {
-                        Name = key,
-                        Type = "Unreadable"
-                    });
-                    continue;
-                }
-
-                if (obj is DBDictionary subDict)
-                {
-                    items.Add(new ExtensionDataItem
-                    {
-                        Name = key,
-                        Type = "Subdictionary",
-                        Children = BuildTreeAndValidate(
-                            context, tr, subDict, db, results, fullPath)
-                    });
-                    continue;
-                }
-
-                // ---- ENTITY / XRECORD VALIDATION ----
-                var handleResult = NODCore.ValidateHandleOrId(
-                    context, tr, db, "Traversal", key);
-
-                if (handleResult.Status == HandleStatus.Valid &&
-                    handleResult.Entity != null)
-                {
-                    results.Add(TraversalResult.Success(
-                        key, fullPath, handleResult.Handle,
-                        handleResult.Id, handleResult.Entity));
-
-                    items.Add(new ExtensionDataItem
-                    {
-                        Name = key,
-                        Type = handleResult.Entity.GetType().Name,
-                        ObjectId = handleResult.Id
-                    });
-                }
-                else
-                {
-                    results.Add(TraversalResult.InvalidHandle(key, fullPath));
-
-                    items.Add(new ExtensionDataItem
-                    {
-                        Name = key,
-                        Type = "Invalid"
-                    });
-                }
-            }
-
-            return items;
-        }
-
-
     }
 
     internal sealed class NODTraversalResult

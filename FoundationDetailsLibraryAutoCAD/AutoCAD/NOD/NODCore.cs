@@ -11,6 +11,7 @@ using FoundationDetailsLibraryAutoCAD.Data;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Linq;
 using static FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.HandleHandler;
 
@@ -62,17 +63,77 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 }
             }
         }
-        internal static IEnumerable<string> EnumerateHandleKeys(DBDictionary dict)
+        internal static IEnumerable<ExtensionDataItem> EnumerateDictionaryWithHandles(
+            FoundationContext context,
+            Transaction tr,
+            DBDictionary dict,
+            Database db)
         {
-            if (dict == null)
+            if (context == null || tr == null || dict == null || db == null)
                 yield break;
 
             foreach (DictionaryEntry entry in dict)
             {
-                if (entry.Key is string key)
-                    yield return key;
+                if (!(entry.Key is string key))
+                    continue;
+
+                if (!(entry.Value is ObjectId objId))
+                    continue; // skip non-ObjectId entries
+
+                var obj = tr.GetObject(objId, OpenMode.ForRead);
+                // Subdictionary → recurse
+                if (obj is DBDictionary subDict)
+                {
+                    yield return new ExtensionDataItem
+                    {
+                        Name = key,
+                        Type = "Subdictionary",
+                        Children = new ObservableCollection<ExtensionDataItem>(
+                            EnumerateDictionaryWithHandles(context, tr, subDict, db))
+                    };
+                }
+                // Xrecord → show typed values
+                else if (obj is Xrecord xr)
+                {
+                    var xrValues = new List<string>();
+                    if (xr.Data != null)
+                    {
+                        foreach (TypedValue tv in xr.Data)
+                            xrValues.Add($"[{tv.TypeCode}: {tv.Value}]");
+                    }
+
+                    yield return new ExtensionDataItem
+                    {
+                        Name = key,
+                        Type = "XRecord",
+                        Value = xrValues
+                    };
+                }
+                // Entity → show handle
+                else if (obj is Entity ent)
+                {
+                    yield return new ExtensionDataItem
+                    {
+                        Name = key,
+                        Type = ent.GetType().Name,
+                        ObjectId = ent.ObjectId,
+                        Value = new List<string> { $"Handle: {ent.Handle}" }
+                    };
+                }
+                // Fallback for unknown objects
+                else
+                {
+                    yield return new ExtensionDataItem
+                    {
+                        Name = key,
+                        Type = obj?.GetType().Name ?? "Unknown",
+                        ObjectId = ObjectId.Null
+                    };
+                }
             }
         }
+
+
 
         internal static IEnumerable<ObjectId> EnumerateValidEntityIds(
             FoundationContext context,
@@ -98,27 +159,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                     yield return id;
             }
         }
-
-        public static IEnumerable<ObjectId> EnumerateGradeBeamDictionaries(
-    Transaction tr,
-    Database db)
-        {
-            var root = tr.GetObject(db.NamedObjectsDictionaryId,
-                OpenMode.ForRead) as DBDictionary;
-
-            if (!root.Contains("FD_GRADEBEAM"))
-                yield break;
-
-            var fdGbDict = tr.GetObject(
-                root.GetAt("FD_GRADEBEAM"),
-                OpenMode.ForRead) as DBDictionary;
-
-            foreach (DBDictionaryEntry entry in fdGbDict)
-                yield return entry.Value;
-        }
-
-
-
 
         #endregion
 

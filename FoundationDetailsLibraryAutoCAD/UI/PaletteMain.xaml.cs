@@ -136,7 +136,13 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                     ModelSpaceWriterService.AppendToModelSpace(tr, db, rightEdge);
 
                     // --- Store edges in NOD ---
-                    GradeBeamNOD.StoreEdgeObjects(context, tr, centerlineId, leftEdge.ObjectId, rightEdge.ObjectId);
+                    GradeBeamNOD.StoreEdgeObjects(
+                        context,
+                        tr,
+                        centerlineId,
+                        new[] { leftEdge.ObjectId },
+                        new[] { rightEdge.ObjectId }
+                    );
 
                     createdCount++;
                 }
@@ -490,8 +496,8 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 if (rootDict == null)
                     return;
 
-                // --- Rebuild the ExtensionDataItem tree ---
-                var treeData = NODTraversal.BuildTree(context, tr, rootDict, db);
+                // --- Rebuild the ExtensionDataItem tree using the new handles-only ProcessDictionary ---
+                var treeData = NODScanner.ProcessDictionary(context, tr, rootDict, db);
 
                 // --- Pass the transaction into TreeViewManager ---
                 var treeMgr = new TreeViewManager(tr);
@@ -502,6 +508,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 tr.Commit();
             }
         }
+
 
 
 
@@ -540,46 +547,39 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         private void BtnQueryNOD_Click(object sender, RoutedEventArgs e)
         {
             var context = CurrentContext;
-            if (context == null)
-                return;
+            if (context == null) return;
 
             var doc = context.Document;
-            if (doc == null)
-                return;
+            if (doc == null) return;
 
             var db = doc.Database;
 
             using (doc.LockDocument())
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                var rootDict = NODCore.GetFoundationRoot(tr, db);
+                var rootDict = NODCore.GetFoundationRootDictionary(tr, db);
                 if (rootDict == null)
                 {
                     ScrollableMessageBox.Show("No EE_Foundation dictionary found.");
                     return;
                 }
 
-                // --- Build structured NOD tree ---
-                var treeData = NODTraversal.BuildTree(context, tr, rootDict, db);
+                // --- Build structured NOD tree using the new handles-only ProcessDictionary ---
+                var treeData = NODScanner.ProcessDictionary(context, tr, rootDict, db);
 
-                // --- Pass the transaction into the TreeViewManager ---
-                var treeMgr = new TreeViewManager(tr);
-
-                // --- Update TreeView UI ---
-                treeMgr.PopulateFromData(TreeViewExtensionData, treeData);
-
-                // --- Convert the tree to a string ---
+                // --- Convert the tree to a string for debug purposes ---
                 string treeString = NODTraversal.TreeToString(treeData);
 
-                // --- Show in a MessageBox ---
+                // --- Show the debug string ---
                 ScrollableMessageBox.Show(treeString, "NOD Tree Structure");
+
+                // --- Optional: populate TreeView UI if you want ---
+                var treeMgr = new TreeViewManager(tr);
+                treeMgr.PopulateFromData(TreeViewExtensionData, treeData);
 
                 tr.Commit();
             }
         }
-
-
-
 
         // ---------------------------
         // Button click handler

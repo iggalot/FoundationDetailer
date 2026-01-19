@@ -382,62 +382,6 @@ namespace FoundationDetailer.AutoCAD
 
 
         // GradeBeamManager
-        public void RegenerateAllGradeBeamEdges(FoundationContext context)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-
-            var doc = context.Document;
-            var db = doc.Database;
-
-            using (doc.LockDocument())
-            using (var tr = db.TransactionManager.StartTransaction())
-            {
-                if (!GradeBeamNOD.TryGetAllGradeBeamHandleKeys(context, tr, out var handles))
-                    return;
-
-                foreach (var handle in handles)
-                {
-                    RegenerateEdgesForGradeBeam(context, tr, handle);
-                }
-
-                tr.Commit();
-            }
-        }
-
-        // GradeBeamManager
-        private void RegenerateEdgesForGradeBeam(
-            FoundationContext context,
-            Transaction tr,
-            string gradeBeamHandle)
-        {
-            var db = context.Document.Database;
-
-            // 1️ Resolve centerline
-            if (!GradeBeamNOD.TryGetCenterlineObjectId(
-                context, tr, gradeBeamHandle, out ObjectId clId))
-                return;
-
-            var centerline = tr.GetObject(clId, OpenMode.ForRead) as Polyline;
-            if (centerline == null)
-                return;
-
-            // 2️ Clear existing edges
-            GradeBeamNOD.ClearEdges(tr, db, gradeBeamHandle);
-
-            // 3️ Offset distance
-            double halfWidth =
-                (DEFAULT_BEAM_WIDTH_IN * INCHES_TO_DRAWING_UNITS) / 2.0;
-
-            // 4️ Generate offsets
-            var left = centerline.GetOffsetCurves(+halfWidth);
-            var right = centerline.GetOffsetCurves(-halfWidth);
-
-            // 5️ Append & register
-            RegisterEdgeSet(tr, db, gradeBeamHandle, left, "LEFT");
-            RegisterEdgeSet(tr, db, gradeBeamHandle, right, "RIGHT");
-        }
-
-        // GradeBeamManager
         private void RegisterEdgeSet(
             Transaction tr,
             Database db,
@@ -448,10 +392,10 @@ namespace FoundationDetailer.AutoCAD
             if (offsets == null || offsets.Count == 0)
                 return;
 
-            var edgesDict =
-                GradeBeamNOD.GetEdgesDictionary(tr, db, gradeBeamHandle, true);
+            // Get (or create) the FD_EDGES dictionary for this grade beam
+            var edgesDict = GradeBeamNOD.GetEdgesDictionary(tr, db, gradeBeamHandle, true);
 
-            int index = 0;
+            int edgeIndex = 0;
 
             foreach (Entity ent in offsets)
             {
@@ -461,13 +405,39 @@ namespace FoundationDetailer.AutoCAD
                     continue;
                 }
 
+                // Append the polyline to model space
                 ModelSpaceWriterService.AppendToModelSpace(tr, db, pl);
 
-                string key = $"{prefix}_{index++}";
-                edgesDict.SetAt(key, pl);
-                tr.AddNewlyCreatedDBObject(pl, true);
+                // Create a subdictionary for this edge
+                string edgeDictKey = $"FD_EDGE_{prefix}_{edgeIndex++}";
+                DBDictionary edgeSubDict = NODCore.GetOrCreateNestedSubDictionary(tr, edgesDict, edgeDictKey);
+
+                // Explode polyline to segments
+                var segments = new DBObjectCollection();
+                pl.Explode(segments);
+
+                int segIndex = 0;
+                foreach (Entity seg in segments)
+                {
+                    ModelSpaceWriterService.AppendToModelSpace(tr, db, seg);
+
+                    // Store the handle string of each segment in an Xrecord
+                    string lineKey = $"LINE_{segIndex++}";
+                    if (!edgeSubDict.Contains(lineKey))
+                    {
+                        Xrecord xr = new Xrecord
+                        {
+                            Data = new ResultBuffer(
+                                new TypedValue((int)DxfCode.Text, seg.Handle.ToString())
+                            )
+                        };
+                        edgeSubDict.SetAt(lineKey, xr);
+                        tr.AddNewlyCreatedDBObject(xr, true);
+                    }
+                }
             }
         }
+
 
 
 

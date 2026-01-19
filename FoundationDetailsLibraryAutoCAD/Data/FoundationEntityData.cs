@@ -274,7 +274,7 @@ namespace FoundationDetailsLibraryAutoCAD.Data
     {
         public string Name { get; set; }
         public string Type { get; set; }          // e.g., XRecord, Subdictionary, etc.
-        public object Value { get; set; }         // For XRecord, could be List<TypedValue>
+        public List<string> Value { get; set; }         // For XRecord, could be List<TypedValue>
         public ObservableCollection<ExtensionDataItem> Children { get; set; } = new ObservableCollection<ExtensionDataItem>();
         public ObjectId? ObjectId { get; set; }   // Nullable ObjectId for entities
         public NODObjectWrapper NODObject { get; set; }  // <--- New

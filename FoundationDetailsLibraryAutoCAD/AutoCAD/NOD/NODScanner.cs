@@ -177,7 +177,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         /// General-purpose helper for processing entries in AutoCAD's Named Objects Dictionary (NOD) or any sub-dictionary.  
         /// Non-dictionary entries are passed to the handler. Nested dictionaries are processed if <paramref name="recurseSubDictionaries"/> is true.
         /// </remarks>
-
         internal static ObservableCollection<ExtensionDataItem> ProcessDictionary(
             FoundationContext context,
             Transaction tr,
@@ -191,62 +190,78 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
             var items = new ObservableCollection<ExtensionDataItem>();
 
-            foreach (var child in ProcessDictionaryEntries(context, tr, db, dict, "ProcessDictionary",
-                (key, objId) =>
+            foreach (var kvp in NODCore.EnumerateDictionary(dict))
+            {
+                string key = kvp.Key;
+                ObjectId id = kvp.Id;
+
+                DBObject obj = null;
+                try
                 {
-                    DBObject obj = tr.GetObject(objId, OpenMode.ForRead);
-                    if (obj is Xrecord xr)
-                    {
-                        var xrValues = new List<string>();
-                        if (xr.Data != null)
-                        {
-                            foreach (TypedValue tv in xr.Data)
-                                xrValues.Add($"[{tv.TypeCode}: {tv.Value}]");
-                        }
-
-                        return new ExtensionDataItem
-                        {
-                            Name = key,
-                            Type = "XRecord",
-                            Value = xrValues
-                        };
-                    }
-                    else if (obj is Entity || obj != null)
-                    {
-                        var entry = NODCore.ValidateHandleOrId(context, tr, db, "ProcessDictionary", key);
-
-                        return new ExtensionDataItem
-                        {
-                            Name = key,
-                            Type = obj?.GetType().Name ?? "Unknown",
-                            ObjectId = entry.Status == HandleStatus.Valid ? entry.Id : ObjectId.Null
-                        };
-                    }
-                    else if (obj is DBDictionary subDict)
-                    {
-                        return new ExtensionDataItem
-                        {
-                            Name = key,
-                            Type = "Subdictionary",
-                            Children = ProcessDictionary(context, tr, subDict, db)
-                        };
-                    }
-
-                    // fallback
-                    return new ExtensionDataItem
+                    obj = tr.GetObject(id, OpenMode.ForRead);
+                }
+                catch
+                {
+                    items.Add(new ExtensionDataItem
                     {
                         Name = key,
-                        Type = "Unknown",
+                        Type = "Unreadable"
+                    });
+                    continue;
+                }
+
+                // ---- SUBDICTIONARY ----
+                if (obj is DBDictionary subDict)
+                {
+                    items.Add(new ExtensionDataItem
+                    {
+                        Name = key,
+                        Type = "Subdictionary",
+                        Children = ProcessDictionary(context, tr, subDict, db)
+                    });
+                }
+                // ---- XRECORD storing a single handle ----
+                else if (obj is Xrecord xr)
+                {
+                    // Each Xrecord is treated as a single handle entry
+                    string handle = xr.Data?.AsArray().Length > 0 ? xr.Data.AsArray()[0].Value?.ToString() : "";
+
+                    items.Add(new ExtensionDataItem
+                    {
+                        Name = key,
+                        Type = "XRecord",
+                        Value = new List<string> { handle }
+                    });
+                }
+                // ---- ENTITY ----
+                else if (obj is Entity ent)
+                {
+                    var entry = NODCore.ValidateHandleOrId(context, tr, db, "ProcessDictionary", key);
+
+                    items.Add(new ExtensionDataItem
+                    {
+                        Name = key,
+                        Type = ent.GetType().Name,
+                        ObjectId = entry.Status == HandleStatus.Valid ? entry.Id : ObjectId.Null
+                    });
+                }
+                // ---- FALLBACK ----
+                else
+                {
+                    items.Add(new ExtensionDataItem
+                    {
+                        Name = key,
+                        Type = obj?.GetType().Name ?? "Unknown",
                         ObjectId = ObjectId.Null
-                    };
-                },
-                recurseSubDictionaries: true))
-            {
-                items.Add(child);
+                    });
+                }
             }
 
             return items;
         }
+
+
+
 
         /// <summary>
         /// Iterates over all entries in a DBDictionary and applies a handler function to each entry,

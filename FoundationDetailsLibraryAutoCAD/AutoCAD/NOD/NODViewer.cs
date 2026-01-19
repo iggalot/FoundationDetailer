@@ -4,14 +4,14 @@ using FoundationDetailsLibraryAutoCAD.Data;
 using System;
 using System.Collections.Generic;
 using System.Text;
-using static FoundationDetailsLibraryAutoCAD.Data.FoundationEntityData;
 
 namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 {
     public class NODViewer
     {
+
         // ==========================================================
-        // VIEW NOD CONTENT - fully recursive using existing ProcessDictionary
+        // NODViewer: Display the tree recursively
         // ==========================================================
         public static void ViewFoundationNOD(FoundationContext context)
         {
@@ -32,7 +32,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 StringBuilder sb = new StringBuilder();
                 sb.AppendLine("=== EE_Foundation Contents ===");
 
-                // Process each top-level subdictionary (BOUNDARY, GRADEBEAM, etc.)
                 foreach (var kvp in NODScanner.EnumerateDictionary(rootDict))
                 {
                     string rootName = kvp.Key;
@@ -46,10 +45,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                         continue;
                     }
 
-                    // Use your existing ProcessDictionary to get the tree
                     var treeItems = NODScanner.ProcessDictionary(context, tr, subDict, db);
-
-                    // Recursively print the tree
                     PrintTree(sb, treeItems, indentLevel: 1);
                 }
 
@@ -59,7 +55,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         }
 
         // ==========================================================
-        // Helper to recursively print ExtensionDataItem tree
+        // Recursively print ExtensionDataItem tree with indentation
         // ==========================================================
         private static void PrintTree(StringBuilder sb, IEnumerable<ExtensionDataItem> items, int indentLevel)
         {
@@ -67,15 +63,15 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
             foreach (var item in items)
             {
+                string valueText = item.Value != null && item.Value.Count > 0
+                    ? " [" + string.Join(", ", item.Value) + "]"
+                    : string.Empty;
+
+                sb.AppendLine($"{indent}{item.Name} : {item.Type}{valueText}");
+
                 if (item.Children != null && item.Children.Count > 0)
                 {
-                    sb.AppendLine($"{indent}{item.Name} : {item.Type}");
-                    // Cast ObservableCollection to IEnumerable
-                    PrintTree(sb, (IEnumerable<ExtensionDataItem>)item.Children, indentLevel + 1);
-                }
-                else
-                {
-                    sb.AppendLine($"{indent}{item.Name} : {item.Type}");
+                    PrintTree(sb, item.Children, indentLevel + 1);
                 }
             }
         }
