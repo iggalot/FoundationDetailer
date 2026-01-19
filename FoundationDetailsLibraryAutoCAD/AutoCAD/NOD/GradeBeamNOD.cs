@@ -1,4 +1,6 @@
-﻿using Autodesk.AutoCAD.DatabaseServices;
+﻿using Autodesk.AutoCAD.ApplicationServices;
+using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.EditorInput;
 using FoundationDetailsLibraryAutoCAD.Data;
 using System;
 using System.Collections.Generic;
@@ -509,5 +511,60 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             AddEdges("RIGHT", rightEdgeIds);
         }
 
+        /// <summary>
+        /// Deletes a single grade beam node and all its subdictionaries/XRecords.
+        /// Only affects the NOD structure; does NOT touch AutoCAD entities.
+        /// </summary>
+        /// <param name="context">Current foundation context</param>
+        /// <param name="centerlineHandle">Handle string of the centerline for the grade beam to delete</param>
+        /// <returns>True if deletion succeeded, false otherwise</returns>
+        public static bool DeleteGradeBeamNode(FoundationContext context, string centerlineHandle)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (string.IsNullOrWhiteSpace(centerlineHandle)) throw new ArgumentNullException(nameof(centerlineHandle));
+
+            Document doc = context.Document;
+            Database db = doc.Database;
+            Editor ed = doc.Editor;
+
+            using (doc.LockDocument())
+            using (Transaction tr = db.TransactionManager.StartTransaction())
+            {
+                try
+                {
+                    // Get the top-level NOD
+                    var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+
+                    if (!nod.Contains(NODCore.ROOT))
+                    {
+                        ed.WriteMessage($"\n[GradeBeamNOD] No {NODCore.ROOT} dictionary exists.");
+                        return false;
+                    }
+
+                    // Get the FD_GRADEBEAM container
+                    var root = (DBDictionary)tr.GetObject(nod.GetAt(NODCore.ROOT), OpenMode.ForWrite);
+                    if (!root.Contains(NODCore.KEY_GRADEBEAM_SUBDICT))
+                    {
+                        ed.WriteMessage($"\n[GradeBeamNOD] No {NODCore.KEY_GRADEBEAM_SUBDICT} container exists.");
+                        return false;
+                    }
+
+                    var gradeBeamContainer = (DBDictionary)tr.GetObject(root.GetAt(NODCore.KEY_GRADEBEAM_SUBDICT), OpenMode.ForWrite);
+
+                    // Delete using NODCore helper
+                    bool deleted = NODCore.DeleteNODSubDictionary(context, tr, gradeBeamContainer, centerlineHandle);
+
+                    if (deleted)
+                        tr.Commit();
+
+                    return deleted;
+                }
+                catch (Exception ex)
+                {
+                    ed.WriteMessage($"\n[GradeBeamNOD] Failed to delete grade beam: {ex.Message}");
+                    return false;
+                }
+            }
+        }
     }
 }

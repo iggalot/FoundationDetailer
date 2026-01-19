@@ -11,6 +11,7 @@ using FoundationDetailsLibraryAutoCAD.UI.Controls.EqualSpacingGBControl;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using static FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.HandleHandler;
 
 namespace FoundationDetailer.AutoCAD
 {
@@ -206,25 +207,134 @@ namespace FoundationDetailer.AutoCAD
             oldEnt.Erase();
         }
 
-        public void ClearAllGradeBeams(FoundationContext context)
+        /// <summary>
+        /// Deletes all grade beam entities in ModelSpace and removes their NOD entries.
+        /// Recursively deletes subdictionaries, XRecords, and any AutoCAD entities referenced by handles in XRecords.
+        /// </summary>
+        /// <param name="context">Current foundation context</param>
+        /// <returns>The number of AutoCAD entities erased</returns>
+        public int DeleteAllGradeBeamsFromNODAndAutoCAD(FoundationContext context)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
+            var doc = context.Document;
+            var db = doc.Database;
+            var ed = doc.Editor;
+            int deletedCount = 0;
 
-            var db = context.Document?.Database;
-            if (db == null) return;
-
-            using (context.Document.LockDocument())
-            using (var tr = db.TransactionManager.StartTransaction())
+            using (doc.LockDocument())
+            using (Transaction tr = db.TransactionManager.StartTransaction())
             {
-                // Delete entities stored under the GradeBeam subdictionary
-                NODCore.DeleteEntitiesInSubDictionary(context, tr, db, NODCore.KEY_GRADEBEAM_SUBDICT);
+                try
+                {
+                    // Get the top-level NOD
+                    var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+                    if (!nod.Contains(NODCore.ROOT)) return 0;
 
-                // Clear the GradeBeam subdictionary itself
-                NODCore.ClearFoundationSubDictionaryInternal(tr, db, NODCore.KEY_GRADEBEAM_SUBDICT);
+                    var root = (DBDictionary)tr.GetObject(nod.GetAt(NODCore.ROOT), OpenMode.ForWrite);
+                    if (!root.Contains(NODCore.KEY_GRADEBEAM_SUBDICT)) return 0;
 
-                tr.Commit();
+                    var gradeBeamContainer = (DBDictionary)tr.GetObject(root.GetAt(NODCore.KEY_GRADEBEAM_SUBDICT), OpenMode.ForWrite);
+
+                    // Enumerate all grade beams
+                    var entries = NODCore.EnumerateDictionary(gradeBeamContainer).ToList();
+                    foreach (var (centerlineHandle, gbId) in entries)
+                    {
+                        if (!(tr.GetObject(gbId, OpenMode.ForWrite) is DBDictionary gbDict))
+                            continue;
+
+                        // Delete everything inside this grade beam dictionary
+                        deletedCount += DeleteNODDictionaryRecursive(context, tr, gbDict);
+
+                        // Delete the grade beam dictionary itself
+                        gbDict.Erase();
+
+                        // Remove the entry from the parent container
+                        gradeBeamContainer.Remove(centerlineHandle);
+                    }
+
+                    tr.Commit();
+                }
+                catch (Exception ex)
+                {
+                    ed.WriteMessage($"\n[GradeBeamManager] Failed to delete all grade beams: {ex.Message}");
+                }
             }
+
+            ed.WriteMessage($"\n[GradeBeamManager] Deleted {deletedCount} grade beam entities.");
+            return deletedCount;
         }
+
+        /// <summary>
+        /// Recursively deletes all entities and subdictionaries in a given dictionary.
+        /// </summary>
+        private static int DeleteNODDictionaryRecursive(FoundationContext context, Transaction tr, DBDictionary dict)
+        {
+            int deletedCount = 0;
+
+            foreach (var (key, id) in NODCore.EnumerateDictionary(dict))
+            {
+                try
+                {
+                    var obj = tr.GetObject(id, OpenMode.ForWrite);
+
+                    switch (obj)
+                    {
+                        case DBDictionary subDict:
+                            // Recurse
+                            deletedCount += DeleteNODDictionaryRecursive(context, tr, subDict);
+                            subDict.Erase();
+                            break;
+
+                        case Xrecord xrec:
+                            // Delete entities referenced by handles in the XRecord
+                            if (xrec.Data != null)
+                            {
+                                foreach (TypedValue tv in xrec.Data)
+                                {
+                                    if (tv.TypeCode == (int)DxfCode.Text)
+                                    {
+                                        string handleStr = tv.Value as string;
+                                        if (!string.IsNullOrWhiteSpace(handleStr))
+                                        {
+                                            try
+                                            {
+                                                Handle h = new Handle(Convert.ToInt64(handleStr, 16));
+                                                ObjectId oid = context.Document.Database.GetObjectId(false, h, 0);
+                                                if (oid.IsValid && !oid.IsErased)
+                                                {
+                                                    var ent = tr.GetObject(oid, OpenMode.ForWrite) as Entity;
+                                                    ent?.Erase();
+                                                    deletedCount++;
+                                                }
+                                            }
+                                            catch
+                                            {
+                                                // ignore invalid handles
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            xrec.Erase();
+                            break;
+
+                        default:
+                            // Any other DBObject
+                            obj?.Erase();
+                            deletedCount++;
+                            break;
+                    }
+                }
+                catch
+                {
+                    // ignore individual failures
+                }
+            }
+
+            return deletedCount;
+        }
+
+
 
 
         public bool HasAnyGradeBeams(FoundationContext context)
@@ -368,10 +478,57 @@ namespace FoundationDetailer.AutoCAD
         }
 
         #region Geometry Calculations (derived)
+        /// <summary>
+        /// Generates edge polylines for all grade beams, adds them to ModelSpace, 
+        /// and stores handles in the NOD.
+        /// Returns the number of grade beams processed.
+        /// </summary>
+        public int GenerateEdgesForAllGradeBeams(
+            FoundationContext context,
+            double halfWidth)
+        {
+            if (context?.Document == null) return 0;
 
+            var db = context.Document.Database;
+            int createdCount = 0;
 
+            using (context.Document.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                foreach (var (handle, gbDict) in GradeBeamNOD.EnumerateGradeBeams(context, tr))
+                {
+                    if (!GradeBeamNOD.TryGetCenterline(context, tr, gbDict, out var centerlineId))
+                        continue;
 
+                    var centerline = tr.GetObject(centerlineId, OpenMode.ForRead) as Polyline;
+                    if (centerline == null) continue;
 
+                    // --- Generate offsets
+                    var leftEdge = MathHelperManager.CreateOffsetPolyline(centerline, -halfWidth);
+                    var rightEdge = MathHelperManager.CreateOffsetPolyline(centerline, halfWidth);
+
+                    if (leftEdge == null || rightEdge == null) continue;
+
+                    // --- Add to ModelSpace
+                    ModelSpaceWriterService.AppendToModelSpace(tr, db, leftEdge);
+                    ModelSpaceWriterService.AppendToModelSpace(tr, db, rightEdge);
+
+                    // --- Store in NOD (handles only)
+                    GradeBeamNOD.StoreEdgeObjects(
+                        context,
+                        tr,
+                        centerlineId,
+                        new[] { leftEdge.ObjectId },
+                        new[] { rightEdge.ObjectId });
+
+                    createdCount++;
+                }
+
+                tr.Commit();
+            }
+
+            return createdCount;
+        }
 
         #endregion
     }

@@ -652,143 +652,54 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         #endregion
 
         #region Entity Deletion
-        internal static int DeleteEntitiesFromDictionaryCore(
-    FoundationContext context,
-    Transaction tr,
-    Database db,
-    DBDictionary dict,
-    string contextName,
-    bool recursive,
-    bool removeHandles)
+
+        /// <summary>
+        /// Deletes a subdictionary and all its children (subdictionaries, XRecords, and Entities)
+        /// under the specified parent dictionary.
+        /// Returns true if the subdictionary existed and was deleted.
+        /// </summary>
+        internal static bool DeleteNODSubDictionary(
+            FoundationContext context,
+            Transaction tr,
+            DBDictionary parentDict,
+            string key)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
             if (tr == null) throw new ArgumentNullException(nameof(tr));
-            if (db == null) throw new ArgumentNullException(nameof(db));
-            if (dict == null) return 0;
+            if (parentDict == null) throw new ArgumentNullException(nameof(parentDict));
+            if (string.IsNullOrWhiteSpace(key)) throw new ArgumentException("Key required.", nameof(key));
 
-            int count = 0;
+            if (!parentDict.Contains(key))
+                return false;
 
-            // Snapshot keys to avoid mutation issues
-            var entries = EnumerateDictionary(dict).ToList();
+            var obj = tr.GetObject(parentDict.GetAt(key), OpenMode.ForWrite);
 
-            foreach (var (key, id) in entries)
+            // If it’s a dictionary, erase all children recursively
+            if (obj is DBDictionary dict)
             {
-                DBObject obj;
-                try
+                foreach (var (childKey, childId) in EnumerateDictionary(dict))
                 {
-                    obj = tr.GetObject(id, OpenMode.ForRead);
-                }
-                catch
-                {
-                    continue;
-                }
-
-                // Recurse if requested
-                if (recursive && obj is DBDictionary subDict)
-                {
-                    count += DeleteEntitiesFromDictionaryCore(
-                        context,
-                        tr,
-                        db,
-                        subDict,
-                        contextName,
-                        recursive,
-                        removeHandles);
-                    continue;
-                }
-
-                // Validate handle
-                HandleEntry entry = ValidateHandleOrId(context, tr, db, contextName, key);
-                if (entry.Status != HandleStatus.Valid)
-                    continue;
-
-                try
-                {
-                    if (entry.Id.IsValid && !entry.Id.IsErased)
+                    try
                     {
-                        Entity ent = tr.GetObject(entry.Id, OpenMode.ForWrite) as Entity;
-                        ent?.Erase();
-                        count++;
+                        var childObj = tr.GetObject(childId, OpenMode.ForWrite);
+                        if (childObj is DBDictionary subDict)
+                        {
+                            // recurse
+                            DeleteNODSubDictionary(context, tr, dict, childKey);
+                        }
+                        childObj.Erase();
                     }
-
-                    if (removeHandles && dict.Contains(key))
+                    catch
                     {
-                        DBObject handleObj = tr.GetObject(dict.GetAt(key), OpenMode.ForWrite);
-                        handleObj?.Erase();
+                        // ignore individual errors
                     }
-                }
-                catch
-                {
-                    // intentionally ignore individual failures
                 }
             }
 
-            return count;
+            // Finally, erase the subdictionary or object itself
+            obj.Erase();
+            return true;
         }
-
-        /// <summary>
-        /// Deletes all entities referenced by a foundation subdictionary.
-        /// Optionally removes the handle records from the dictionary as well.
-        /// </summary>
-        internal static int DeleteEntitiesInSubDictionary(
-            FoundationContext context,
-            Transaction tr,
-            Database db,
-            string subDictName,
-            bool removeHandlesFromNod = true)
-        {
-            if (string.IsNullOrWhiteSpace(subDictName))
-                throw new ArgumentException("Subdictionary name required.", nameof(subDictName));
-
-            DBDictionary root = (DBDictionary)tr.GetObject(
-                db.NamedObjectsDictionaryId,
-                OpenMode.ForWrite);
-
-            DBDictionary subDict = NODCore.GetOrCreateNestedSubDictionary(
-                tr,
-                root,
-                NODCore.ROOT,
-                subDictName);
-
-            if (subDict == null || subDict.Count == 0)
-                return 0;
-
-            return DeleteEntitiesFromDictionaryCore(
-                context,
-                tr,
-                db,
-                subDict,
-                subDictName,
-                recursive: false,
-                removeHandles: removeHandlesFromNod);
-        }
-
-
-        internal static int DeleteEntitiesFromFoundationSubDictionary(
-            FoundationContext context,
-            Database db,
-            string subDictName,
-            bool removeHandlesFromNod = true)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-
-            Document doc = context.Document;
-
-            using (doc.LockDocument())
-            using (Transaction tr = db.TransactionManager.StartTransaction())
-            {
-                int count = DeleteEntitiesInSubDictionary(
-                    context,
-                    tr,
-                    db,
-                    subDictName,
-                    removeHandlesFromNod);
-
-                tr.Commit();
-                return count;
-            }
-        }
-
 
         #endregion
 

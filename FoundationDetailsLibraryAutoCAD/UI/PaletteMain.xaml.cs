@@ -107,51 +107,10 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             var context = CurrentContext;
             if (context?.Document == null) return;
 
-            const double halfWidth = 5.0; // 10" wide beam, so 5" offset each side
+            int count = _gradeBeamService.GenerateEdgesForAllGradeBeams(context, halfWidth: 5.0);
 
-            var db = context.Document.Database;
-
-            using (context.Document.LockDocument())
-            using (var tr = db.TransactionManager.StartTransaction())
-            {
-                int createdCount = 0;
-
-                // Iterate all grade beams lazily
-                foreach (var (handle, gbDict) in GradeBeamNOD.EnumerateGradeBeams(context, tr))
-                {
-                    if (!GradeBeamNOD.TryGetCenterline(context, tr, gbDict, out var centerlineId))
-                        continue;
-
-                    var centerline = tr.GetObject(centerlineId, OpenMode.ForRead) as Polyline;
-                    if (centerline == null) continue;
-
-                    // --- Create offset polylines for edges ---
-                    var leftEdge = MathHelperManager.CreateOffsetPolyline(centerline, -halfWidth);
-                    var rightEdge = MathHelperManager.CreateOffsetPolyline(centerline, halfWidth);
-
-                    if (leftEdge == null || rightEdge == null) continue;
-
-                    // --- Append to ModelSpace ---
-                    ModelSpaceWriterService.AppendToModelSpace(tr, db, leftEdge);
-                    ModelSpaceWriterService.AppendToModelSpace(tr, db, rightEdge);
-
-                    // --- Store edges in NOD ---
-                    GradeBeamNOD.StoreEdgeObjects(
-                        context,
-                        tr,
-                        centerlineId,
-                        new[] { leftEdge.ObjectId },
-                        new[] { rightEdge.ObjectId }
-                    );
-
-                    createdCount++;
-                }
-
-                tr.Commit();
-
-                context.Document.Editor.WriteMessage(
-                    $"\n[GradeBeamEdges] Generated edges for {createdCount} grade beams.");
-            }
+            context.Document.Editor.WriteMessage(
+                $"\n[GradeBeamEdges] Generated edges for {count} grade beams.");
         }
 
 
@@ -274,7 +233,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         {
             var context = CurrentContext;
             var doc = context.Document;
-            _gradeBeamService.ClearAllGradeBeams(context);
+            _gradeBeamService.DeleteAllGradeBeamsFromNODAndAutoCAD(context);
             PrelimGBControl.ViewModel.IsPreliminaryGenerated = false;  // reset the the preliminary input control
 
             Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
