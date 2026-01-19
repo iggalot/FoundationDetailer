@@ -208,25 +208,114 @@ namespace FoundationDetailer.AutoCAD
         }
 
         /// <summary>
-        /// Deletes all grade beam entities in ModelSpace and removes their NOD entries.
-        /// Recursively deletes subdictionaries, XRecords, and any AutoCAD entities referenced by handles in XRecords.
+        /// Deletes a single grade beam dictionary and everything under it (subdictionaries, XRecords, entities)
         /// </summary>
         /// <param name="context">Current foundation context</param>
-        /// <returns>The number of AutoCAD entities erased</returns>
-        public int DeleteAllGradeBeamsFromNODAndAutoCAD(FoundationContext context)
+        /// <param name="tr">Active transaction</param>
+        /// <param name="parentDict">Parent dictionary that contains the grade beam entry</param>
+        /// <param name="gradeBeamKey">Key of the grade beam (centerline handle or dictionary key)</param>
+        /// <returns>Total number of erased AutoCAD entities</returns>
+        private static int DeleteGradeBeamRecursive(
+            FoundationContext context,
+            Transaction tr,
+            DBDictionary parentDict,
+            string gradeBeamKey)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+            if (parentDict == null) throw new ArgumentNullException(nameof(parentDict));
+            if (string.IsNullOrWhiteSpace(gradeBeamKey)) throw new ArgumentNullException(nameof(gradeBeamKey));
+            if (!parentDict.Contains(gradeBeamKey)) return 0;
+
+            int deletedCount = 0;
+
+            // Open the grade beam dictionary or object
+            var obj = tr.GetObject(parentDict.GetAt(gradeBeamKey), OpenMode.ForWrite);
+
+            void DeleteDBObjectRecursive(DBObject dbObj)
+            {
+                if (dbObj == null) return;
+
+                switch (dbObj)
+                {
+                    case DBDictionary dict:
+                        // Recursively delete all children
+                        foreach (var (childKey, childId) in NODCore.EnumerateDictionary(dict).ToList())
+                        {
+                            try
+                            {
+                                var childObj = tr.GetObject(childId, OpenMode.ForWrite);
+                                DeleteDBObjectRecursive(childObj);
+                            }
+                            catch { /* ignore individual errors */ }
+                        }
+                        dict.Erase();
+                        break;
+
+                    case Xrecord xrec:
+                        // Delete entities referenced by handles in XRecord
+                        if (xrec.Data != null)
+                        {
+                            foreach (TypedValue tv in xrec.Data)
+                            {
+                                if (tv.TypeCode == (int)DxfCode.Text)
+                                {
+                                    string handleStr = tv.Value as string;
+                                    if (!string.IsNullOrWhiteSpace(handleStr))
+                                    {
+                                        try
+                                        {
+                                            Handle h = new Handle(Convert.ToInt64(handleStr, 16));
+                                            ObjectId oid = context.Document.Database.GetObjectId(false, h, 0);
+                                            if (oid.IsValid && !oid.IsErased)
+                                            {
+                                                var ent = tr.GetObject(oid, OpenMode.ForWrite) as Entity;
+                                                ent?.Erase();
+                                                deletedCount++;
+                                            }
+                                        }
+                                        catch { }
+                                    }
+                                }
+                            }
+                        }
+                        xrec.Erase();
+                        break;
+
+                    default:
+                        // Any other object
+                        dbObj?.Erase();
+                        deletedCount++;
+                        break;
+                }
+            }
+
+            DeleteDBObjectRecursive(obj);
+
+            // Remove entry from parent dictionary
+            parentDict.Remove(gradeBeamKey);
+
+            return deletedCount;
+        }
+
+        /// <summary>
+        /// Deletes a grade beam from the NOD and AutoCAD by centerline handle or dictionary key.
+        /// </summary>
+        public int DeleteGradeBeam(FoundationContext context, string gradeBeamKey)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (string.IsNullOrWhiteSpace(gradeBeamKey)) throw new ArgumentNullException(nameof(gradeBeamKey));
+
+            int deletedCount = 0;
             var doc = context.Document;
             var db = doc.Database;
             var ed = doc.Editor;
-            int deletedCount = 0;
 
             using (doc.LockDocument())
-            using (Transaction tr = db.TransactionManager.StartTransaction())
+            using (var tr = db.TransactionManager.StartTransaction())
             {
                 try
                 {
-                    // Get the top-level NOD
                     var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
                     if (!nod.Contains(NODCore.ROOT)) return 0;
 
@@ -235,104 +324,53 @@ namespace FoundationDetailer.AutoCAD
 
                     var gradeBeamContainer = (DBDictionary)tr.GetObject(root.GetAt(NODCore.KEY_GRADEBEAM_SUBDICT), OpenMode.ForWrite);
 
-                    // Enumerate all grade beams
-                    var entries = NODCore.EnumerateDictionary(gradeBeamContainer).ToList();
-                    foreach (var (centerlineHandle, gbId) in entries)
-                    {
-                        if (!(tr.GetObject(gbId, OpenMode.ForWrite) is DBDictionary gbDict))
-                            continue;
-
-                        // Delete everything inside this grade beam dictionary
-                        deletedCount += DeleteNODDictionaryRecursive(context, tr, gbDict);
-
-                        // Delete the grade beam dictionary itself
-                        gbDict.Erase();
-
-                        // Remove the entry from the parent container
-                        gradeBeamContainer.Remove(centerlineHandle);
-                    }
+                    deletedCount = DeleteGradeBeamRecursive(context, tr, gradeBeamContainer, gradeBeamKey);
 
                     tr.Commit();
                 }
                 catch (Exception ex)
                 {
-                    ed.WriteMessage($"\n[GradeBeamManager] Failed to delete all grade beams: {ex.Message}");
+                    ed.WriteMessage($"\n[GradeBeamManager] Failed to delete grade beam '{gradeBeamKey}': {ex.Message}");
                 }
             }
 
-            ed.WriteMessage($"\n[GradeBeamManager] Deleted {deletedCount} grade beam entities.");
+            ed.WriteMessage($"\n[GradeBeamManager] Deleted {deletedCount} AutoCAD entities from grade beam '{gradeBeamKey}'.");
             return deletedCount;
         }
 
-        /// <summary>
-        /// Recursively deletes all entities and subdictionaries in a given dictionary.
-        /// </summary>
-        private static int DeleteNODDictionaryRecursive(FoundationContext context, Transaction tr, DBDictionary dict)
+        public int DeleteAllGradeBeams(FoundationContext context)
         {
-            int deletedCount = 0;
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            int totalDeleted = 0;
 
-            foreach (var (key, id) in NODCore.EnumerateDictionary(dict))
+            var doc = context.Document;
+            var db = doc.Database;
+            var ed = doc.Editor;
+
+            using (doc.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
             {
-                try
+                var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+                if (!nod.Contains(NODCore.ROOT)) return 0;
+
+                var root = (DBDictionary)tr.GetObject(nod.GetAt(NODCore.ROOT), OpenMode.ForWrite);
+                if (!root.Contains(NODCore.KEY_GRADEBEAM_SUBDICT)) return 0;
+
+                var gradeBeamContainer = (DBDictionary)tr.GetObject(root.GetAt(NODCore.KEY_GRADEBEAM_SUBDICT), OpenMode.ForWrite);
+
+                foreach (var (key, _) in NODCore.EnumerateDictionary(gradeBeamContainer).ToList())
                 {
-                    var obj = tr.GetObject(id, OpenMode.ForWrite);
-
-                    switch (obj)
-                    {
-                        case DBDictionary subDict:
-                            // Recurse
-                            deletedCount += DeleteNODDictionaryRecursive(context, tr, subDict);
-                            subDict.Erase();
-                            break;
-
-                        case Xrecord xrec:
-                            // Delete entities referenced by handles in the XRecord
-                            if (xrec.Data != null)
-                            {
-                                foreach (TypedValue tv in xrec.Data)
-                                {
-                                    if (tv.TypeCode == (int)DxfCode.Text)
-                                    {
-                                        string handleStr = tv.Value as string;
-                                        if (!string.IsNullOrWhiteSpace(handleStr))
-                                        {
-                                            try
-                                            {
-                                                Handle h = new Handle(Convert.ToInt64(handleStr, 16));
-                                                ObjectId oid = context.Document.Database.GetObjectId(false, h, 0);
-                                                if (oid.IsValid && !oid.IsErased)
-                                                {
-                                                    var ent = tr.GetObject(oid, OpenMode.ForWrite) as Entity;
-                                                    ent?.Erase();
-                                                    deletedCount++;
-                                                }
-                                            }
-                                            catch
-                                            {
-                                                // ignore invalid handles
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            xrec.Erase();
-                            break;
-
-                        default:
-                            // Any other DBObject
-                            obj?.Erase();
-                            deletedCount++;
-                            break;
-                    }
+                    totalDeleted += DeleteGradeBeamRecursive(context, tr, gradeBeamContainer, key);
                 }
-                catch
-                {
-                    // ignore individual failures
-                }
+
+                tr.Commit();
             }
 
-            return deletedCount;
+            ed.WriteMessage($"\n[GradeBeamManager] Deleted {totalDeleted} grade beam entities.");
+            return totalDeleted;
         }
+
+
 
 
 
@@ -528,6 +566,183 @@ namespace FoundationDetailer.AutoCAD
             }
 
             return createdCount;
+        }
+
+        // ------------------------------------------------
+        // Helper: Finds the grade beam dictionary a selected object belongs to
+        // ------------------------------------------------
+        internal string FindGradeBeamForObject(FoundationContext context, ObjectId selectedId)
+        {
+            if (context == null || selectedId.IsNull)
+                return null;
+
+            var doc = context.Document;
+            var db = doc.Database;
+
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+                if (!nod.Contains(NODCore.ROOT)) return null;
+
+                var root = (DBDictionary)tr.GetObject(nod.GetAt(NODCore.ROOT), OpenMode.ForRead);
+                if (!root.Contains(NODCore.KEY_GRADEBEAM_SUBDICT)) return null;
+
+                var gradeBeamContainer = (DBDictionary)tr.GetObject(root.GetAt(NODCore.KEY_GRADEBEAM_SUBDICT), OpenMode.ForRead);
+
+                foreach (var (centerlineHandle, gbId) in NODCore.EnumerateDictionary(gradeBeamContainer))
+                {
+                    if (!(tr.GetObject(gbId, OpenMode.ForRead) is DBDictionary gbDict)) continue;
+
+                    if (ObjectInGradeBeamDictionary(tr, db, gbDict, selectedId))
+                        return centerlineHandle;
+                }
+            }
+
+            return null;
+        }
+
+        // ------------------------------------------------
+        // Helper: Recursively checks if ObjectId is in a grade beam dictionary (including subdictionaries and XRecords)
+        // ------------------------------------------------
+        private static bool ObjectInGradeBeamDictionary(Transaction tr, Database db, DBDictionary dict, ObjectId selectedId)
+        {
+            foreach (var (key, id) in NODCore.EnumerateDictionary(dict))
+            {
+                if (id == selectedId)
+                    return true;
+
+                var obj = tr.GetObject(id, OpenMode.ForRead);
+
+                if (obj is DBDictionary subDict && ObjectInGradeBeamDictionary(tr, db, subDict, selectedId))
+                    return true;
+
+                if (obj is Xrecord xrec && xrec.Data != null)
+                {
+                    foreach (TypedValue tv in xrec.Data)
+                    {
+                        if (tv.TypeCode == (int)DxfCode.Text && tv.Value is string handleStr)
+                        {
+                            try
+                            {
+                                Handle h = new Handle(Convert.ToInt64(handleStr, 16));
+                                ObjectId oid = db.GetObjectId(false, h, 0);
+                                if (oid == selectedId)
+                                    return true;
+                            }
+                            catch { }
+                        }
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        // ------------------------------------------------
+        // Deletes a grade beam (centerline, edges, metadata, subdicts) by handle
+        // Returns total number of AutoCAD entities deleted
+        // ------------------------------------------------
+        public int DeleteGradeBeamRecursiveByHandle(FoundationContext context, string centerlineHandle)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (string.IsNullOrWhiteSpace(centerlineHandle)) return 0;
+
+            var doc = context.Document;
+            var db = doc.Database;
+            int deletedCount = 0;
+
+            using (doc.LockDocument())
+            using (Transaction tr = db.TransactionManager.StartTransaction())
+            {
+                var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+                if (!nod.Contains(NODCore.ROOT)) return 0;
+
+                var root = (DBDictionary)tr.GetObject(nod.GetAt(NODCore.ROOT), OpenMode.ForWrite);
+                if (!root.Contains(NODCore.KEY_GRADEBEAM_SUBDICT)) return 0;
+
+                var gradeBeamContainer = (DBDictionary)tr.GetObject(root.GetAt(NODCore.KEY_GRADEBEAM_SUBDICT), OpenMode.ForWrite);
+                if (!gradeBeamContainer.Contains(centerlineHandle)) return 0;
+
+                var gbNodeObj = tr.GetObject(gradeBeamContainer.GetAt(centerlineHandle), OpenMode.ForWrite);
+                if (gbNodeObj is DBDictionary gbNode)
+                {
+                    // Recursively delete all subdictionary contents
+                    deletedCount += DeleteNODDictionaryRecursive(context, tr, gbNode);
+
+                    // Erase the grade beam dictionary itself
+                    try { gbNode.Erase(); } catch { }
+
+                    // Remove from parent container
+                    try { gradeBeamContainer.Remove(centerlineHandle); } catch { }
+                }
+
+                tr.Commit();
+            }
+
+            return deletedCount;
+        }
+
+        // ------------------------------------------------
+        // Recursively deletes all subdictionaries, XRecords, and AutoCAD entities referenced by handles
+        // ------------------------------------------------
+        private static int DeleteNODDictionaryRecursive(FoundationContext context, Transaction tr, DBDictionary dict)
+        {
+            int deletedCount = 0;
+
+            foreach (var (key, id) in NODCore.EnumerateDictionary(dict))
+            {
+                try
+                {
+                    var obj = tr.GetObject(id, OpenMode.ForWrite);
+
+                    switch (obj)
+                    {
+                        case DBDictionary subDict:
+                            // Recurse into subdictionary
+                            deletedCount += DeleteNODDictionaryRecursive(context, tr, subDict);
+
+                            // Delete the subdictionary itself
+                            try { subDict.Erase(); } catch { }
+                            break;
+
+                        case Xrecord xrec:
+                            if (xrec.Data != null)
+                            {
+                                foreach (TypedValue tv in xrec.Data)
+                                {
+                                    if (tv.TypeCode == (int)DxfCode.Text && tv.Value is string handleStr)
+                                    {
+                                        if (NODCore.TryGetObjectIdFromHandleString(context, context.Document.Database, handleStr, out ObjectId oid))
+                                        {
+                                            if (oid.IsValid && !oid.IsErased)
+                                            {
+                                                try
+                                                {
+                                                    var ent = tr.GetObject(oid, OpenMode.ForWrite) as Entity;
+                                                    ent?.Erase();
+                                                    deletedCount++;
+                                                }
+                                                catch { }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Erase the XRecord itself
+                            try { xrec.Erase(); } catch { }
+                            break;
+
+                        default:
+                            // Delete any other DBObject
+                            try { obj?.Erase(); deletedCount++; } catch { }
+                            break;
+                    }
+                }
+                catch { }
+            }
+
+            return deletedCount;
         }
 
         #endregion

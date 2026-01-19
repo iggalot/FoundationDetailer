@@ -428,28 +428,62 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             if (!gradeBeamDict.Contains(NODCore.KEY_CENTERLINE))
                 return false;
 
-            var xrec = tr.GetObject(gradeBeamDict.GetAt(NODCore.KEY_CENTERLINE), OpenMode.ForRead) as Xrecord;
+            var xrecObj = gradeBeamDict.GetAt(NODCore.KEY_CENTERLINE);
+            if (xrecObj.IsNull || xrecObj.IsErased)
+                return false;
+
+            Xrecord xrec;
+            try
+            {
+                xrec = tr.GetObject(xrecObj, OpenMode.ForRead) as Xrecord;
+            }
+            catch (Autodesk.AutoCAD.Runtime.Exception)
+            {
+                return false; // object was erased or invalid
+            }
+
             if (xrec == null || xrec.Data == null)
                 return false;
 
-            Database db = context.Document.Database; // <--- get database from context
+            Database db = context.Document.Database;
 
             foreach (TypedValue tv in xrec.Data)
             {
-                if (tv.TypeCode == (int)DxfCode.Text)
+                if (tv.TypeCode != (int)DxfCode.Text)
+                    continue;
+
+                string handleStr = tv.Value?.ToString();
+                if (string.IsNullOrWhiteSpace(handleStr))
+                    continue;
+
+                // Safely attempt to get ObjectId from handle string
+                if (!NODCore.TryGetObjectIdFromHandleString(context, db, handleStr, out ObjectId oid))
+                    continue;
+
+                if (oid.IsNull || !oid.IsValid)
+                    continue;
+
+                // Safely check if the object is erased
+                try
                 {
-                    string handleStr = tv.Value.ToString();
+                    using (var obj = tr.GetObject(oid, OpenMode.ForRead, false))
+                    {
+                        if (obj == null || obj.IsErased)
+                            continue;
 
-                    // Use context.Document.Database instead of tr.Database
-                    if (!NODCore.TryGetObjectIdFromHandleString(context, db, handleStr, out centerlineId))
-                        return false;
-
-                    return !centerlineId.IsNull && centerlineId.IsValid && !centerlineId.IsErased;
+                        centerlineId = oid;
+                        return true;
+                    }
+                }
+                catch (Autodesk.AutoCAD.Runtime.Exception)
+                {
+                    continue; // object was erased between handle read and GetObject
                 }
             }
 
-            return false;
+            return false; // no valid centerline found
         }
+
 
         public static void StoreEdgeObjects(
             FoundationContext context,
@@ -565,6 +599,26 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                     return false;
                 }
             }
+        }
+
+        /// <summary>
+        /// Recursively searches the grade beam container to find which top-level grade beam dictionary owns the handle/key.
+        /// </summary>
+        internal static string FindGradeBeamKeyForHandle(Transaction tr, DBDictionary gradeBeamContainer, string handleOrKey)
+        {
+            foreach (var (gradeBeamKey, gbId) in NODCore.EnumerateDictionary(gradeBeamContainer))
+            {
+                var gbDict = tr.GetObject(gbId, OpenMode.ForRead) as DBDictionary;
+                if (gbDict == null) continue;
+
+                if (string.Equals(gradeBeamKey, handleOrKey, StringComparison.OrdinalIgnoreCase))
+                    return gradeBeamKey;
+
+                if (NODCore.IsKeyOrHandleInDictionary(tr, gbDict, handleOrKey))
+                    return gradeBeamKey;
+            }
+
+            return null;
         }
     }
 }

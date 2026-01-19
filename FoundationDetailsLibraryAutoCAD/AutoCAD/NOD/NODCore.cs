@@ -802,6 +802,46 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
 
 
+        /// <summary>
+        /// Recursively checks if a key or handle exists anywhere inside a dictionary or its children.
+        /// </summary>
+        internal static bool IsKeyOrHandleInDictionary(Transaction tr, DBDictionary dict, string keyOrHandle)
+        {
+            foreach (var (key, id) in NODCore.EnumerateDictionary(dict))
+            {
+                if (string.Equals(key, keyOrHandle, StringComparison.OrdinalIgnoreCase))
+                    return true;
+
+                try
+                {
+                    var obj = tr.GetObject(id, OpenMode.ForRead);
+                    switch (obj)
+                    {
+                        case DBDictionary subDict:
+                            if (IsKeyOrHandleInDictionary(tr, subDict, keyOrHandle)) return true;
+                            break;
+                        case Xrecord xrec:
+                            if (xrec.Data != null)
+                            {
+                                foreach (TypedValue tv in xrec.Data)
+                                {
+                                    if (tv.TypeCode == (int)DxfCode.Text &&
+                                        string.Equals(tv.Value as string, keyOrHandle, StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        return true;
+                                    }
+                                }
+                            }
+                            break;
+                    }
+                }
+                catch { }
+            }
+
+            return false;
+        }
+
+
         #endregion
     }
 }

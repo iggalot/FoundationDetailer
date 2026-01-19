@@ -82,6 +82,8 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             BtnTest.Click += (s, e) => BtnTest_Click();
             BtnEraseNODFully.Click += (s, e) => BtnEraseNODFully_Click();
             BtnGenerateGradeBeamEdges.Click += (s, e) => BtnGenerateGradeBeamEdges_Click(s, e);
+            BtnGenerateGradeBeamEdges.Click += (s, e) => BtnGenerateGradeBeamEdges_Click(s, e);
+            BtnDeleteSingleGradeBeamFromSelect.Click += (s, e) => BtnDeleteSingleFromSelect_Click(s, e);
 
 
             BtnSelectBoundary.Click += (s, e) => BtnDefineFoundationBoundary_Click();
@@ -100,6 +102,53 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             BtnNEqualSpaces.Click += BtnNEqualSpaces_Click;
             BtnConvertExisting.Click += BtnConvertToPolyline_Click;
 
+        }
+
+        private void BtnDeleteSingleFromSelect_Click(object s, RoutedEventArgs e)
+        {
+            var context = CurrentContext;
+            if (context == null || context.Document == null)
+                return;
+
+            Document doc = context.Document;
+            Database db = doc.Database;
+            Editor ed = doc.Editor;
+
+            // Prompt the user to select an object
+            var peo = new PromptEntityOptions("\nSelect any object of a grade beam to delete:");
+            var pres = ed.GetEntity(peo);
+            if (pres.Status != PromptStatus.OK)
+            {
+                ed.WriteMessage("\nOperation cancelled.");
+                return;
+            }
+
+            ObjectId selectedId = pres.ObjectId;
+
+            // Find which grade beam this object belongs to
+            string centerlineHandle = _gradeBeamService.FindGradeBeamForObject(context, selectedId);
+
+            if (string.IsNullOrEmpty(centerlineHandle))
+            {
+                ed.WriteMessage("\nSelected object does not belong to any grade beam.");
+                return;
+            }
+
+            // Confirm deletion
+            var pko = new PromptKeywordOptions($"\nDelete grade beam '{centerlineHandle}' and all its edges/metadata?")
+            { AllowNone = false };
+            pko.Keywords.Add("Yes");
+            pko.Keywords.Add("No");
+            var presConfirm = ed.GetKeywords(pko);
+            if (presConfirm.Status != PromptStatus.OK || presConfirm.StringResult != "Yes")
+            {
+                ed.WriteMessage("\nDeletion cancelled.");
+                return;
+            }
+
+            // Perform deletion
+            int deletedCount = _gradeBeamService.DeleteGradeBeamRecursiveByHandle(context, centerlineHandle);
+            ed.WriteMessage($"\nDeleted {deletedCount} entities for grade beam '{centerlineHandle}'.");
         }
 
         private void BtnGenerateGradeBeamEdges_Click(object sender, RoutedEventArgs e)
@@ -233,7 +282,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         {
             var context = CurrentContext;
             var doc = context.Document;
-            _gradeBeamService.DeleteAllGradeBeamsFromNODAndAutoCAD(context);
+            _gradeBeamService.DeleteAllGradeBeams(context);
             PrelimGBControl.ViewModel.IsPreliminaryGenerated = false;  // reset the the preliminary input control
 
             Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
