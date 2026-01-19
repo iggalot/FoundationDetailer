@@ -456,13 +456,14 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             IEnumerable<ObjectId> leftEdgeIds,
             IEnumerable<ObjectId> rightEdgeIds)
         {
-            if (context == null || tr == null) throw new ArgumentNullException();
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
             if (centerlineId.IsNull) throw new ArgumentNullException(nameof(centerlineId));
 
             var db = context.Document.Database;
             var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
 
-            // Get the GradeBeam dictionary
+            // --- Get the GradeBeam dictionary for this centerline ---
             var gradebeamDict = NODCore.GetOrCreateNestedSubDictionary(
                 tr,
                 nod,
@@ -471,40 +472,41 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 centerlineId.Handle.ToString()
             );
 
-            // Ensure edges subdictionary exists
+            // --- Ensure the FD_EDGES subdictionary exists ---
             var edgesDict = NODCore.GetOrCreateNestedSubDictionary(
                 tr,
                 gradebeamDict,
                 NODCore.KEY_EDGES_SUBDICT
             );
 
-            // Helper to add edge Xrecord with multiple handles
-            void AddEdge(string keyPrefix, IEnumerable<ObjectId> ids)
+            // --- Helper to store edges sequentially within this edgesDict ---
+            void AddEdges(string keyPrefix, IEnumerable<ObjectId> ids)
             {
                 if (ids == null) return;
 
-                var typedValues = new List<TypedValue>();
+                // Always start numbering at 0
+                int counter = 0;
+
                 foreach (var id in ids)
                 {
-                    if (!id.IsNull)
-                        typedValues.Add(new TypedValue((int)DxfCode.Text, id.Handle.ToString()));
+                    if (id.IsNull) continue;
+
+                    string key = $"{keyPrefix}_{counter}";
+
+                    var xrec = new Xrecord
+                    {
+                        Data = new ResultBuffer(new TypedValue((int)DxfCode.Text, id.Handle.ToString()))
+                    };
+
+                    edgesDict.SetAt(key, xrec);
+                    tr.AddNewlyCreatedDBObject(xrec, true);
+
+                    counter++;
                 }
-
-                if (typedValues.Count == 0) return;
-
-                // Use a unique key per edge, e.g., LEFT_0, RIGHT_0
-                string key = keyPrefix;
-                int counter = 0;
-                while (edgesDict.Contains(key))
-                    key = $"{keyPrefix}_{++counter}";
-
-                var xrec = new Xrecord { Data = new ResultBuffer(typedValues.ToArray()) };
-                edgesDict.SetAt(key, xrec);
-                tr.AddNewlyCreatedDBObject(xrec, true);
             }
 
-            AddEdge("LEFT", leftEdgeIds);
-            AddEdge("RIGHT", rightEdgeIds);
+            AddEdges("LEFT", leftEdgeIds);
+            AddEdges("RIGHT", rightEdgeIds);
         }
 
     }
