@@ -140,7 +140,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                         context,
                         tr,
                         centerlineId,
-                        new[] { leftEdge.ObjectId, rightEdge.ObjectId },
+                        new[] { leftEdge.ObjectId },
                         new[] { rightEdge.ObjectId }
                     );
 
