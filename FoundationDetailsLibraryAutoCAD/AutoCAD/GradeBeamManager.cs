@@ -16,6 +16,10 @@ namespace FoundationDetailer.AutoCAD
 {
     public class GradeBeamManager
     {
+        private const double DEFAULT_BEAM_WIDTH_IN = 10.0;
+        private const double INCHES_TO_DRAWING_UNITS = 1.0 / 12.0;
+
+
         // Track grade beams per document
         private readonly Dictionary<Document, List<ObjectId>> _gradeBeams = new Dictionary<Document, List<ObjectId>>();
 
@@ -363,6 +367,112 @@ namespace FoundationDetailer.AutoCAD
             _regAppRegistered.Add(doc);
         }
 
+        #region Geometry Calculations (derived)
+
+
+        private static Curve OffsetCurve(Curve baseCurve, double offset)
+        {
+            var offsets = baseCurve.GetOffsetCurves(offset);
+
+            if (offsets == null || offsets.Count == 0)
+                throw new InvalidOperationException("Offset failed.");
+
+            return offsets[0] as Curve;
+        }
+
+
+        // GradeBeamManager
+        public void RegenerateAllGradeBeamEdges(FoundationContext context)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var db = doc.Database;
+
+            using (doc.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                if (!GradeBeamNOD.TryGetAllGradeBeamHandleKeys(context, tr, out var handles))
+                    return;
+
+                foreach (var handle in handles)
+                {
+                    RegenerateEdgesForGradeBeam(context, tr, handle);
+                }
+
+                tr.Commit();
+            }
+        }
+
+        // GradeBeamManager
+        private void RegenerateEdgesForGradeBeam(
+            FoundationContext context,
+            Transaction tr,
+            string gradeBeamHandle)
+        {
+            var db = context.Document.Database;
+
+            // 1️ Resolve centerline
+            if (!GradeBeamNOD.TryGetCenterlineObjectId(
+                context, tr, gradeBeamHandle, out ObjectId clId))
+                return;
+
+            var centerline = tr.GetObject(clId, OpenMode.ForRead) as Polyline;
+            if (centerline == null)
+                return;
+
+            // 2️ Clear existing edges
+            GradeBeamNOD.ClearEdges(tr, db, gradeBeamHandle);
+
+            // 3️ Offset distance
+            double halfWidth =
+                (DEFAULT_BEAM_WIDTH_IN * INCHES_TO_DRAWING_UNITS) / 2.0;
+
+            // 4️ Generate offsets
+            var left = centerline.GetOffsetCurves(+halfWidth);
+            var right = centerline.GetOffsetCurves(-halfWidth);
+
+            // 5️ Append & register
+            RegisterEdgeSet(tr, db, gradeBeamHandle, left, "LEFT");
+            RegisterEdgeSet(tr, db, gradeBeamHandle, right, "RIGHT");
+        }
+
+        // GradeBeamManager
+        private void RegisterEdgeSet(
+            Transaction tr,
+            Database db,
+            string gradeBeamHandle,
+            DBObjectCollection offsets,
+            string prefix)
+        {
+            if (offsets == null || offsets.Count == 0)
+                return;
+
+            var edgesDict =
+                GradeBeamNOD.GetEdgesDictionary(tr, db, gradeBeamHandle, true);
+
+            int index = 0;
+
+            foreach (Entity ent in offsets)
+            {
+                if (!(ent is Polyline pl))
+                {
+                    ent.Dispose();
+                    continue;
+                }
+
+                ModelSpaceWriterService.AppendToModelSpace(tr, db, pl);
+
+                string key = $"{prefix}_{index++}";
+                edgesDict.SetAt(key, pl);
+                tr.AddNewlyCreatedDBObject(pl, true);
+            }
+        }
+
+
+
+
+        #endregion
     }
 }
 

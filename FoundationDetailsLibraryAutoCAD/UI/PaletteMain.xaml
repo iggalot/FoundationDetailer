@@ -66,6 +66,8 @@
 
                     </StackPanel>
                     <gb_summary_ctrl:GradeBeamSummaryControl x:Name="GradeBeamSummary" Margin="0,5"/>
+                    <Button x:Name="BtnGenerateGradeBeamEdges" Content="Generate GradeBeams" Margin="0,5"/>
+
                     <Button x:Name="BtnAddRebar" Content="Add Rebar Bars" Margin="0,5"/>
                     <Button x:Name="BtnAddStrands" Content="Add Strands" Margin="0,5"/>
                     

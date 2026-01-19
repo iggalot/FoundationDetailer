@@ -14,10 +14,8 @@ using FoundationDetailsLibraryAutoCAD.Services;
 using FoundationDetailsLibraryAutoCAD.UI.Controls.EqualSpacingGBControl;
 using System;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Threading;
 using static FoundationDetailsLibraryAutoCAD.UI.Controls.PrelimGBControl.PrelimGradeBeamControl;
@@ -83,6 +81,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             BtnQuery.Click += BtnQueryNOD_Click;
             BtnTest.Click += (s, e) => BtnTest_Click();
             BtnEraseNODFully.Click += (s, e) => BtnEraseNODFully_Click();
+            BtnGenerateGradeBeamEdges.Click += (s, e) => BtnGenerateGradeBeamEdges_Click(s, e);
 
 
             BtnSelectBoundary.Click += (s, e) => BtnDefineFoundationBoundary_Click();
@@ -102,6 +101,53 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             BtnConvertExisting.Click += BtnConvertToPolyline_Click;
 
         }
+
+        private void BtnGenerateGradeBeamEdges_Click(object sender, RoutedEventArgs e)
+        {
+            var context = CurrentContext;
+            if (context?.Document == null) return;
+
+            const double halfWidth = 5.0; // 10" wide beam, so 5" offset each side
+
+            var db = context.Document.Database;
+
+            using (context.Document.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                int createdCount = 0;
+
+                // Iterate all grade beams lazily
+                foreach (var (handle, gbDict) in GradeBeamNOD.EnumerateGradeBeams(context, tr))
+                {
+                    if (!GradeBeamNOD.TryGetCenterline(context, tr, gbDict, out var centerlineId))
+                        continue;
+
+                    var centerline = tr.GetObject(centerlineId, OpenMode.ForRead) as Polyline;
+                    if (centerline == null) continue;
+
+                    // --- Create offset polylines for edges ---
+                    var leftEdge = MathHelperManager.CreateOffsetPolyline(centerline, -halfWidth);
+                    var rightEdge = MathHelperManager.CreateOffsetPolyline(centerline, halfWidth);
+
+                    if (leftEdge == null || rightEdge == null) continue;
+
+                    // --- Append to ModelSpace ---
+                    ModelSpaceWriterService.AppendToModelSpace(tr, db, leftEdge);
+                    ModelSpaceWriterService.AppendToModelSpace(tr, db, rightEdge);
+
+                    // --- Store edges in NOD ---
+                    GradeBeamNOD.StoreEdgeObjects(context, tr, centerlineId, leftEdge.ObjectId, rightEdge.ObjectId);
+
+                    createdCount++;
+                }
+
+                tr.Commit();
+
+                context.Document.Editor.WriteMessage(
+                    $"\n[GradeBeamEdges] Generated edges for {createdCount} grade beams.");
+            }
+        }
+
 
         private void OnDrawNewRequested(FoundationContext context, SpacingRequest request)
         {

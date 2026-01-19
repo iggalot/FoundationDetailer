@@ -1,14 +1,5 @@
-﻿//var issues = ValidateNodTree(context, tr, db, rootDict);
-
-//if (issues.Count > 0)
-//{
-//    foreach (var issue in issues)
-//        ed.WriteMessage($"\n[NOD] {issue.Path}: {issue.Issue}");
-//}
-
-using Autodesk.AutoCAD.DatabaseServices;
+﻿using Autodesk.AutoCAD.DatabaseServices;
 using FoundationDetailsLibraryAutoCAD.Data;
-using System.Collections;
 using System.Collections.Generic;
 
 namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD

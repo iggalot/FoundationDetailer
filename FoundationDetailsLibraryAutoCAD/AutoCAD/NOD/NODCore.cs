@@ -99,6 +99,25 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             }
         }
 
+        public static IEnumerable<ObjectId> EnumerateGradeBeamDictionaries(
+    Transaction tr,
+    Database db)
+        {
+            var root = tr.GetObject(db.NamedObjectsDictionaryId,
+                OpenMode.ForRead) as DBDictionary;
+
+            if (!root.Contains("FD_GRADEBEAM"))
+                yield break;
+
+            var fdGbDict = tr.GetObject(
+                root.GetAt("FD_GRADEBEAM"),
+                OpenMode.ForRead) as DBDictionary;
+
+            foreach (DBDictionaryEntry entry in fdGbDict)
+                yield return entry.Value;
+        }
+
+
 
 
         #endregion

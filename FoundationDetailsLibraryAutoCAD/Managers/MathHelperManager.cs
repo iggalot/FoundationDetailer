@@ -194,5 +194,23 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
             intersection = origin + dir * t;
             return true;
         }
+
+        /// <summary>
+        /// Creates a new polyline offset from the original by a specified distance.
+        /// Positive = to the right of the path, negative = left (using AutoCAD polyline normals)
+        /// </summary>
+        internal static Polyline CreateOffsetPolyline(Polyline centerline, double offsetDistance)
+        {
+            if (centerline == null) return null;
+
+            // Use the built-in Polyline.GetOffsetCurves
+            var offsetCurves = centerline.GetOffsetCurves(offsetDistance);
+            if (offsetCurves.Count == 0) return null;
+
+            // Expecting a single polyline result
+            var offsetPl = offsetCurves[0] as Polyline;
+            return offsetPl;
+        }
+
     }
 }
