@@ -533,25 +533,32 @@ namespace FoundationDetailer.AutoCAD
             using (context.Document.LockDocument())
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                foreach (var (handle, gbDict) in GradeBeamNOD.EnumerateGradeBeams(context, tr))
+                // 🔒 SNAPSHOT the grade beams BEFORE modifying NOD
+                var gradeBeams = GradeBeamNOD
+                    .EnumerateGradeBeams(context, tr)
+                    .ToList();
+
+                foreach (var (handle, gbDict) in gradeBeams)
                 {
+                    // --- Skip if edges already exist (idempotent)
+                    if (GradeBeamNOD.HasEdges(tr, gbDict))
+                        continue;
+
                     if (!GradeBeamNOD.TryGetCenterline(context, tr, gbDict, out var centerlineId))
                         continue;
 
                     var centerline = tr.GetObject(centerlineId, OpenMode.ForRead) as Polyline;
                     if (centerline == null) continue;
 
-                    // --- Generate offsets
                     var leftEdge = MathHelperManager.CreateOffsetPolyline(centerline, -halfWidth);
                     var rightEdge = MathHelperManager.CreateOffsetPolyline(centerline, halfWidth);
 
-                    if (leftEdge == null || rightEdge == null) continue;
+                    if (leftEdge == null || rightEdge == null)
+                        continue;
 
-                    // --- Add to ModelSpace
                     ModelSpaceWriterService.AppendToModelSpace(tr, db, leftEdge);
                     ModelSpaceWriterService.AppendToModelSpace(tr, db, rightEdge);
 
-                    // --- Store in NOD (handles only)
                     GradeBeamNOD.StoreEdgeObjects(
                         context,
                         tr,
@@ -567,6 +574,7 @@ namespace FoundationDetailer.AutoCAD
 
             return createdCount;
         }
+
 
         // ------------------------------------------------
         // Helper: Finds the grade beam dictionary a selected object belongs to

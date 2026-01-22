@@ -418,28 +418,67 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             DBDictionary root,
             params string[] keys)
         {
-            if (tr == null || root == null || keys == null || keys.Length == 0)
-                return null;
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+            if (root == null) throw new ArgumentNullException(nameof(root));
+            if (keys == null || keys.Length == 0)
+                throw new ArgumentException("At least one key is required.", nameof(keys));
 
-            var current = root;
+            DBDictionary current = root;
 
             foreach (var key in keys)
             {
-                if (!current.Contains(key))
+                // 🔍 READ FIRST
+                if (current.Contains(key))
                 {
-                    var sub = new DBDictionary();
-                    current.SetAt(key, sub);
-                    tr.AddNewlyCreatedDBObject(sub, true);
-                    current = sub;
+                    current = (DBDictionary)tr.GetObject(
+                        current.GetAt(key),
+                        OpenMode.ForRead);
                 }
                 else
                 {
-                    current = (DBDictionary)tr.GetObject(current.GetAt(key), OpenMode.ForWrite);
+                    // 🔓 UPGRADE ONLY WHEN NEEDED
+                    if (!current.IsWriteEnabled)
+                        current.UpgradeOpen();
+
+                    var sub = new DBDictionary();
+                    current.SetAt(key, sub);
+                    tr.AddNewlyCreatedDBObject(sub, true);
+
+                    current = sub;
                 }
             }
 
             return current;
         }
+
+        internal static bool TryGetNestedSubDictionary(
+    Transaction tr,
+    DBDictionary root,
+    out DBDictionary result,
+    params string[] keys)
+        {
+            result = null;
+
+            if (tr == null || root == null || keys == null || keys.Length == 0)
+                return false;
+
+            DBDictionary current = root;
+
+            foreach (var key in keys)
+            {
+                if (!current.Contains(key))
+                    return false;
+
+                current = (DBDictionary)tr.GetObject(
+                    current.GetAt(key),
+                    OpenMode.ForRead);
+            }
+
+            result = current;
+            return true;
+        }
+
+
 
         internal static DBDictionary GetOrCreateGradeBeamNode(
             Transaction tr,

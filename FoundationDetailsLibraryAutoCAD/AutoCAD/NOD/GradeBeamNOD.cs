@@ -422,6 +422,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             out ObjectId centerlineId)
         {
             centerlineId = ObjectId.Null;
+
             if (context == null || tr == null || gradeBeamDict == null)
                 return false;
 
@@ -439,50 +440,50 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             }
             catch (Autodesk.AutoCAD.Runtime.Exception)
             {
-                return false; // object was erased or invalid
+                return false;
             }
 
-            if (xrec == null || xrec.Data == null)
+            if (xrec?.Data == null)
                 return false;
 
-            Database db = context.Document.Database;
+            var db = context.Document.Database;
 
             foreach (TypedValue tv in xrec.Data)
             {
                 if (tv.TypeCode != (int)DxfCode.Text)
                     continue;
 
-                string handleStr = tv.Value?.ToString();
+                var handleStr = tv.Value as string;
                 if (string.IsNullOrWhiteSpace(handleStr))
                     continue;
 
-                // Safely attempt to get ObjectId from handle string
-                if (!NODCore.TryGetObjectIdFromHandleString(context, db, handleStr, out ObjectId oid))
+                if (!NODCore.TryGetObjectIdFromHandleString(
+                        context, db, handleStr, out var oid))
                     continue;
 
                 if (oid.IsNull || !oid.IsValid)
                     continue;
 
-                // Safely check if the object is erased
+                DBObject obj;
                 try
                 {
-                    using (var obj = tr.GetObject(oid, OpenMode.ForRead, false))
-                    {
-                        if (obj == null || obj.IsErased)
-                            continue;
-
-                        centerlineId = oid;
-                        return true;
-                    }
+                    obj = tr.GetObject(oid, OpenMode.ForRead, false);
                 }
                 catch (Autodesk.AutoCAD.Runtime.Exception)
                 {
-                    continue; // object was erased between handle read and GetObject
+                    continue;
                 }
+
+                if (obj == null || obj.IsErased)
+                    continue;
+
+                centerlineId = oid;
+                return true;
             }
 
-            return false; // no valid centerline found
+            return false;
         }
+
 
 
         public static void StoreEdgeObjects(
@@ -499,51 +500,81 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             var db = context.Document.Database;
             var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
 
-            // --- Get the GradeBeam dictionary for this centerline ---
+            // --- Get or create GradeBeam dictionary (safe here because we are NOT enumerating)
             var gradebeamDict = NODCore.GetOrCreateNestedSubDictionary(
                 tr,
                 nod,
                 NODCore.ROOT,
                 NODCore.KEY_GRADEBEAM_SUBDICT,
-                centerlineId.Handle.ToString()
-            );
+                centerlineId.Handle.ToString());
 
-            // --- Ensure the FD_EDGES subdictionary exists ---
             var edgesDict = NODCore.GetOrCreateNestedSubDictionary(
                 tr,
                 gradebeamDict,
-                NODCore.KEY_EDGES_SUBDICT
-            );
+                NODCore.KEY_EDGES_SUBDICT);
 
-            // --- Helper to store edges sequentially within this edgesDict ---
-            void AddEdges(string keyPrefix, IEnumerable<ObjectId> ids)
+            AddEdges(edgesDict, tr, "LEFT", leftEdgeIds);
+            AddEdges(edgesDict, tr, "RIGHT", rightEdgeIds);
+        }
+
+        private static void AddEdges(
+            DBDictionary edgesDict,
+            Transaction tr,
+            string keyPrefix,
+            IEnumerable<ObjectId> ids)
+        {
+            if (edgesDict == null || ids == null)
+                return;
+
+            // 🔓 Ensure write access
+            if (!edgesDict.IsWriteEnabled)
+                edgesDict.UpgradeOpen();
+
+            // 🔢 Count existing edges with this prefix (NO LINQ CAST)
+            int counter = 0;
+            foreach (DBDictionaryEntry entry in edgesDict)
             {
-                if (ids == null) return;
-
-                // Always start numbering at 0
-                int counter = 0;
-
-                foreach (var id in ids)
-                {
-                    if (id.IsNull) continue;
-
-                    string key = $"{keyPrefix}_{counter}";
-
-                    var xrec = new Xrecord
-                    {
-                        Data = new ResultBuffer(new TypedValue((int)DxfCode.Text, id.Handle.ToString()))
-                    };
-
-                    edgesDict.SetAt(key, xrec);
-                    tr.AddNewlyCreatedDBObject(xrec, true);
-
+                if (entry.Key.StartsWith(keyPrefix))
                     counter++;
-                }
             }
 
-            AddEdges("LEFT", leftEdgeIds);
-            AddEdges("RIGHT", rightEdgeIds);
+            foreach (var id in ids)
+            {
+                if (id.IsNull)
+                    continue;
+
+                string key = $"{keyPrefix}_{counter++}";
+
+                var xrec = new Xrecord
+                {
+                    Data = new ResultBuffer(
+                        new TypedValue((int)DxfCode.Text, id.Handle.ToString()))
+                };
+
+                edgesDict.SetAt(key, xrec);
+                tr.AddNewlyCreatedDBObject(xrec, true);
+            }
         }
+
+
+
+        public static bool HasEdges(Transaction tr, DBDictionary gradeBeamDict)
+        {
+            if (tr == null || gradeBeamDict == null)
+                return false;
+
+            if (!NODCore.TryGetNestedSubDictionary(
+                    tr,
+                    gradeBeamDict,
+                    out var edgesDict,
+                    NODCore.KEY_EDGES_SUBDICT))
+                return false;
+
+            return edgesDict.Count > 0;
+        }
+
+
+
 
         /// <summary>
         /// Deletes a single grade beam node and all its subdictionaries/XRecords.
