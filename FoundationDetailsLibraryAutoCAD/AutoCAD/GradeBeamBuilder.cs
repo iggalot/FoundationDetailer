@@ -138,8 +138,10 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                     var leftSegs = group.Where(g => g.isLeft).Select(g => g.seg).ToList();
                     var rightSegs = group.Where(g => !g.isLeft).Select(g => g.seg).ToList();
 
-                    var finalLeft = JoinEdgeSegments(context, leftSegs);
-                    var finalRight = JoinEdgeSegments(context, rightSegs);
+                    //var finalLeft = JoinEdgeSegments(context, leftSegs);
+                    //var finalRight = JoinEdgeSegments(context, rightSegs);
+                    var finalLeft = leftSegs;
+                    var finalRight = rightSegs;
 
                     GradeBeamNOD.StoreEdgeObjects(
                         context,
