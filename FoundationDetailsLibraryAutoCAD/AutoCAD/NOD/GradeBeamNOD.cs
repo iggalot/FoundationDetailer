@@ -651,5 +651,55 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
             return null;
         }
+
+        public static bool TryGetEdges(
+            FoundationContext context,
+            Transaction tr,
+            DBDictionary gradeBeamDict,
+            out ObjectId[] leftEdges,
+            out ObjectId[] rightEdges
+            )
+        {
+            leftEdges = Array.Empty<ObjectId>();
+            rightEdges = Array.Empty<ObjectId>();
+
+            if (context == null)
+                throw new ArgumentNullException(nameof(context));
+
+            Document doc = context.Document;
+            Database db = doc.Database;
+            if (doc == null || db == null) return false;
+
+            if (tr == null || gradeBeamDict == null || db == null)
+                return false;
+
+            if (!NODCore.TryGetNestedSubDictionary(tr, gradeBeamDict, out var edgesDict, NODCore.KEY_EDGES_SUBDICT))
+                return false;
+
+            var leftList = new List<ObjectId>();
+            var rightList = new List<ObjectId>();
+
+            foreach (var (key, oid) in NODCore.EnumerateDictionary(edgesDict))
+            {
+                if (oid == null || oid.IsNull || oid.IsErased)
+                    continue;
+
+                // Convert handle string to ObjectId
+                if (!NODCore.TryGetObjectIdFromHandleString(context, db, key, out ObjectId objId))
+                    continue;
+
+                if (key.StartsWith("LEFT_", StringComparison.OrdinalIgnoreCase))
+                    leftList.Add(objId);
+                else if (key.StartsWith("RIGHT_", StringComparison.OrdinalIgnoreCase))
+                    rightList.Add(objId);
+            }
+
+            leftEdges = leftList.ToArray();
+            rightEdges = rightList.ToArray();
+
+            return leftEdges.Length > 0 || rightEdges.Length > 0;
+        }
+
+
     }
 }

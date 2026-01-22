@@ -521,58 +521,61 @@ namespace FoundationDetailer.AutoCAD
         /// and stores handles in the NOD.
         /// Returns the number of grade beams processed.
         /// </summary>
-        public int GenerateEdgesForAllGradeBeams(
+        public void GenerateEdgesForAllGradeBeams(
             FoundationContext context,
             double halfWidth)
         {
-            if (context?.Document == null) return 0;
+            GradeBeamBuilder.CreateGradeBeams(context, halfWidth);
+            //if (context?.Document == null) return 0;
 
-            var db = context.Document.Database;
-            int createdCount = 0;
+            //var db = context.Document.Database;
+            //int createdCount = 0;
 
-            using (context.Document.LockDocument())
-            using (var tr = db.TransactionManager.StartTransaction())
-            {
-                // 🔒 SNAPSHOT the grade beams BEFORE modifying NOD
-                var gradeBeams = GradeBeamNOD
-                    .EnumerateGradeBeams(context, tr)
-                    .ToList();
+            //using (context.Document.LockDocument())
+            //using (var tr = db.TransactionManager.StartTransaction())
+            //{
+            //    GradeBeamBuilder.CreateGradeBeams(context, halfWidth);
+            //    //// 🔒 SNAPSHOT the grade beams BEFORE modifying NOD
+            //    //var gradeBeams = GradeBeamNOD
+            //    //    .EnumerateGradeBeams(context, tr)
+            //    //    .ToList();
 
-                foreach (var (handle, gbDict) in gradeBeams)
-                {
-                    // --- Skip if edges already exist (idempotent)
-                    if (GradeBeamNOD.HasEdges(tr, gbDict))
-                        continue;
+            //    //foreach (var (handle, gbDict) in gradeBeams)
+            //    //{
+            //    //    // --- Skip if edges already exist (idempotent)
+            //    //    if (GradeBeamNOD.HasEdges(tr, gbDict))
+            //    //        continue;
 
-                    if (!GradeBeamNOD.TryGetCenterline(context, tr, gbDict, out var centerlineId))
-                        continue;
+            //    //    if (!GradeBeamNOD.TryGetCenterline(context, tr, gbDict, out var centerlineId))
+            //    //        continue;
 
-                    var centerline = tr.GetObject(centerlineId, OpenMode.ForRead) as Polyline;
-                    if (centerline == null) continue;
+            //    //    var centerline = tr.GetObject(centerlineId, OpenMode.ForRead) as Polyline;
+            //    //    if (centerline == null) continue;
 
-                    var leftEdge = MathHelperManager.CreateOffsetPolyline(centerline, -halfWidth);
-                    var rightEdge = MathHelperManager.CreateOffsetPolyline(centerline, halfWidth);
+            //    //    var leftEdge = MathHelperManager.CreateOffsetPolyline(centerline, -halfWidth);
+            //    //    var rightEdge = MathHelperManager.CreateOffsetPolyline(centerline, halfWidth);
 
-                    if (leftEdge == null || rightEdge == null)
-                        continue;
+            //    //    if (leftEdge == null || rightEdge == null)
+            //    //        continue;
 
-                    ModelSpaceWriterService.AppendToModelSpace(tr, db, leftEdge);
-                    ModelSpaceWriterService.AppendToModelSpace(tr, db, rightEdge);
+            //    //    ModelSpaceWriterService.AppendToModelSpace(tr, db, leftEdge);
+            //    //    ModelSpaceWriterService.AppendToModelSpace(tr, db, rightEdge);
 
-                    GradeBeamNOD.StoreEdgeObjects(
-                        context,
-                        tr,
-                        centerlineId,
-                        new[] { leftEdge.ObjectId },
-                        new[] { rightEdge.ObjectId });
+            //    //    GradeBeamNOD.StoreEdgeObjects(
+            //    //        context,
+            //    //        tr,
+            //    //        centerlineId,
+            //    //        new[] { leftEdge.ObjectId },
+            //    //        new[] { rightEdge.ObjectId });
 
-                    createdCount++;
-                }
+            //    //    createdCount++;
+            //    }
 
-                tr.Commit();
-            }
+            //    tr.Commit();
+            //}
 
-            return createdCount;
+            //return createdCount;
+            return;
         }
 
 

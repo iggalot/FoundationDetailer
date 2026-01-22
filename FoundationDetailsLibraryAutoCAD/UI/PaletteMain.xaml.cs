@@ -82,7 +82,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             BtnTest.Click += (s, e) => BtnTest_Click();
             BtnEraseNODFully.Click += (s, e) => BtnEraseNODFully_Click();
             BtnGenerateGradeBeamEdges.Click += (s, e) => BtnGenerateGradeBeamEdges_Click(s, e);
-            BtnGenerateGradeBeamEdges.Click += (s, e) => BtnGenerateGradeBeamEdges_Click(s, e);
             BtnDeleteSingleGradeBeamFromSelect.Click += (s, e) => BtnDeleteSingleFromSelect_Click(s, e);
 
 
@@ -156,10 +155,12 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             var context = CurrentContext;
             if (context?.Document == null) return;
 
-            int count = _gradeBeamService.GenerateEdgesForAllGradeBeams(context, halfWidth: 5.0);
+            _gradeBeamService.GenerateEdgesForAllGradeBeams(context, halfWidth: 5.0);
 
-            context.Document.Editor.WriteMessage(
-                $"\n[GradeBeamEdges] Generated edges for {count} grade beams.");
+            ////int count = _gradeBeamService.GenerateEdgesForAllGradeBeams(context, halfWidth: 5.0);
+
+            //context.Document.Editor.WriteMessage(
+            //    $"\n[GradeBeamEdges] Generated edges for {count} grade beams.");
         }
 
 
@@ -543,10 +544,10 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
         private void BtnTest_Click()
         {
-            FoundationTestTools.TestGradeBeamNOD(CurrentContext);
+            //FoundationTestTools.TestGradeBeamNOD(CurrentContext);
 
-            //FoundationTestTools.TestDumpGradeBeamNod(CurrentContext);
-            FoundationTestTools.TestGradeBeamJsonRoundTrip(CurrentContext);
+            ////FoundationTestTools.TestDumpGradeBeamNod(CurrentContext);
+            //FoundationTestTools.TestGradeBeamJsonRoundTrip(CurrentContext);
         }
 
         /// <summary>
