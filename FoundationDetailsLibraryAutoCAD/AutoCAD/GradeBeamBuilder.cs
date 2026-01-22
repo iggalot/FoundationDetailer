@@ -13,149 +13,235 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
     {
         public static void CreateGradeBeams(FoundationContext context, double halfWidth)
         {
-
             if (context == null || halfWidth <= 0) return;
 
             var doc = context.Document;
             var db = doc.Database;
             if (doc == null || db == null) return;
 
-            doc.Editor.WriteMessage($"\n[DEBUG] Entering CreateGradeBeams at {DateTime.Now}");
-
-
-            using (DocumentLock docLock = doc.LockDocument())
-            using (Transaction tr = db.TransactionManager.StartTransaction())
+            using (doc.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
             {
                 var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
                 var btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
-                int createdEdges = 0;
+                // --- Enumerate beams
+                var beams = GradeBeamNOD.EnumerateGradeBeams(context, tr).ToList();
+                if (beams.Count < 2) return;
 
-                // --- Enumerate grade beams
-                var gradeBeams = GradeBeamNOD.EnumerateGradeBeams(context, tr).ToList();
-                if (gradeBeams.Count < 2)
+                // --- Remove old edges
+                // --- Remove old edges
+                foreach (var (handle, gbDict) in beams)
                 {
-                    doc.Editor.WriteMessage("\nAt least two grade beams must exist in the NOD.");
-                    return;
-                }
-
-                // --- Delete existing LEFT_/RIGHT_ edges from ModelSpace and NOD (Debug Version)
-                foreach (var (handle, gbDict) in gradeBeams)
-                {
-                    if (GradeBeamNOD.TryGetEdges(context, tr, gbDict, out ObjectId[] leftEdgeIds, out ObjectId[] rightEdgeIds))
+                    if (GradeBeamNOD.TryGetEdges(context, tr, gbDict,
+                        out ObjectId[] lefts, out ObjectId[] rights))
                     {
-                        var allEdgeIds = leftEdgeIds.Concat(rightEdgeIds).ToList();
-                        if (allEdgeIds.Count == 0)
+                        foreach (var id in lefts.Concat(rights))
                         {
-                            doc.Editor.WriteMessage($"\n[DEBUG] No existing edges found for beam {handle}.");
-                        }
-                        else
-                        {
-                            doc.Editor.WriteMessage($"\n[DEBUG] Found {allEdgeIds.Count} edges to erase for beam {handle}:");
-
-                            foreach (var oid in allEdgeIds)
-                            {
-                                if (oid.IsNull)
-                                {
-                                    doc.Editor.WriteMessage("\n  [DEBUG] ObjectId is Null, skipping.");
-                                    continue;
-                                }
-
-                                if (!oid.IsValid)
-                                {
-                                    doc.Editor.WriteMessage($"\n  [DEBUG] ObjectId {oid} is invalid, skipping.");
-                                    continue;
-                                }
-
-                                if (oid.IsErased)
-                                {
-                                    doc.Editor.WriteMessage($"\n  [DEBUG] ObjectId {oid} already erased, skipping.");
-                                    continue;
-                                }
-
-                                var obj = tr.GetObject(oid, OpenMode.ForWrite, false);
-                                if (obj == null)
-                                {
-                                    doc.Editor.WriteMessage($"\n  [DEBUG] Object {oid} could not be retrieved.");
-                                    continue;
-                                }
-
-                                doc.Editor.WriteMessage($"\n  [DEBUG] Erasing ObjectId {oid} of type {obj.GetType().Name}.");
-                                obj.Erase();
-                            }
+                            if (id.IsValid && !id.IsErased)
+                                tr.GetObject(id, OpenMode.ForWrite).Erase();
                         }
 
-                        // --- Clear dictionary entries
-                        var edgesDict = GradeBeamNOD.GetEdgesDictionary(tr, db, handle, true);
-                        foreach (var key in NODCore.EnumerateDictionary(edgesDict).Select(e => e.Key).ToList())
-                        {
-                            try
-                            {
-                                edgesDict.Remove(key);
-                                doc.Editor.WriteMessage($"\n  [DEBUG] Removed NOD key: {key}");
-                            }
-                            catch (Exception ex)
-                            {
-                                doc.Editor.WriteMessage($"\n  [DEBUG] Failed to remove key {key}: {ex.Message}");
-                            }
-                        }
-                    }
-                    else
-                    {
-                        doc.Editor.WriteMessage($"\n[DEBUG] No edges found in NOD for beam {handle}.");
+                        // IMPORTANT: pass HANDLE, not gbDict
+                        var dict = GradeBeamNOD.GetEdgesDictionary(tr, db, handle, true);
+                        foreach (var k in NODCore.EnumerateDictionary(dict).Select(e => e.Key).ToList())
+                            dict.Remove(k);
                     }
                 }
 
 
-                // --- Process each grade beam
-                int count = 0;
-                foreach (var (handle, gbDict) in gradeBeams)
+                // ============================================================
+                // 1) CREATE ALL UNTRIMMED EDGES (GLOBAL SET)
+                // ============================================================
+                var allTempEdges = new List<(ObjectId centerlineId, bool isLeft, Polyline edge)>();
+
+                foreach (var (_, gbDict) in beams)
                 {
-                    if (!GradeBeamNOD.TryGetCenterline(context, tr, gbDict, out ObjectId centerlineId))
+                    if (!GradeBeamNOD.TryGetCenterline(context, tr, gbDict, out ObjectId clId))
                         continue;
 
-                    var centerline = tr.GetObject(centerlineId, OpenMode.ForRead) as Polyline;
-                    if (centerline == null) continue;
+                    var cl = tr.GetObject(clId, OpenMode.ForRead) as Polyline;
+                    if (cl == null) continue;
 
-                    // --- 1) Create temporary untrimmed edges
-                    List<Polyline> tempEdges = CreateOffsetEdgesManual(centerline, btr, tr, halfWidth);
+                    var left = ManualOffset(cl, halfWidth, true);
+                    var right = ManualOffset(cl, halfWidth, false);
 
-                    //List<Polyline> tempEdges = CreateOffsetEdges(centerline, btr, tr, halfWidth);
-
-                    // --- 2) Trim edges at intersections
-                    List<Polyline> trimmedEdges = TrimEdgesAtIntersections(tempEdges, btr, tr);
-
-                    // --- 3) Join segments
-                    List<Polyline> finalEdges = JoinEdgeSegments(context, trimmedEdges);
-                    if (finalEdges.Count == 0) continue;
-
-                    // --- 4) Erase temporary untrimmed edges
-                    foreach (var e in tempEdges)
+                    if (left != null)
                     {
-                        if (e != null && !e.IsErased)
-                            e.UpgradeOpen();
-                        e.Erase();
+                        btr.AppendEntity(left);
+                        tr.AddNewlyCreatedDBObject(left, true);
+                        allTempEdges.Add((clId, true, left));
                     }
 
-                    // --- 5) Store final edges in NOD
-                    GradeBeamNOD.StoreEdgeObjects(
-                        context, tr, centerlineId,
-                        new ObjectId[] { finalEdges[0].ObjectId },
-                        new ObjectId[] { finalEdges.Count > 1 ? finalEdges[1].ObjectId : ObjectId.Null }
-                    );
+                    if (right != null)
+                    {
+                        btr.AppendEntity(right);
+                        tr.AddNewlyCreatedDBObject(right, true);
+                        allTempEdges.Add((clId, false, right));
+                    }
+                }
 
-                    createdEdges += finalEdges.Count;
-                    count++;
+                // ============================================================
+                // 2) TRIM AGAINST ALL OTHER EDGES
+                // ============================================================
+                var trimmedSegments = new List<(ObjectId clId, bool isLeft, Polyline seg)>();
+
+                foreach (var edgeData in allTempEdges)
+                {
+                    var edge = edgeData.edge;
+                    var splitPts = new List<Point3d>();
+
+                    foreach (var other in allTempEdges)
+                    {
+                        if (other.edge == edge) continue;
+                        splitPts.AddRange(GetIntersectionPoints(edge, other.edge));
+                    }
+
+                    var pieces = SplitPolylineAtPoints(edge, splitPts, btr, tr);
+
+                    foreach (var seg in pieces)
+                    {
+                        if (seg.NumberOfVertices < 2)
+                            continue;
+
+                        Point3d mid = GetMidpoint(
+                            seg.GetPoint3dAt(0),
+                            seg.GetPoint3dAt(seg.NumberOfVertices - 1)
+                        );
+
+                        bool insideOther =
+                            allTempEdges.Any(o =>
+                                o.edge != edge &&
+                                IsPointNearPolyline(mid, o.edge, halfWidth * 0.45));
+
+                        if (!insideOther)
+                            trimmedSegments.Add((edgeData.centerlineId, edgeData.isLeft, seg));
+                        else
+                            seg.Erase();
+                    }
+                }
+
+                // ============================================================
+                // 3) DELETE ALL UNTRIMMED EDGES
+                // ============================================================
+                foreach (var e in allTempEdges)
+                {
+                    if (!e.edge.IsErased)
+                        e.edge.Erase();
+                }
+
+                // ============================================================
+                // 4) JOIN + STORE PER BEAM
+                // ============================================================
+                foreach (var group in trimmedSegments.GroupBy(e => e.clId))
+                {
+                    var leftSegs = group.Where(g => g.isLeft).Select(g => g.seg).ToList();
+                    var rightSegs = group.Where(g => !g.isLeft).Select(g => g.seg).ToList();
+
+                    var finalLeft = JoinEdgeSegments(context, leftSegs);
+                    var finalRight = JoinEdgeSegments(context, rightSegs);
+
+                    GradeBeamNOD.StoreEdgeObjects(
+                        context,
+                        tr,
+                        group.Key,
+                        finalLeft.Select(p => p.ObjectId).ToArray(),
+                        finalRight.Select(p => p.ObjectId).ToArray());
                 }
 
                 tr.Commit();
-
                 doc.Editor.Regen();
-                doc.Editor.UpdateScreen();
-
-                doc.Editor.WriteMessage($"\nCreated {createdEdges} grade beam edges from NOD.");
             }
         }
+
+        private static Point3d GetMidpoint(Point3d a, Point3d b)
+        {
+            return new Point3d(
+                (a.X + b.X) * 0.5,
+                (a.Y + b.Y) * 0.5,
+                (a.Z + b.Z) * 0.5
+            );
+        }
+
+
+        private static List<Point3d> GetIntersectionPoints(Polyline a, Polyline b)
+        {
+            var pts = new List<Point3d>();
+
+            for (int i = 0; i < a.NumberOfVertices - 1; i++)
+                using (var la = new Line(a.GetPoint3dAt(i), a.GetPoint3dAt(i + 1)))
+                {
+                    for (int j = 0; j < b.NumberOfVertices - 1; j++)
+                        using (var lb = new Line(b.GetPoint3dAt(j), b.GetPoint3dAt(j + 1)))
+                        {
+                            var col = new Point3dCollection();
+                            la.IntersectWith(lb, Intersect.OnBothOperands, col, IntPtr.Zero, IntPtr.Zero);
+                            foreach (Point3d p in col) pts.Add(p);
+                        }
+                }
+
+            return pts;
+        }
+
+        private static List<Polyline> SplitPolylineAtPoints(
+    Polyline edge,
+    List<Point3d> splitPts,
+    BlockTableRecord btr,
+    Transaction tr)
+        {
+            var pts = new List<Point3d> { edge.StartPoint };
+            for (int i = 1; i < edge.NumberOfVertices; i++)
+                pts.Add(edge.GetPoint3dAt(i));
+
+            pts.AddRange(splitPts);
+
+            pts = pts
+                .Distinct(new Point3dEqualityComparer(new Tolerance(1e-6, 1e-6)))
+                .OrderBy(p => p.DistanceTo(edge.StartPoint))
+                .ToList();
+
+            var segs = new List<Polyline>();
+
+            for (int i = 0; i < pts.Count - 1; i++)
+            {
+                if (pts[i].DistanceTo(pts[i + 1]) < 1e-6) continue;
+
+                var pl = new Polyline();
+                pl.AddVertexAt(0, new Point2d(pts[i].X, pts[i].Y), 0, 0, 0);
+                pl.AddVertexAt(1, new Point2d(pts[i + 1].X, pts[i + 1].Y), 0, 0, 0);
+
+                btr.AppendEntity(pl);
+                tr.AddNewlyCreatedDBObject(pl, true);
+                segs.Add(pl);
+            }
+
+            return segs;
+        }
+
+        private static bool IsPointNearPolyline(Point3d pt, Polyline pl, double tol)
+        {
+            for (int i = 0; i < pl.NumberOfVertices - 1; i++)
+            {
+                Point3d a = pl.GetPoint3dAt(i);
+                Point3d b = pl.GetPoint3dAt(i + 1);
+
+                Vector3d ab = b - a;
+                Vector3d ap = pt - a;
+
+                double t = ap.DotProduct(ab) / ab.LengthSqrd;
+                t = Math.Max(0.0, Math.Min(1.0, t)); // clamp t to segment
+
+                Point3d closest = a + ab * t;
+
+                if (pt.DistanceTo(closest) < tol)
+                    return true;
+            }
+
+            return false;
+        }
+
+
+
 
 
         #region --- Step 1 ---
@@ -512,7 +598,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 joinedEdges.Add(baseSeg);
             }
 
-            return joinedEdges;
+            return segments;
         }
 
 
