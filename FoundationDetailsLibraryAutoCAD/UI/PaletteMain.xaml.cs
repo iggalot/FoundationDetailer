@@ -14,6 +14,7 @@ using FoundationDetailsLibraryAutoCAD.Services;
 using FoundationDetailsLibraryAutoCAD.UI.Controls.EqualSpacingGBControl;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -107,48 +108,86 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         {
             var context = CurrentContext;
             if (context == null || context.Document == null)
+            {
+                // Debug: no context
                 return;
+            }
 
             Document doc = context.Document;
             Database db = doc.Database;
             Editor ed = doc.Editor;
 
-            // Prompt the user to select an object
+            // --- Step 1: Prompt user to select an object
             var peo = new PromptEntityOptions("\nSelect any object of a grade beam to delete:");
             var pres = ed.GetEntity(peo);
             if (pres.Status != PromptStatus.OK)
             {
-                ed.WriteMessage("\nOperation cancelled.");
+                ed.WriteMessage("\n[DEBUG] Operation cancelled at selection step.");
                 return;
             }
 
             ObjectId selectedId = pres.ObjectId;
+            ed.WriteMessage($"\n[DEBUG] Selected object ID: {selectedId.Handle}");
 
-            // Find which grade beam this object belongs to
-            string centerlineHandle = _gradeBeamService.FindGradeBeamForObject(context, selectedId);
+            // --- Step 2: Find the grade beam handle for this object
+            string gradeBeamHandle = null;
 
-            if (string.IsNullOrEmpty(centerlineHandle))
+            using (doc.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
             {
-                ed.WriteMessage("\nSelected object does not belong to any grade beam.");
+                foreach (var (handle, gbDict) in GradeBeamNOD.EnumerateGradeBeams(context, tr))
+                {
+                    if (GradeBeamNOD.TryGetGradeBeamObjects(
+                            context, tr, gbDict, out var polys, includeCenterline: true, includeEdges: true))
+                    {
+                        foreach (var p in polys)
+                        {
+                            ed.WriteMessage($"\n[DEBUG] Checking beam '{handle}' polyline ID: {p.ObjectId.Handle}");
+                        }
+
+                        if (polys.Any(p => p.ObjectId == selectedId))
+                        {
+                            gradeBeamHandle = handle;
+                            ed.WriteMessage($"\n[DEBUG] Selected object belongs to grade beam: {gradeBeamHandle}");
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (string.IsNullOrEmpty(gradeBeamHandle))
+            {
+                ed.WriteMessage("\n[DEBUG] Selected object does not belong to any grade beam. Exiting without deletion.");
                 return;
             }
 
-            // Confirm deletion
-            var pko = new PromptKeywordOptions($"\nDelete grade beam '{centerlineHandle}' and all its edges/metadata?")
-            { AllowNone = false };
+            // --- Step 3: Confirm deletion
+            var pko = new PromptKeywordOptions($"\nDelete grade beam '{gradeBeamHandle}' and all its edges/metadata?")
+            {
+                AllowNone = false
+            };
             pko.Keywords.Add("Yes");
             pko.Keywords.Add("No");
             var presConfirm = ed.GetKeywords(pko);
             if (presConfirm.Status != PromptStatus.OK || presConfirm.StringResult != "Yes")
             {
-                ed.WriteMessage("\nDeletion cancelled.");
+                ed.WriteMessage("\n[DEBUG] Deletion cancelled by user.");
                 return;
             }
 
-            // Perform deletion
-            int deletedCount = _gradeBeamService.DeleteGradeBeamRecursiveByHandle(context, centerlineHandle);
-            ed.WriteMessage($"\nDeleted {deletedCount} entities for grade beam '{centerlineHandle}'.");
+            // --- Step 4: Perform deletion
+            int deletedCount = _gradeBeamService.DeleteGradeBeamRecursiveByHandle(context, gradeBeamHandle);
+
+            if (deletedCount > 0)
+            {
+                ed.WriteMessage($"\n[DEBUG] Deleted {deletedCount} entities for grade beam '{gradeBeamHandle}'.");
+            }
+            else
+            {
+                ed.WriteMessage($"\n[DEBUG] No entities were deleted for grade beam '{gradeBeamHandle}'. Check if objects were already removed.");
+            }
         }
+
 
         private void BtnGenerateGradeBeamEdges_Click(object sender, RoutedEventArgs e)
         {

@@ -27,7 +27,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 
                 // --- Enumerate beams
                 var beams = GradeBeamNOD.EnumerateGradeBeams(context, tr).ToList();
-                if (beams.Count < 2) return;
+                if (beams.Count == 0) return; // no beams at all
 
                 // --- 0) DELETE ALL EXISTING GRADE BEAM EDGES BEFORE REBUILDING
                 int edgesDeleted = GradeBeamManager.DeleteAllGradeBeamEdges(context);
@@ -62,78 +62,87 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                     }
                 }
 
-                // --- 2) TRIM AGAINST ALL OTHER BEAMS (delete segments fully inside OTHER beams)
+                // --- 2) Only trim edges if there are 2 or more beams
                 var segmentsToKeep = new List<(ObjectId clId, bool isLeft, Polyline seg)>();
                 var segmentsToErase = new List<Polyline>();
 
-                foreach (var edgeData in allTempEdges)
+                if (beams.Count >= 2)
                 {
-                    var edge = edgeData.edge;
-
-                    // --- 2a) Collect intersections with all OTHER beams
-                    var intersections = new List<Point3d>();
-                    foreach (var (otherHandle, otherDict) in beams)
+                    foreach (var edgeData in allTempEdges)
                     {
-                        if (!GradeBeamNOD.TryGetCenterline(context, tr, otherDict, out ObjectId otherClId))
-                            continue;
+                        var edge = edgeData.edge;
 
-                        // Skip current beam
-                        if (otherClId == edgeData.centerlineId)
-                            continue;
-
-                        var otherLeft = allTempEdges.FirstOrDefault(e => e.centerlineId == otherClId && e.isLeft).edge;
-                        var otherRight = allTempEdges.FirstOrDefault(e => e.centerlineId == otherClId && !e.isLeft).edge;
-
-                        if (otherLeft != null) intersections.AddRange(GetIntersectionPoints(edge, otherLeft));
-                        if (otherRight != null) intersections.AddRange(GetIntersectionPoints(edge, otherRight));
-                    }
-
-                    // --- 2b) Split the edge at intersections
-                    var pieces = SplitPolylineAtPoints(edge, intersections, btr, tr);
-
-                    // --- 2c) Erase the original untrimmed edge
-                    edge.Erase();
-
-                    // --- 2d) Check each segment against all OTHER beams
-                    foreach (var seg in pieces)
-                    {
-                        bool erase = false;
-                        var midPt = GetMidPoint(seg);
-
+                        // --- 2a) Collect intersections with all OTHER beams
+                        var intersections = new List<Point3d>();
                         foreach (var (otherHandle, otherDict) in beams)
                         {
                             if (!GradeBeamNOD.TryGetCenterline(context, tr, otherDict, out ObjectId otherClId))
                                 continue;
 
-                            // Skip same beam
                             if (otherClId == edgeData.centerlineId)
                                 continue;
 
                             var otherLeft = allTempEdges.FirstOrDefault(e => e.centerlineId == otherClId && e.isLeft).edge;
                             var otherRight = allTempEdges.FirstOrDefault(e => e.centerlineId == otherClId && !e.isLeft).edge;
 
-                            if (otherLeft == null || otherRight == null)
-                                continue;
-
-                            if (IsPointInsideOrOnBeam(midPt, otherLeft, otherRight))
-                            {
-                                erase = true;
-                                break;
-                            }
+                            if (otherLeft != null) intersections.AddRange(GetIntersectionPoints(edge, otherLeft));
+                            if (otherRight != null) intersections.AddRange(GetIntersectionPoints(edge, otherRight));
                         }
 
-                        if (erase)
-                            segmentsToErase.Add(seg);
-                        else
-                            segmentsToKeep.Add((edgeData.centerlineId, edgeData.isLeft, seg));
+                        // --- 2b) Split the edge at intersections
+                        var pieces = SplitPolylineAtPoints(edge, intersections, btr, tr);
+
+                        // --- 2c) Erase the original untrimmed edge
+                        edge.Erase();
+
+                        // --- 2d) Check each segment against all OTHER beams
+                        foreach (var seg in pieces)
+                        {
+                            bool erase = false;
+                            var midPt = GetMidPoint(seg);
+
+                            foreach (var (otherHandle, otherDict) in beams)
+                            {
+                                if (!GradeBeamNOD.TryGetCenterline(context, tr, otherDict, out ObjectId otherClId))
+                                    continue;
+
+                                if (otherClId == edgeData.centerlineId)
+                                    continue;
+
+                                var otherLeft = allTempEdges.FirstOrDefault(e => e.centerlineId == otherClId && e.isLeft).edge;
+                                var otherRight = allTempEdges.FirstOrDefault(e => e.centerlineId == otherClId && !e.isLeft).edge;
+
+                                if (otherLeft == null || otherRight == null)
+                                    continue;
+
+                                if (IsPointInsideOrOnBeam(midPt, otherLeft, otherRight))
+                                {
+                                    erase = true;
+                                    break;
+                                }
+                            }
+
+                            if (erase)
+                                segmentsToErase.Add(seg);
+                            else
+                                segmentsToKeep.Add((edgeData.centerlineId, edgeData.isLeft, seg));
+                        }
+                    }
+
+                    // --- 2e) Erase segments fully contained in other beams
+                    foreach (var seg in segmentsToErase)
+                    {
+                        if (seg != null && !seg.IsErased)
+                            seg.Erase();
                     }
                 }
-
-                // --- 2e) Erase segments fully contained in other beams
-                foreach (var seg in segmentsToErase)
+                else
                 {
-                    if (seg != null && !seg.IsErased)
-                        seg.Erase();
+                    // If only one beam, all untrimmed edges are kept
+                    foreach (var edgeData in allTempEdges)
+                    {
+                        segmentsToKeep.Add(edgeData);
+                    }
                 }
 
                 var trimmedSegments = segmentsToKeep;
