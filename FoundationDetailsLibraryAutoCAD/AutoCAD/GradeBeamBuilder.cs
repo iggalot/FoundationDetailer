@@ -116,48 +116,44 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                     // --- 3) Erase the original untrimmed edge
                     edge.Erase();
 
+
                     //// --- 4) Check each segment against all OTHER beams
                     foreach (var seg in pieces)
                     {
-                    //    if (seg.NumberOfVertices < 2)
-                    //    {
-                    //        seg.Erase();
-                    //        continue;
-                    //    }
+                        bool erase = false;
+                        var midPt = GetMidPoint(seg);
 
-                    //    bool insideOtherBeam = false;
+                        foreach (var (otherHandle, otherDict) in beams)
+                        {
+                            if (!GradeBeamNOD.TryGetCenterline(context, tr, otherDict, out ObjectId otherClId))
+                                continue;
 
-                    //    foreach (var (otherHandle, otherDict) in beams)
-                    //    {
-                    //        if (!GradeBeamNOD.TryGetCenterline(context, tr, otherDict, out ObjectId otherClId))
-                    //            continue;
+                            // Skip same beam
+                            if (otherClId == edgeData.centerlineId)
+                                continue;
 
-                    //        // Skip current beam
-                    //        if (otherClId == edgeData.centerlineId)
-                    //            continue;
+                            var otherLeft = allTempEdges
+                                .FirstOrDefault(e => e.centerlineId == otherClId && e.isLeft).edge;
 
-                    //        var tempOtherLeft = allTempEdges.FirstOrDefault(e => e.centerlineId == otherClId && e.isLeft);
-                    //        Polyline otherLeft = tempOtherLeft.edge;  // safe access, tempOtherLeft is a tuple
+                            var otherRight = allTempEdges
+                                .FirstOrDefault(e => e.centerlineId == otherClId && !e.isLeft).edge;
 
-                    //        var tempOtherRight = allTempEdges.FirstOrDefault(e => e.centerlineId == otherClId && !e.isLeft);
-                    //        Polyline otherRight = tempOtherRight.edge;
+                            if (otherLeft == null || otherRight == null)
+                                continue;
 
+                            if (IsPointInsideOrOnBeam(midPt, otherLeft, otherRight))
+                            {
+                                erase = true;
+                                break;
+                            }
+                        }
 
-                    //        if (otherLeft == null || otherRight == null)
-                    //            continue;
-
-                    //        if (IsSegmentInsideBeam(seg, otherLeft, otherRight))
-                    //        {
-                    //            insideOtherBeam = true;
-                    //            break; // already inside one other beam → mark for erase
-                    //        }
-                    //    }
-
-                    //    if (insideOtherBeam)
-                    //        segmentsToErase.Add(seg);
-                    //    else
+                        if (erase)
+                            segmentsToErase.Add(seg);
+                        else
                             segmentsToKeep.Add((edgeData.centerlineId, edgeData.isLeft, seg));
                     }
+
                 }
 
                 // --- 5) Erase segments fully contained in other beams
@@ -166,8 +162,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                     if (seg != null && !seg.IsErased)
                         seg.Erase();
                 }
-
-
 
 
                 var trimmedSegments = segmentsToKeep;
@@ -201,36 +195,47 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             }
         }
 
-        private static bool IsSegmentInsideBeam(Polyline segment, Polyline leftEdge, Polyline rightEdge)
+        private static bool IsPointInsideBeam(
+            Point3d pt,
+            Polyline left,
+            Polyline right)
         {
-            if (segment == null || leftEdge == null || rightEdge == null)
-                return false;
+            var pL = left.GetClosestPointTo(pt, false);
+            var pR = right.GetClosestPointTo(pt, false);
 
-            // Use midpoint of segment for a quick test
-            Point3d mid = GetMidpoint(segment.GetPoint3dAt(0), segment.GetPoint3dAt(segment.NumberOfVertices - 1));
+            var vLR = pR - pL;
+            var vLP = pt - pL;
 
-            // Get bounding box X/Y ranges of left/right edges
-            var leftMin = leftEdge.GeometricExtents.MinPoint;
-            var leftMax = leftEdge.GeometricExtents.MaxPoint;
-            var rightMin = rightEdge.GeometricExtents.MinPoint;
-            var rightMax = rightEdge.GeometricExtents.MaxPoint;
+            double dot = vLP.DotProduct(vLR);
+            double lenSq = vLR.LengthSqrd;
 
-            double minX = Math.Min(leftMin.X, rightMin.X);
-            double maxX = Math.Max(leftMax.X, rightMax.X);
-            double minY = Math.Min(leftMin.Y, rightMin.Y);
-            double maxY = Math.Max(leftMax.Y, rightMax.Y);
-
-            // If midpoint is inside the bounding box of the edges, it’s inside the beam
-            return mid.X >= minX && mid.X <= maxX && mid.Y >= minY && mid.Y <= maxY;
+            // strictly between left and right edges
+            return dot > 0 && dot < lenSq;
         }
 
-        private static Point3d GetMidpoint(Point3d p1, Point3d p2)
+        private static bool IsPointInsideOrOnBeam(
+    Point3d pt,
+    Polyline left,
+    Polyline right,
+    double tol = 1e-6)
         {
-            return new Point3d(
-                (p1.X + p2.X) / 2.0,
-                (p1.Y + p2.Y) / 2.0,
-                (p1.Z + p2.Z) / 2.0
-            );
+            var pL = left.GetClosestPointTo(pt, false);
+            var pR = right.GetClosestPointTo(pt, false);
+
+            var vLR = pR - pL;
+            var vLP = pt - pL;
+
+            double dot = vLP.DotProduct(vLR);
+            double lenSq = vLR.LengthSqrd;
+
+            return dot >= -tol && dot <= lenSq + tol;
+        }
+
+
+
+        private static Point3d GetMidPoint(Polyline pl)
+        {
+            return pl.GetPointAtDist(pl.Length * 0.5);
         }
 
 
@@ -287,31 +292,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 
             return segs;
         }
-
-        private static bool IsPointNearPolyline(Point3d pt, Polyline pl, double tol)
-        {
-            for (int i = 0; i < pl.NumberOfVertices - 1; i++)
-            {
-                Point3d a = pl.GetPoint3dAt(i);
-                Point3d b = pl.GetPoint3dAt(i + 1);
-
-                Vector3d ab = b - a;
-                Vector3d ap = pt - a;
-
-                double t = ap.DotProduct(ab) / ab.LengthSqrd;
-                t = Math.Max(0.0, Math.Min(1.0, t)); // clamp t to segment
-
-                Point3d closest = a + ab * t;
-
-                if (pt.DistanceTo(closest) < tol)
-                    return true;
-            }
-
-            return false;
-        }
-
-
-
 
 
         #region --- Step 1 ---
@@ -682,7 +662,4 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 
         #endregion
     }
-
-
-
 }
