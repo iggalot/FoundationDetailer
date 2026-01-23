@@ -1,5 +1,4 @@
-﻿using Autodesk.AutoCAD.ApplicationServices;
-using Autodesk.AutoCAD.DatabaseServices;
+﻿using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
 using FoundationDetailsLibraryAutoCAD.AutoCAD.NOD;
 using FoundationDetailsLibraryAutoCAD.Data;
@@ -30,7 +29,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 if (beams.Count < 2) return;
 
                 // --- Remove old edges
-                // --- Remove old edges
                 foreach (var (handle, gbDict) in beams)
                 {
                     if (GradeBeamNOD.TryGetEdges(context, tr, gbDict,
@@ -42,13 +40,12 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                                 tr.GetObject(id, OpenMode.ForWrite).Erase();
                         }
 
-                        // IMPORTANT: pass HANDLE, not gbDict
+                        // Clear NOD entries
                         var dict = GradeBeamNOD.GetEdgesDictionary(tr, db, handle, true);
                         foreach (var k in NODCore.EnumerateDictionary(dict).Select(e => e.Key).ToList())
                             dict.Remove(k);
                     }
                 }
-
 
                 // ============================================================
                 // 1) CREATE ALL UNTRIMMED EDGES (GLOBAL SET)
@@ -82,77 +79,110 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 }
 
                 // ============================================================
-                // 2) TRIM AGAINST ALL OTHER EDGES
+                // 2) TRIM AGAINST ALL OTHER BEAMS (delete segments fully inside OTHER beams)
                 // ============================================================
-                var trimmedSegments = new List<(ObjectId clId, bool isLeft, Polyline seg)>();
+                var segmentsToKeep = new List<(ObjectId clId, bool isLeft, Polyline seg)>();
+                var segmentsToErase = new List<Polyline>();
 
                 foreach (var edgeData in allTempEdges)
                 {
                     var edge = edgeData.edge;
-                    var splitPts = new List<Point3d>();
 
-                    foreach (var other in allTempEdges)
+                    // --- 1) Collect intersections with all OTHER beams
+                    var intersections = new List<Point3d>();
+                    foreach (var (otherHandle, otherDict) in beams)
                     {
-                        if (other.edge == edge) continue;
-                        splitPts.AddRange(GetIntersectionPoints(edge, other.edge));
-                    }
-
-                    var pieces = SplitPolylineAtPoints(edge, splitPts, btr, tr);
-
-                    foreach (var seg in pieces)
-                    {
-                        if (seg.NumberOfVertices < 2)
+                        if (!GradeBeamNOD.TryGetCenterline(context, tr, otherDict, out ObjectId otherClId))
                             continue;
 
-                        Point3d mid = GetMidpoint(
-                            seg.GetPoint3dAt(0),
-                            seg.GetPoint3dAt(seg.NumberOfVertices - 1)
-                        );
+                        // Skip current beam
+                        if (otherClId == edgeData.centerlineId)
+                            continue;
 
-                        bool insideOther =
-                            allTempEdges.Any(o =>
-                                o.edge != edge &&
-                                IsPointNearPolyline(mid, o.edge, halfWidth * 0.45));
+                        var tempOtherLeftEdge = allTempEdges.FirstOrDefault(e => e.centerlineId == otherClId && e.isLeft);
+                        Polyline otherLeftEdge = tempOtherLeftEdge.edge;  // may be null if not found
 
-                        if (!insideOther)
-                            trimmedSegments.Add((edgeData.centerlineId, edgeData.isLeft, seg));
-                        else
-                            seg.Erase();
+                        var tempOtherRightEdge = allTempEdges.FirstOrDefault(e => e.centerlineId == otherClId && !e.isLeft);
+                        Polyline otherRightEdge = tempOtherRightEdge.edge; // may be null if not found
+
+
+                        if (otherLeftEdge != null) intersections.AddRange(GetIntersectionPoints(edge, otherLeftEdge));
+                        if (otherRightEdge != null) intersections.AddRange(GetIntersectionPoints(edge, otherRightEdge));
+                    }
+
+                    // --- 2) Split the edge at intersections
+                    var pieces = SplitPolylineAtPoints(edge, intersections, btr, tr);
+
+                    // --- 3) Erase the original untrimmed edge
+                    edge.Erase();
+
+                    //// --- 4) Check each segment against all OTHER beams
+                    foreach (var seg in pieces)
+                    {
+                    //    if (seg.NumberOfVertices < 2)
+                    //    {
+                    //        seg.Erase();
+                    //        continue;
+                    //    }
+
+                    //    bool insideOtherBeam = false;
+
+                    //    foreach (var (otherHandle, otherDict) in beams)
+                    //    {
+                    //        if (!GradeBeamNOD.TryGetCenterline(context, tr, otherDict, out ObjectId otherClId))
+                    //            continue;
+
+                    //        // Skip current beam
+                    //        if (otherClId == edgeData.centerlineId)
+                    //            continue;
+
+                    //        var tempOtherLeft = allTempEdges.FirstOrDefault(e => e.centerlineId == otherClId && e.isLeft);
+                    //        Polyline otherLeft = tempOtherLeft.edge;  // safe access, tempOtherLeft is a tuple
+
+                    //        var tempOtherRight = allTempEdges.FirstOrDefault(e => e.centerlineId == otherClId && !e.isLeft);
+                    //        Polyline otherRight = tempOtherRight.edge;
+
+
+                    //        if (otherLeft == null || otherRight == null)
+                    //            continue;
+
+                    //        if (IsSegmentInsideBeam(seg, otherLeft, otherRight))
+                    //        {
+                    //            insideOtherBeam = true;
+                    //            break; // already inside one other beam → mark for erase
+                    //        }
+                    //    }
+
+                    //    if (insideOtherBeam)
+                    //        segmentsToErase.Add(seg);
+                    //    else
+                            segmentsToKeep.Add((edgeData.centerlineId, edgeData.isLeft, seg));
                     }
                 }
 
-                // ============================================================
-                // 3) DELETE ALL UNTRIMMED EDGES
-                // ============================================================
-                foreach (var e in allTempEdges)
+                // --- 5) Erase segments fully contained in other beams
+                foreach (var seg in segmentsToErase)
                 {
-                    if (!e.edge.IsErased)
-                        e.edge.Erase();
+                    if (seg != null && !seg.IsErased)
+                        seg.Erase();
                 }
 
+
+
+
+                var trimmedSegments = segmentsToKeep;
+
                 // ============================================================
-                // 4) FILTER, JOIN + STORE PER BEAM
+                // 3) STORE PER BEAM
                 // ============================================================
                 foreach (var group in trimmedSegments.GroupBy(e => e.clId))
                 {
-                    // --- Separate left/right segments
                     var leftSegs = group.Where(g => g.isLeft).Select(g => g.seg).ToList();
                     var rightSegs = group.Where(g => !g.isLeft).Select(g => g.seg).ToList();
-
-                    // --- Filter out segments that lie inside OTHER grade beams
-                    string centerlineHandle = group.Key.Handle.ToString();
-                    leftSegs = FilterSegmentsOutsideOtherBeams(doc, leftSegs, beams, context, tr, centerlineHandle, 1e-6);
-                    rightSegs = FilterSegmentsOutsideOtherBeams(doc, rightSegs, beams, context, tr, centerlineHandle, 1e-6);
-
-
-                    // --- Optional: Join consecutive segments here if desired
-                    // var finalLeft = JoinEdgeSegments(context, leftSegs);
-                    // var finalRight = JoinEdgeSegments(context, rightSegs);
 
                     var finalLeft = leftSegs;
                     var finalRight = rightSegs;
 
-                    // --- Store filtered segments in NOD
                     GradeBeamNOD.StoreEdgeObjects(
                         context,
                         tr,
@@ -161,188 +191,45 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                         finalRight.Select(p => p.ObjectId).ToArray()
                     );
 
-                    // --- Debug
                     doc.Editor.WriteMessage(
                         $"\n[DEBUG] Beam {group.Key}: stored {finalLeft.Count} LEFT and {finalRight.Count} RIGHT edges."
                     );
                 }
-
 
                 tr.Commit();
                 doc.Editor.Regen();
             }
         }
 
-        /// <summary>
-        /// Returns only the segments that do NOT lie on or inside any other grade beam.
-        /// Deletes segments that intersect other beams.
-        /// </summary>
-        private static List<Polyline> FilterSegmentsOutsideOtherBeams(
-            Document doc,
-            List<Polyline> segments,
-            List<(string Handle, DBDictionary gbDict)> allBeams,
-            FoundationContext context,
-            Transaction tr,
-            string thisBeamHandle,
-            double tol = 1e-6)
+        private static bool IsSegmentInsideBeam(Polyline segment, Polyline leftEdge, Polyline rightEdge)
         {
-            var result = new List<Polyline>();
-            var tolerance = new Tolerance(tol, tol);
-
-            foreach (var seg in segments)
-            {
-                bool isInsideOther = false;
-
-                var start = seg.StartPoint;
-                var end = seg.EndPoint;
-
-                foreach (var beam in allBeams)
-                {
-                    if (beam.Handle == thisBeamHandle)
-                        continue;
-
-                    // Get the grade beam dictionary from the handle
-                    var gbDict = beam.gbDict; // You already stored the DBDictionary in allBeams
-
-                    if (!GradeBeamNOD.TryGetEdges(context, tr, gbDict, out ObjectId[] lefts, out ObjectId[] rights))
-                    {
-                        doc.Editor.WriteMessage($"\nCould not get edges for beam {beam.Handle} -- returned false");
-                        continue;
-                    } else
-                    {
-                        doc.Editor.WriteMessage($"\nRetrieved edges for beam {beam.Handle}");
-
-                    }
-
-                    foreach (var oid in lefts.Concat(rights))
-                        {
-                            var pl = tr.GetObject(oid, OpenMode.ForRead) as Polyline;
-                            if (pl == null) continue;
-
-                            for (int i = 0; i < pl.NumberOfVertices - 1; i++)
-                            {
-                                var a = pl.GetPoint3dAt(i);
-                                var b = pl.GetPoint3dAt(i + 1);
-
-                                if (PointOnLineSegment(start, a, b, tolerance) ||
-                                    PointOnLineSegment(end, a, b, tolerance))
-                                {
-                                    isInsideOther = true;
-                                    break;
-                                }
-                            }
-
-                            if (isInsideOther)
-                                break;
-                        }
-
-                    if (isInsideOther)
-                        break;
-                }
-
-                if (!isInsideOther)
-                {
-                    result.Add(seg);
-                }
-                else
-                {
-                    if (!seg.IsErased && seg.Database != null)
-                    {
-                        if (!seg.IsWriteEnabled)
-                            seg.UpgradeOpen();
-                        seg.Erase();
-                    }
-                }
-            }
-
-            return result;
-        }
-
-        /// <summary>
-        /// Checks if a point lies on a line segment (with tolerance).
-        /// </summary>
-        private static bool PointOnLineSegment(Point3d pt, Point3d a, Point3d b, Tolerance tol)
-        {
-            var ab = b - a;   // Vector from a to b
-            var ap = pt - a;  // Vector from a to point
-
-            double abLengthSq = ab.Length * ab.Length;  // manually square the length
-            if (abLengthSq < double.Epsilon)
-                return false; // degenerate segment
-
-            // Project point onto line
-            double t = ap.DotProduct(ab) / abLengthSq;
-
-            // t between 0..1 => point lies within segment
-            if (t < 0.0 - tol.EqualPoint || t > 1.0 + tol.EqualPoint)
+            if (segment == null || leftEdge == null || rightEdge == null)
                 return false;
 
-            // Closest point on segment
-            Point3d closest = a + ab * t;
+            // Use midpoint of segment for a quick test
+            Point3d mid = GetMidpoint(segment.GetPoint3dAt(0), segment.GetPoint3dAt(segment.NumberOfVertices - 1));
 
-            // Check distance from original point
-            return closest.DistanceTo(pt) <= tol.EqualPoint;
+            // Get bounding box X/Y ranges of left/right edges
+            var leftMin = leftEdge.GeometricExtents.MinPoint;
+            var leftMax = leftEdge.GeometricExtents.MaxPoint;
+            var rightMin = rightEdge.GeometricExtents.MinPoint;
+            var rightMax = rightEdge.GeometricExtents.MaxPoint;
+
+            double minX = Math.Min(leftMin.X, rightMin.X);
+            double maxX = Math.Max(leftMax.X, rightMax.X);
+            double minY = Math.Min(leftMin.Y, rightMin.Y);
+            double maxY = Math.Max(leftMax.Y, rightMax.Y);
+
+            // If midpoint is inside the bounding box of the edges, it’s inside the beam
+            return mid.X >= minX && mid.X <= maxX && mid.Y >= minY && mid.Y <= maxY;
         }
 
-
-
-        /// <summary>
-        /// Determines if a given polyline segment lies inside another polyline (grade beam edge),
-        /// using a simple midpoint test and tolerance.
-        /// </summary>
-        /// <param name="seg">The segment to test (typically a 2-vertex polyline)</param>
-        /// <param name="pl">The polyline representing another grade beam edge</param>
-        /// <param name="tol">Tolerance distance for considering "inside"</param>
-        /// <returns>True if the segment is inside the polyline, false otherwise</returns>
-        private static bool IsPolylineSegmentInside(Polyline seg, Polyline pl, double tol)
-        {
-            if (seg == null || pl == null || seg.NumberOfVertices < 2)
-                return false;
-
-            // Compute midpoint of the segment
-            var start = seg.GetPoint3dAt(0);
-            var end = seg.GetPoint3dAt(1);
-            var mid = new Point3d(
-                (start.X + end.X) / 2.0,
-                (start.Y + end.Y) / 2.0,
-                (start.Z + end.Z) / 2.0);
-
-            // Check distance from midpoint to each segment of the polyline
-            for (int i = 0; i < pl.NumberOfVertices - 1; i++)
-            {
-                var a = pl.GetPoint3dAt(i);
-                var b = pl.GetPoint3dAt(i + 1);
-
-                // Vector from a to b
-                var ab = b - a;
-
-                // Manually compute squared length
-                double abLenSq = ab.X * ab.X + ab.Y * ab.Y + ab.Z * ab.Z;
-                if (abLenSq < 1e-12) continue; // avoid zero-length segment
-
-                // Project midpoint onto segment vector
-                double t = ((mid - a).DotProduct(ab)) / abLenSq;
-                t = Math.Max(0.0, Math.Min(1.0, t)); // clamp to segment
-                var closest = a + (ab * t);
-
-                if (closest.DistanceTo(mid) <= tol)
-                    return true;
-            }
-
-            return false;
-        }
-
-
-
-
-
-
-        private static Point3d GetMidpoint(Point3d a, Point3d b)
+        private static Point3d GetMidpoint(Point3d p1, Point3d p2)
         {
             return new Point3d(
-                (a.X + b.X) * 0.5,
-                (a.Y + b.Y) * 0.5,
-                (a.Z + b.Z) * 0.5
+                (p1.X + p2.X) / 2.0,
+                (p1.Y + p2.Y) / 2.0,
+                (p1.Z + p2.Z) / 2.0
             );
         }
 
