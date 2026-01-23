@@ -653,45 +653,48 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         }
 
         public static bool TryGetEdges(
-            FoundationContext context,
-            Transaction tr,
-            DBDictionary gradeBeamDict,
-            out ObjectId[] leftEdges,
-            out ObjectId[] rightEdges
-            )
+                    FoundationContext context,
+                    Transaction tr,
+                    DBDictionary gradeBeamDict,
+                    out ObjectId[] leftEdges,
+                    out ObjectId[] rightEdges)
         {
             leftEdges = Array.Empty<ObjectId>();
             rightEdges = Array.Empty<ObjectId>();
 
-            if (context == null)
-                throw new ArgumentNullException(nameof(context));
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (tr == null || gradeBeamDict == null) return false;
 
-            Document doc = context.Document;
-            Database db = doc.Database;
-            if (doc == null || db == null) return false;
-
-            if (tr == null || gradeBeamDict == null || db == null)
-                return false;
-
-            if (!NODCore.TryGetNestedSubDictionary(tr, gradeBeamDict, out var edgesDict, NODCore.KEY_EDGES_SUBDICT))
+            if (!NODCore.TryGetNestedSubDictionary(tr, gradeBeamDict, out DBDictionary edgesDict, NODCore.KEY_EDGES_SUBDICT))
                 return false;
 
             var leftList = new List<ObjectId>();
             var rightList = new List<ObjectId>();
 
-            foreach (var (key, oid) in NODCore.EnumerateDictionary(edgesDict))
+            foreach (DBDictionaryEntry entry in edgesDict)
             {
-                if (oid == null || oid.IsNull || oid.IsErased)
+                if (entry.Value.IsNull || entry.Value.IsErased) continue;
+
+                // Get the Xrecord
+                Xrecord xrec = tr.GetObject(entry.Value, OpenMode.ForRead) as Xrecord;
+                if (xrec?.Data == null) continue;
+
+                TypedValue[] tvs = xrec.Data.AsArray();
+                if (tvs.Length == 0) continue;
+
+                // Expecting a single TypedValue containing the handle string
+                string handleStr = tvs[0].Value as string;
+                if (string.IsNullOrWhiteSpace(handleStr)) continue;
+
+                if (!NODCore.TryGetObjectIdFromHandleString(context, gradeBeamDict.Database, handleStr, out ObjectId oid))
                     continue;
 
-                // Convert handle string to ObjectId
-                if (!NODCore.TryGetObjectIdFromHandleString(context, db, key, out ObjectId objId))
-                    continue;
+                if (oid.IsNull || oid.IsErased) continue;
 
-                if (key.StartsWith("LEFT_", StringComparison.OrdinalIgnoreCase))
-                    leftList.Add(objId);
-                else if (key.StartsWith("RIGHT_", StringComparison.OrdinalIgnoreCase))
-                    rightList.Add(objId);
+                if (entry.Key.StartsWith("LEFT_", StringComparison.OrdinalIgnoreCase))
+                    leftList.Add(oid);
+                else if (entry.Key.StartsWith("RIGHT_", StringComparison.OrdinalIgnoreCase))
+                    rightList.Add(oid);
             }
 
             leftEdges = leftList.ToArray();

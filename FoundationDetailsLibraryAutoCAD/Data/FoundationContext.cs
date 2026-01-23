@@ -12,7 +12,7 @@ namespace FoundationDetailsLibraryAutoCAD.Data
         public Document Document { get; }
         public FoundationModel Model { get; }
 
-        private FoundationContext(Document doc)
+        public FoundationContext(Document doc)
         {
             Document = doc;
             Model = new FoundationModel();
