@@ -41,88 +41,63 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             }
         }
 
-        public static IEnumerable<ObjectId> EnumerateGradeBeamEdges(
-    FoundationContext context,
-    Transaction tr,
-    DBDictionary gradeBeamDict)
-        {
-            if (context == null || tr == null || gradeBeamDict == null)
-                yield break;
-
-            if (!gradeBeamDict.Contains(NODCore.KEY_EDGES_SUBDICT))
-                yield break;
-
-            var edgesDict = tr.GetObject(gradeBeamDict.GetAt(NODCore.KEY_EDGES_SUBDICT), OpenMode.ForRead) as DBDictionary;
-            if (edgesDict == null)
-                yield break;
-
-            foreach (DBDictionaryEntry entry in edgesDict)
-            {
-                if (entry.Value is ObjectId oid && oid.IsValid && !oid.IsNull && !oid.IsErased)
-                    yield return oid;
-            }
-        }
-
-        public static IEnumerable<ObjectId> EnumerateAllGradeBeamCenterlines(
-    FoundationContext context,
-    Transaction tr)
+        public static IEnumerable<ObjectId> EnumerateGradeBeamEdges(FoundationContext context, Transaction tr)
         {
             if (context == null || tr == null)
                 yield break;
 
-            foreach (var (handle, dict) in EnumerateGradeBeams(context, tr))
+            // Enumerate all grade beams first
+            foreach (var (handle, gbDict) in EnumerateGradeBeams(context, tr))
             {
-                if (TryGetCenterline(context, tr, dict, out var centerlineId))
+                if (!gbDict.Contains(NODCore.KEY_EDGES_SUBDICT))
+                    continue;
+
+                var edgesDict = tr.GetObject(gbDict.GetAt(NODCore.KEY_EDGES_SUBDICT), OpenMode.ForRead) as DBDictionary;
+                if (edgesDict == null)
+                    continue;
+
+                foreach (DBDictionaryEntry entry in edgesDict)
+                {
+                    if (entry.Value is ObjectId oid && oid.IsValid && !oid.IsNull && !oid.IsErased)
+                        yield return oid;
+                }
+            }
+        }
+
+        public static IEnumerable<ObjectId> EnumerateAllGradeBeamCenterlines(FoundationContext context, Transaction tr)
+        {
+            if (context == null || tr == null)
+                yield break;
+
+            // Enumerate all grade beams first
+            foreach (var (_, gbDict) in EnumerateGradeBeams(context, tr))
+            {
+                if (TryGetCenterline(context, tr, gbDict, out ObjectId centerlineId))
                     yield return centerlineId;
             }
         }
 
-
-
-
-
-        //public static void CreateStructure(...)
-        //public static bool TryGetHandleKeys(...)
-        //public static List<ObjectId> GetAllValidObjectIds(...)
-        //public static void EraseEntry(...)
-        //public static void ClearAll(...)
-
-        public static bool TryGetGradeBeamPolylines(
-        FoundationContext context,
-        out List<Polyline> gradeBeams)
+        /// <summary>
+        /// Returns the DBDictionary for a specific grade beam handle (key), or null if not found.
+        /// </summary>
+        public static DBDictionary GetGradeBeamDictionaryByHandle(
+            FoundationContext context,
+            Transaction tr,
+            string gradeBeamHandle)
         {
-            gradeBeams = new List<Polyline>();
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+            if (string.IsNullOrWhiteSpace(gradeBeamHandle)) return null;
 
-            if (context == null)
-                return false;
-
-            var doc = context.Document;
-            var db = doc.Database;
-
-            using (doc.LockDocument())
-            using (var tr = db.TransactionManager.StartTransaction())
+            // Enumerate all grade beams
+            foreach (var (handle, gbDict) in EnumerateGradeBeams(context, tr))
             {
-                if (!TryGetAllGradeBeamHandleKeys(context, tr, out var handles))
-                    return false;
-
-                foreach (string handleStr in handles)
-                {
-                    if (!NODCore.TryGetObjectIdFromHandleString(
-                            context, db, handleStr, out ObjectId oid))
-                        continue;
-
-                    if (oid.IsNull || oid.IsErased || !oid.IsValid)
-                        continue;
-
-                    var pl = tr.GetObject(oid, OpenMode.ForRead, false) as Polyline;
-                    if (pl != null)
-                        gradeBeams.Add(pl);
-                }
-
-                return gradeBeams.Count > 0;
+                if (handle.Equals(gradeBeamHandle, StringComparison.OrdinalIgnoreCase))
+                    return gbDict;
             }
-        }
 
+            return null; // Not found
+        }
 
         public static bool TryGetAllGradeBeamHandleKeys(
     FoundationContext context,
@@ -156,32 +131,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 handleStrings.Add(entry.Key);
 
             return handleStrings.Count > 0;
-        }
-
-        public static List<ObjectId> GetAllValidGradeBeamObjectIdsFromSubDictionary(
-    FoundationContext context,
-    Transaction tr,
-    Database db,
-    string subDictKey)
-        {
-            var result = new List<ObjectId>();
-
-            // GradeBeam-specific enumeration
-            if (!TryGetAllGradeBeamHandleKeys(context, tr, out var handles))
-                return result;
-
-            foreach (var handleStr in handles)
-            {
-                if (!NODCore.TryGetObjectIdFromHandleString(context, db, handleStr, out ObjectId oid))
-                    continue;
-
-                if (oid.IsNull || oid.IsErased || !oid.IsValid)
-                    continue;
-
-                result.Add(oid);
-            }
-
-            return result;
         }
 
         /// <summary>
@@ -227,56 +176,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         }
 
 
-        public static void CreateGradeBeamNODStructure(
-            FoundationContext context,
-            Transaction tr,
-            Database db,
-            string gradeBeamHandle,
-            ObjectId centerlineId)
-        {
-            if (tr == null || db == null || string.IsNullOrEmpty(gradeBeamHandle))
-                throw new ArgumentNullException();
-
-            string centerlineHandle = centerlineId.Handle.ToString();
-
-            // Open the top-level NOD dictionary
-            DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
-
-            // Use nested helper to get the handle-level dictionary
-            DBDictionary handleDict = NODCore.GetOrCreateNestedSubDictionary(
-                tr,
-                nod,
-                NODCore.ROOT,
-                NODCore.KEY_GRADEBEAM_SUBDICT,
-                gradeBeamHandle
-            );
-
-            // Attach the existing centerline entity as an Xrecord
-            if (!handleDict.Contains(NODCore.KEY_CENTERLINE))
-            {
-                Xrecord xrec = new Xrecord
-                {
-                    Data = new ResultBuffer(
-                        new TypedValue((int)DxfCode.Text, centerlineHandle))
-                };
-
-                handleDict.SetAt(NODCore.KEY_CENTERLINE, xrec);
-                tr.AddNewlyCreatedDBObject(xrec, true);
-            }
-
-            // Ensure FD_EDGES subdictionary exists (nested helper can be used here too)
-            NODCore.GetOrCreateNestedSubDictionary(
-                tr,
-                handleDict,
-                NODCore.KEY_EDGES_SUBDICT
-            );
-
-            // Add metadata Xrecord for future use
-            NODCore.GetOrCreateMetadataXrecord(tr, handleDict, NODCore.KEY_METADATA_SUBDICT);
-        }
-
-
-
         internal static void EraseGradeBeamEntry(
     Transaction tr,
     Database db,
@@ -315,62 +214,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         }
 
         // GradeBeamNOD
-        public static bool TryGetCenterlineObjectId(
-            FoundationContext context,
-            Transaction tr,
-            string gradeBeamHandle,
-            out ObjectId centerlineId)
-        {
-            centerlineId = ObjectId.Null;
-
-            if (context == null || tr == null || string.IsNullOrWhiteSpace(gradeBeamHandle))
-                return false;
-
-            var db = context.Document.Database;
-
-            var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-            if (!nod.Contains(NODCore.ROOT))
-                return false;
-
-            var root = (DBDictionary)tr.GetObject(nod.GetAt(NODCore.ROOT), OpenMode.ForRead);
-            if (!root.Contains(NODCore.KEY_GRADEBEAM_SUBDICT))
-                return false;
-
-            var gbRoot = (DBDictionary)tr.GetObject(
-                root.GetAt(NODCore.KEY_GRADEBEAM_SUBDICT),
-                OpenMode.ForRead);
-
-            if (!gbRoot.Contains(gradeBeamHandle))
-                return false;
-
-            var gbDict = (DBDictionary)tr.GetObject(
-                gbRoot.GetAt(gradeBeamHandle),
-                OpenMode.ForRead);
-
-            if (!gbDict.Contains(NODCore.KEY_CENTERLINE))
-                return false;
-
-            var xr = tr.GetObject(
-                gbDict.GetAt(NODCore.KEY_CENTERLINE),
-                OpenMode.ForRead) as Xrecord;
-
-            if (xr?.Data == null)
-                return false;
-
-            foreach (TypedValue tv in xr.Data)
-            {
-                if (tv.TypeCode == (int)DxfCode.Text &&
-                    NODCore.TryGetObjectIdFromHandleString(
-                        context, db, tv.Value.ToString(), out centerlineId))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        // GradeBeamNOD
         public static DBDictionary GetEdgesDictionary(
             Transaction tr,
             Database db,
@@ -392,29 +235,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 OpenMode.ForWrite);
         }
 
-        // GradeBeamNOD
-        public static void ClearEdges(
-            Transaction tr,
-            Database db,
-            string gradeBeamHandle)
-        {
-            var edges = GetEdgesDictionary(tr, db, gradeBeamHandle, true);
-
-            var keys = NODCore.EnumerateDictionary(edges)
-                              .Select(e => e.Key)
-                              .ToList();
-
-            foreach (var key in keys)
-            {
-                try
-                {
-                    var obj = tr.GetObject(edges.GetAt(key), OpenMode.ForWrite);
-                    obj.Erase();
-                }
-                catch { }
-            }
-        }
-
         public static bool TryGetCenterline(
             FoundationContext context,
             Transaction tr,
@@ -426,62 +246,90 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             if (context == null || tr == null || gradeBeamDict == null)
                 return false;
 
-            if (!gradeBeamDict.Contains(NODCore.KEY_CENTERLINE))
-                return false;
-
-            var xrecObj = gradeBeamDict.GetAt(NODCore.KEY_CENTERLINE);
-            if (xrecObj.IsNull || xrecObj.IsErased)
-                return false;
-
-            Xrecord xrec;
-            try
+            // Use the new unified function to get only the centerline
+            if (TryGetGradeBeamObjects(context, tr, gradeBeamDict, out var polylines, includeCenterline: true, includeEdges: false))
             {
-                xrec = tr.GetObject(xrecObj, OpenMode.ForRead) as Xrecord;
-            }
-            catch (Autodesk.AutoCAD.Runtime.Exception)
-            {
-                return false;
+                // There should typically be only one centerline
+                if (polylines.Count > 0)
+                {
+                    centerlineId = polylines[0].ObjectId;
+                    return true;
+                }
             }
 
-            if (xrec?.Data == null)
+            return false;
+        }
+
+        /// <summary>
+        /// Retrieves grade beam polylines (centerline, edges, or both) from a grade beam dictionary.
+        /// </summary>
+        public static bool TryGetGradeBeamObjects(
+            FoundationContext context,
+            Transaction tr,
+            DBDictionary gradeBeamDict,
+            out List<Polyline> polylines,
+            bool includeCenterline = true,
+            bool includeEdges = true)
+        {
+            polylines = new List<Polyline>();
+
+            if (context == null || tr == null || gradeBeamDict == null)
                 return false;
 
             var db = context.Document.Database;
 
-            foreach (TypedValue tv in xrec.Data)
+            // --- Centerline
+            if (includeCenterline && gradeBeamDict.Contains(NODCore.KEY_CENTERLINE))
             {
-                if (tv.TypeCode != (int)DxfCode.Text)
-                    continue;
-
-                var handleStr = tv.Value as string;
-                if (string.IsNullOrWhiteSpace(handleStr))
-                    continue;
-
-                if (!NODCore.TryGetObjectIdFromHandleString(
-                        context, db, handleStr, out var oid))
-                    continue;
-
-                if (oid.IsNull || !oid.IsValid)
-                    continue;
-
-                DBObject obj;
-                try
+                var xrecObj = gradeBeamDict.GetAt(NODCore.KEY_CENTERLINE);
+                if (!xrecObj.IsNull && !xrecObj.IsErased)
                 {
-                    obj = tr.GetObject(oid, OpenMode.ForRead, false);
-                }
-                catch (Autodesk.AutoCAD.Runtime.Exception)
-                {
-                    continue;
-                }
+                    Xrecord xrec = null;
+                    try
+                    {
+                        xrec = tr.GetObject(xrecObj, OpenMode.ForRead) as Xrecord;
+                    }
+                    catch (Autodesk.AutoCAD.Runtime.Exception) { }
 
-                if (obj == null || obj.IsErased)
-                    continue;
+                    if (xrec?.Data != null)
+                    {
+                        foreach (TypedValue tv in xrec.Data)
+                        {
+                            if (tv.TypeCode != (int)DxfCode.Text) continue;
 
-                centerlineId = oid;
-                return true;
+                            string handleStr = tv.Value as string;
+                            if (string.IsNullOrWhiteSpace(handleStr)) continue;
+
+                            if (!NODCore.TryGetObjectIdFromHandleString(context, db, handleStr, out var oid))
+                                continue;
+
+                            if (oid.IsNull || !oid.IsValid || oid.IsErased) continue;
+
+                            var obj = tr.GetObject(oid, OpenMode.ForRead, false) as Polyline;
+                            if (obj != null) polylines.Add(obj);
+                        }
+                    }
+                }
             }
 
-            return false;
+            // --- Edges
+            if (includeEdges && gradeBeamDict.Contains(NODCore.KEY_EDGES_SUBDICT))
+            {
+                var edgesDict = tr.GetObject(gradeBeamDict.GetAt(NODCore.KEY_EDGES_SUBDICT), OpenMode.ForRead) as DBDictionary;
+                if (edgesDict != null)
+                {
+                    foreach (DBDictionaryEntry entry in edgesDict)
+                    {
+                        if (entry.Value is ObjectId oid && oid.IsValid && !oid.IsNull && !oid.IsErased)
+                        {
+                            var obj = tr.GetObject(oid, OpenMode.ForRead, false) as Polyline;
+                            if (obj != null) polylines.Add(obj);
+                        }
+                    }
+                }
+            }
+
+            return polylines.Count > 0;
         }
 
 
@@ -557,21 +405,38 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         }
 
 
-
-        public static bool HasEdges(Transaction tr, DBDictionary gradeBeamDict)
+        /// <summary>
+        /// Returns true if the specified grade beam has an edges dictionary in the NOD tree.
+        /// </summary>
+        public static bool HasEdgesDictionary(Transaction tr, Database db, string gradeBeamHandle)
         {
-            if (tr == null || gradeBeamDict == null)
-                return false;
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+            if (db == null) throw new ArgumentNullException(nameof(db));
+            if (string.IsNullOrWhiteSpace(gradeBeamHandle)) return false;
 
-            if (!NODCore.TryGetNestedSubDictionary(
-                    tr,
-                    gradeBeamDict,
-                    out var edgesDict,
-                    NODCore.KEY_EDGES_SUBDICT))
-                return false;
+            try
+            {
+                // Open the root dictionary
+                var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+                if (!nod.Contains(NODCore.ROOT)) return false;
 
-            return edgesDict.Count > 0;
+                var root = (DBDictionary)tr.GetObject(nod.GetAt(NODCore.ROOT), OpenMode.ForRead);
+                if (!root.Contains(NODCore.KEY_GRADEBEAM_SUBDICT)) return false;
+
+                var gbRoot = (DBDictionary)tr.GetObject(root.GetAt(NODCore.KEY_GRADEBEAM_SUBDICT), OpenMode.ForRead);
+                if (!gbRoot.Contains(gradeBeamHandle)) return false;
+
+                var gbDict = (DBDictionary)tr.GetObject(gbRoot.GetAt(gradeBeamHandle), OpenMode.ForRead);
+
+                // Return true if the edges sub-dictionary exists
+                return gbDict.Contains(NODCore.KEY_EDGES_SUBDICT);
+            }
+            catch
+            {
+                return false;
+            }
         }
+
 
 
 

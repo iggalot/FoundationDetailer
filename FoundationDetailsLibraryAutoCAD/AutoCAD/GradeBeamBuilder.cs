@@ -1,5 +1,6 @@
 ﻿using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
+using FoundationDetailer.AutoCAD;
 using FoundationDetailsLibraryAutoCAD.AutoCAD.NOD;
 using FoundationDetailsLibraryAutoCAD.Data;
 using System;
@@ -28,28 +29,11 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 var beams = GradeBeamNOD.EnumerateGradeBeams(context, tr).ToList();
                 if (beams.Count < 2) return;
 
-                // --- Remove old edges
-                foreach (var (handle, gbDict) in beams)
-                {
-                    if (GradeBeamNOD.TryGetEdges(context, tr, gbDict,
-                        out ObjectId[] lefts, out ObjectId[] rights))
-                    {
-                        foreach (var id in lefts.Concat(rights))
-                        {
-                            if (id.IsValid && !id.IsErased)
-                                tr.GetObject(id, OpenMode.ForWrite).Erase();
-                        }
+                // --- 0) DELETE ALL EXISTING GRADE BEAM EDGES BEFORE REBUILDING
+                int edgesDeleted = GradeBeamManager.DeleteAllGradeBeamEdges(context);
+                doc.Editor.WriteMessage($"\n[DEBUG] Deleted {edgesDeleted} existing grade beam edges before rebuilding.");
 
-                        // Clear NOD entries
-                        var dict = GradeBeamNOD.GetEdgesDictionary(tr, db, handle, true);
-                        foreach (var k in NODCore.EnumerateDictionary(dict).Select(e => e.Key).ToList())
-                            dict.Remove(k);
-                    }
-                }
-
-                // ============================================================
-                // 1) CREATE ALL UNTRIMMED EDGES (GLOBAL SET)
-                // ============================================================
+                // --- 1) CREATE ALL UNTRIMMED EDGES (GLOBAL SET)
                 var allTempEdges = new List<(ObjectId centerlineId, bool isLeft, Polyline edge)>();
 
                 foreach (var (_, gbDict) in beams)
@@ -78,9 +62,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                     }
                 }
 
-                // ============================================================
-                // 2) TRIM AGAINST ALL OTHER BEAMS (delete segments fully inside OTHER beams)
-                // ============================================================
+                // --- 2) TRIM AGAINST ALL OTHER BEAMS (delete segments fully inside OTHER beams)
                 var segmentsToKeep = new List<(ObjectId clId, bool isLeft, Polyline seg)>();
                 var segmentsToErase = new List<Polyline>();
 
@@ -88,7 +70,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 {
                     var edge = edgeData.edge;
 
-                    // --- 1) Collect intersections with all OTHER beams
+                    // --- 2a) Collect intersections with all OTHER beams
                     var intersections = new List<Point3d>();
                     foreach (var (otherHandle, otherDict) in beams)
                     {
@@ -99,25 +81,20 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                         if (otherClId == edgeData.centerlineId)
                             continue;
 
-                        var tempOtherLeftEdge = allTempEdges.FirstOrDefault(e => e.centerlineId == otherClId && e.isLeft);
-                        Polyline otherLeftEdge = tempOtherLeftEdge.edge;  // may be null if not found
+                        var otherLeft = allTempEdges.FirstOrDefault(e => e.centerlineId == otherClId && e.isLeft).edge;
+                        var otherRight = allTempEdges.FirstOrDefault(e => e.centerlineId == otherClId && !e.isLeft).edge;
 
-                        var tempOtherRightEdge = allTempEdges.FirstOrDefault(e => e.centerlineId == otherClId && !e.isLeft);
-                        Polyline otherRightEdge = tempOtherRightEdge.edge; // may be null if not found
-
-
-                        if (otherLeftEdge != null) intersections.AddRange(GetIntersectionPoints(edge, otherLeftEdge));
-                        if (otherRightEdge != null) intersections.AddRange(GetIntersectionPoints(edge, otherRightEdge));
+                        if (otherLeft != null) intersections.AddRange(GetIntersectionPoints(edge, otherLeft));
+                        if (otherRight != null) intersections.AddRange(GetIntersectionPoints(edge, otherRight));
                     }
 
-                    // --- 2) Split the edge at intersections
+                    // --- 2b) Split the edge at intersections
                     var pieces = SplitPolylineAtPoints(edge, intersections, btr, tr);
 
-                    // --- 3) Erase the original untrimmed edge
+                    // --- 2c) Erase the original untrimmed edge
                     edge.Erase();
 
-
-                    //// --- 4) Check each segment against all OTHER beams
+                    // --- 2d) Check each segment against all OTHER beams
                     foreach (var seg in pieces)
                     {
                         bool erase = false;
@@ -132,11 +109,8 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                             if (otherClId == edgeData.centerlineId)
                                 continue;
 
-                            var otherLeft = allTempEdges
-                                .FirstOrDefault(e => e.centerlineId == otherClId && e.isLeft).edge;
-
-                            var otherRight = allTempEdges
-                                .FirstOrDefault(e => e.centerlineId == otherClId && !e.isLeft).edge;
+                            var otherLeft = allTempEdges.FirstOrDefault(e => e.centerlineId == otherClId && e.isLeft).edge;
+                            var otherRight = allTempEdges.FirstOrDefault(e => e.centerlineId == otherClId && !e.isLeft).edge;
 
                             if (otherLeft == null || otherRight == null)
                                 continue;
@@ -153,40 +127,33 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                         else
                             segmentsToKeep.Add((edgeData.centerlineId, edgeData.isLeft, seg));
                     }
-
                 }
 
-                // --- 5) Erase segments fully contained in other beams
+                // --- 2e) Erase segments fully contained in other beams
                 foreach (var seg in segmentsToErase)
                 {
                     if (seg != null && !seg.IsErased)
                         seg.Erase();
                 }
 
-
                 var trimmedSegments = segmentsToKeep;
 
-                // ============================================================
-                // 3) STORE PER BEAM
-                // ============================================================
+                // --- 3) STORE PER BEAM
                 foreach (var group in trimmedSegments.GroupBy(e => e.clId))
                 {
                     var leftSegs = group.Where(g => g.isLeft).Select(g => g.seg).ToList();
                     var rightSegs = group.Where(g => !g.isLeft).Select(g => g.seg).ToList();
 
-                    var finalLeft = leftSegs;
-                    var finalRight = rightSegs;
-
                     GradeBeamNOD.StoreEdgeObjects(
                         context,
                         tr,
                         group.Key,
-                        finalLeft.Select(p => p.ObjectId).ToArray(),
-                        finalRight.Select(p => p.ObjectId).ToArray()
+                        leftSegs.Select(p => p.ObjectId).ToArray(),
+                        rightSegs.Select(p => p.ObjectId).ToArray()
                     );
 
                     doc.Editor.WriteMessage(
-                        $"\n[DEBUG] Beam {group.Key}: stored {finalLeft.Count} LEFT and {finalRight.Count} RIGHT edges."
+                        $"\n[DEBUG] Beam {group.Key}: stored {leftSegs.Count} LEFT and {rightSegs.Count} RIGHT edges."
                     );
                 }
 
