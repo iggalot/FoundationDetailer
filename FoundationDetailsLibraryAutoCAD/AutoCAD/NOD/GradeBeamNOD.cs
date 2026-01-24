@@ -598,6 +598,75 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             return leftEdges.Length > 0 || rightEdges.Length > 0;
         }
 
+        internal static bool TryResolveOwningGradeBeam(
+    FoundationContext context,
+    Transaction tr,
+    ObjectId selectedId,
+    out string gradeBeamHandle,
+    out bool isCenterline,
+    out bool isEdge)
+        {
+            gradeBeamHandle = null;
+            isCenterline = false;
+            isEdge = false;
+
+            foreach (var (handle, gbDict) in GradeBeamNOD.EnumerateGradeBeams(context, tr))
+            {
+                // --- Check centerline
+                if (GradeBeamNOD.TryGetCenterline(context, tr, gbDict, out ObjectId clId) &&
+                    !clId.IsNull &&
+                    clId == selectedId)
+                {
+                    gradeBeamHandle = handle;
+                    isCenterline = true;
+                    return true;
+                }
+
+                // --- Check edges
+                if (!GradeBeamNOD.HasEdgesDictionary(tr, context.Document.Database, handle))
+                    continue;
+
+                var edgesDict = GradeBeamNOD.GetEdgesDictionary(
+                    tr,
+                    context.Document.Database,
+                    handle,
+                    forWrite: false);
+
+                foreach (var (_, xrecId) in NODCore.EnumerateDictionary(edgesDict))
+                {
+                    if (xrecId.IsNull || xrecId.IsErased)
+                        continue;
+
+                    var xrec = tr.GetObject(xrecId, OpenMode.ForRead) as Xrecord;
+                    if (xrec?.Data == null)
+                        continue;
+
+                    foreach (TypedValue tv in xrec.Data)
+                    {
+                        if (tv.TypeCode != (int)DxfCode.Text)
+                            continue;
+
+                        if (!NODCore.TryGetObjectIdFromHandleString(
+                                context,
+                                context.Document.Database,
+                                tv.Value as string,
+                                out ObjectId edgeId))
+                            continue;
+
+                        if (edgeId == selectedId)
+                        {
+                            gradeBeamHandle = handle;
+                            isEdge = true;
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            return false;
+        }
+
+
 
     }
 }
