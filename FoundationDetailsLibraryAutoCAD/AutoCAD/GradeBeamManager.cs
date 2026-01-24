@@ -17,8 +17,8 @@ namespace FoundationDetailer.AutoCAD
 {
     public class GradeBeamManager
     {
-        private const double DEFAULT_BEAM_WIDTH_IN = 10.0;
-        private const double INCHES_TO_DRAWING_UNITS = 1.0 / 12.0;
+        public const double DEFAULT_BEAM_WIDTH_IN = 10.0;
+        public const double INCHES_TO_DRAWING_UNITS = 1.0 / 12.0;
 
 
         // Track grade beams per document
@@ -378,7 +378,7 @@ namespace FoundationDetailer.AutoCAD
             }
 
             // Get the edges dictionary (assumes already exists)
-            var edgesDict = GradeBeamNOD.GetEdgesDictionary(tr, db, gradeBeamKey, forWrite: true);
+            var edgesDict = GradeBeamNOD.GetEdgesDictionary(tr, db, gradeBeamKey, forWrite: true, ed);
 
             // Enumerate all entries
             foreach (var (edgeKey, xrecObj) in NODCore.EnumerateDictionary(edgesDict).ToList())
@@ -669,7 +669,7 @@ namespace FoundationDetailer.AutoCAD
         /// </summary>
         public void GenerateEdgesForAllGradeBeams(
             FoundationContext context,
-            double halfWidth)
+            double halfWidth = DEFAULT_BEAM_WIDTH_IN)
         {
             GradeBeamBuilder.CreateGradeBeams(context, halfWidth);
             return;

@@ -218,22 +218,52 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             Transaction tr,
             Database db,
             string gradeBeamHandle,
-            bool forWrite)
+            bool forWrite,
+            Editor ed = null)  // optional editor for debug messages
         {
+            // Open root dictionary
             var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+            if (!nod.Contains(NODCore.ROOT))
+            {
+                ed?.WriteMessage("\n[DEBUG] Root dictionary not found.");
+                return null;
+            }
             var root = (DBDictionary)tr.GetObject(nod.GetAt(NODCore.ROOT), OpenMode.ForRead);
-            var gbRoot = (DBDictionary)tr.GetObject(
-                root.GetAt(NODCore.KEY_GRADEBEAM_SUBDICT),
-                OpenMode.ForRead);
 
+            // Open grade beam container
+            if (!root.Contains(NODCore.KEY_GRADEBEAM_SUBDICT))
+            {
+                ed?.WriteMessage("\n[DEBUG] GradeBeam subdictionary not found.");
+                return null;
+            }
+            var gbRoot = (DBDictionary)tr.GetObject(root.GetAt(NODCore.KEY_GRADEBEAM_SUBDICT), OpenMode.ForRead);
+
+            // Open the individual grade beam subdictionary
+            if (!gbRoot.Contains(gradeBeamHandle))
+            {
+                ed?.WriteMessage($"\n[DEBUG] Grade beam subdictionary '{gradeBeamHandle}' not found.");
+                return null;
+            }
             var gbDict = (DBDictionary)tr.GetObject(
                 gbRoot.GetAt(gradeBeamHandle),
                 forWrite ? OpenMode.ForWrite : OpenMode.ForRead);
 
-            return (DBDictionary)tr.GetObject(
+            // Open FD_EDGES subdictionary
+            if (!gbDict.Contains(NODCore.KEY_EDGES_SUBDICT))
+            {
+                ed?.WriteMessage($"\n[DEBUG] FD_EDGES subdictionary not found for grade beam '{gradeBeamHandle}'.");
+                return null;
+            }
+
+            var edgesDict = (DBDictionary)tr.GetObject(
                 gbDict.GetAt(NODCore.KEY_EDGES_SUBDICT),
-                OpenMode.ForWrite);
+                forWrite ? OpenMode.ForWrite : OpenMode.ForRead);
+
+            ed?.WriteMessage($"\n[DEBUG] Found FD_EDGES subdictionary for grade beam '{gradeBeamHandle}' with {edgesDict.Count} entries.");
+            return edgesDict;
         }
+
+
 
         public static bool TryGetCenterline(
             FoundationContext context,

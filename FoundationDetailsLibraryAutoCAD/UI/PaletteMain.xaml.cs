@@ -25,7 +25,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 {
     public partial class PaletteMain : UserControl
     {
-
         private readonly PolylineBoundaryManager _boundaryService = new PolylineBoundaryManager();
         private readonly GradeBeamManager _gradeBeamService = new GradeBeamManager();
         private readonly FoundationPersistenceManager _persistenceService = new FoundationPersistenceManager();
@@ -108,14 +107,11 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         {
             var context = CurrentContext;
             if (context == null || context.Document == null)
-            {
-                // Debug: no context
                 return;
-            }
 
-            Document doc = context.Document;
-            Database db = doc.Database;
-            Editor ed = doc.Editor;
+            var doc = context.Document;
+            var db = doc.Database;
+            var ed = doc.Editor;
 
             // --- Step 1: Prompt user to select an object
             var peo = new PromptEntityOptions("\nSelect any object of a grade beam to delete:");
@@ -129,63 +125,110 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             ObjectId selectedId = pres.ObjectId;
             ed.WriteMessage($"\n[DEBUG] Selected object ID: {selectedId.Handle}");
 
-            // --- Step 2: Find the grade beam handle for this object
             string gradeBeamHandle = null;
 
             using (doc.LockDocument())
             using (var tr = db.TransactionManager.StartTransaction())
             {
+                // --- Enumerate all grade beams
                 foreach (var (handle, gbDict) in GradeBeamNOD.EnumerateGradeBeams(context, tr))
                 {
-                    if (GradeBeamNOD.TryGetGradeBeamObjects(
-                            context, tr, gbDict, out var polys, includeCenterline: true, includeEdges: true))
-                    {
-                        foreach (var p in polys)
-                        {
-                            ed.WriteMessage($"\n[DEBUG] Checking beam '{handle}' polyline ID: {p.ObjectId.Handle}");
-                        }
+                    var objectIds = new List<ObjectId>();
 
-                        if (polys.Any(p => p.ObjectId == selectedId))
+                    // --- 1) Centerline
+                    if (GradeBeamNOD.TryGetCenterline(context, tr, gbDict, out ObjectId clId) && !clId.IsNull)
+                    {
+                        objectIds.Add(clId);
+                        ed.WriteMessage($"\n[DEBUG] Beam '{handle}' centerline: {clId.Handle}");
+                    }
+
+                    // --- 2) Edges
+                    if (GradeBeamNOD.HasEdgesDictionary(tr, db, handle))
+                    {
+                        var edgesDict = GradeBeamNOD.GetEdgesDictionary(tr, db, handle, forWrite: false);
+
+                        foreach (var (_, xrecObj) in NODCore.EnumerateDictionary(edgesDict))
                         {
-                            gradeBeamHandle = handle;
-                            ed.WriteMessage($"\n[DEBUG] Selected object belongs to grade beam: {gradeBeamHandle}");
-                            break;
+                            if (xrecObj == null || xrecObj.IsNull || xrecObj.IsErased)
+                                continue;
+
+                            Xrecord xrec;
+                            try
+                            {
+                                xrec = tr.GetObject(xrecObj, OpenMode.ForRead) as Xrecord;
+                            }
+                            catch
+                            {
+                                continue;
+                            }
+
+                            if (xrec?.Data == null)
+                                continue;
+
+                            foreach (TypedValue tv in xrec.Data)
+                            {
+                                if (tv.TypeCode != (int)DxfCode.Text)
+                                    continue;
+
+                                string handleStr = tv.Value as string;
+                                if (string.IsNullOrWhiteSpace(handleStr))
+                                    continue;
+
+                                if (NODCore.TryGetObjectIdFromHandleString(context, db, handleStr, out ObjectId oid))
+                                {
+                                    if (!oid.IsNull && oid.IsValid)
+                                        objectIds.Add(oid);
+                                }
+                            }
                         }
                     }
+
+                    // --- 3) Membership test
+                    if (objectIds.Contains(selectedId))
+                    {
+                        gradeBeamHandle = handle;
+                        ed.WriteMessage($"\n[DEBUG] Selected object belongs to grade beam '{gradeBeamHandle}'.");
+                        break;
+                    }
                 }
-            }
 
-            if (string.IsNullOrEmpty(gradeBeamHandle))
-            {
-                ed.WriteMessage("\n[DEBUG] Selected object does not belong to any grade beam. Exiting without deletion.");
-                return;
-            }
+                if (string.IsNullOrEmpty(gradeBeamHandle))
+                {
+                    ed.WriteMessage("\n[DEBUG] Selected object does not belong to any grade beam.");
+                    return;
+                }
 
-            // --- Step 3: Confirm deletion
-            var pko = new PromptKeywordOptions($"\nDelete grade beam '{gradeBeamHandle}' and all its edges/metadata?")
-            {
-                AllowNone = false
-            };
-            pko.Keywords.Add("Yes");
-            pko.Keywords.Add("No");
-            var presConfirm = ed.GetKeywords(pko);
-            if (presConfirm.Status != PromptStatus.OK || presConfirm.StringResult != "Yes")
-            {
-                ed.WriteMessage("\n[DEBUG] Deletion cancelled by user.");
-                return;
-            }
+                // --- 4) Confirm deletion
+                var pko = new PromptKeywordOptions(
+                    $"\nDelete grade beam '{gradeBeamHandle}' and rebuild remaining edges?")
+                {
+                    AllowNone = false
+                };
+                pko.Keywords.Add("Yes");
+                pko.Keywords.Add("No");
 
-            // --- Step 4: Perform deletion
-            int deletedCount = _gradeBeamService.DeleteGradeBeamRecursiveByHandle(context, gradeBeamHandle);
+                var presConfirm = ed.GetKeywords(pko);
+                if (presConfirm.Status != PromptStatus.OK || presConfirm.StringResult != "Yes")
+                {
+                    ed.WriteMessage("\n[DEBUG] Deletion cancelled by user.");
+                    return;
+                }
 
-            if (deletedCount > 0)
-            {
+                // --- 5) Delete selected grade beam
+                int deletedCount = _gradeBeamService.DeleteGradeBeamRecursiveByHandle(context, gradeBeamHandle);
                 ed.WriteMessage($"\n[DEBUG] Deleted {deletedCount} entities for grade beam '{gradeBeamHandle}'.");
+
+                // --- 6) Delete ALL remaining edges
+                int edgesDeleted = GradeBeamManager.DeleteAllGradeBeamEdges(context);
+                ed.WriteMessage($"\n[DEBUG] Deleted {edgesDeleted} remaining grade beam edges.");
+
+                tr.Commit();
             }
-            else
-            {
-                ed.WriteMessage($"\n[DEBUG] No entities were deleted for grade beam '{gradeBeamHandle}'. Check if objects were already removed.");
-            }
+
+            // --- 7) Rebuild edges for remaining grade beams (NEW TRANSACTION)
+            _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
+
+            ed.WriteMessage("\n[DEBUG] Rebuilt grade beam edges.");
         }
 
 
@@ -194,7 +237,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             var context = CurrentContext;
             if (context?.Document == null) return;
 
-            _gradeBeamService.GenerateEdgesForAllGradeBeams(context, halfWidth: 5.0);
+            _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
 
             ////int count = _gradeBeamService.GenerateEdgesForAllGradeBeams(context, halfWidth: 5.0);
 
