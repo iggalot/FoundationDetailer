@@ -217,7 +217,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             var db = doc.Database;
             var ed = doc.Editor;
 
-            // --- Multi-select
+            // --- Multi-select grade beam objects
             var pso = new PromptSelectionOptions
             {
                 MessageForAdding = "\nSelect grade beam objects to delete:"
@@ -227,8 +227,9 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             if (psr.Status != PromptStatus.OK)
                 return;
 
-            var handlesToDelete = new HashSet<string>();
+            var selectedHandles = new HashSet<string>();
 
+            // --- Resolve owning grade beams
             using (doc.LockDocument())
             using (var tr = db.TransactionManager.StartTransaction())
             {
@@ -237,24 +238,22 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                     if (GradeBeamNOD.TryResolveOwningGradeBeam(
                         context, tr, id, out string gbHandle, out bool isCenterline, out bool isEdge))
                     {
-                        handlesToDelete.Add(gbHandle);
-                        ed.WriteMessage(
-                            $"\n[DEBUG] Object {id.Handle} - beam {gbHandle} (Centerline: {isCenterline}, Edge: {isEdge})");
+                        selectedHandles.Add(gbHandle);
+                        ed.WriteMessage($"\n[DEBUG] Object {id.Handle} -> beam {gbHandle} (Centerline: {isCenterline}, Edge: {isEdge})");
                     }
                 }
+
                 tr.Commit();
             }
 
-            if (handlesToDelete.Count == 0)
+            if (selectedHandles.Count == 0)
             {
-                ed.WriteMessage(
-                    "\n[DEBUG] No selected objects belong to grade beams.");
+                ed.WriteMessage("\n[DEBUG] No selected objects belong to grade beams.");
                 return;
             }
 
-            // --- Confirm
-            var pko = new PromptKeywordOptions(
-                $"\nDelete {handlesToDelete.Count} grade beam(s) and rebuild edges?")
+            // --- Confirm deletion
+            var pko = new PromptKeywordOptions($"\nDelete {selectedHandles.Count} grade beam(s) and rebuild all edges?")
             {
                 AllowNone = false
             };
@@ -262,16 +261,61 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             pko.Keywords.Add("No");
 
             var confirm = ed.GetKeywords(pko);
-            if (confirm.Status != PromptStatus.OK ||
-                confirm.StringResult != "Yes")
+            if (confirm.Status != PromptStatus.OK || confirm.StringResult != "Yes")
                 return;
 
-            // --- Batch delete
-            _gradeBeamService.DeleteGradeBeamsBatch(
-                context, handlesToDelete);
+            int totalDeleted = 0;
 
-            Dispatcher.BeginInvoke(
-                new Action(UpdateBoundaryDisplay));
+            List<string> remainingGBKeys = new List<string>();
+
+            // --- Single transaction to delete selected grade beams and gather remaining keys
+            using (doc.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                // --- Access NOD dictionaries
+                var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+                if (!nod.Contains(NODCore.ROOT))
+                    return;
+
+                var root = (DBDictionary)tr.GetObject(nod.GetAt(NODCore.ROOT), OpenMode.ForRead);
+                if (!root.Contains(NODCore.KEY_GRADEBEAM_SUBDICT))
+                    return;
+
+                var gbRoot = (DBDictionary)tr.GetObject(root.GetAt(NODCore.KEY_GRADEBEAM_SUBDICT), OpenMode.ForWrite);
+
+                // --- Enumerate all grade beams
+                foreach (DBDictionaryEntry entry in gbRoot)
+                    remainingGBKeys.Add(entry.Key);
+
+                // --- Delete selected grade beams completely
+                foreach (var key in selectedHandles)
+                {
+                    if (remainingGBKeys.Contains(key))
+                    {
+                        totalDeleted += _gradeBeamService.DeleteGradeBeamInternal(context, tr, gbRoot, key);
+                        remainingGBKeys.Remove(key); // remove from remaining list
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            ed.WriteMessage($"\n[DEBUG] Deleted {totalDeleted} entities from selected grade beams.");
+
+            int edgesDeleted = 0;
+
+            // --- Delete edges only for remaining grade beams
+            foreach (var key in remainingGBKeys)
+            {
+                edgesDeleted += GradeBeamManager.DeleteGradeBeamEdgesOnly(context, key);
+            }
+
+            ed.WriteMessage($"\n[DEBUG] Deleted {edgesDeleted} edge entities from remaining grade beams.");
+
+            // --- Rebuild edges for all grade beams
+            _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
+
+            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
 
 

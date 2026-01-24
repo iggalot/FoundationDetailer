@@ -211,7 +211,7 @@ namespace FoundationDetailer.AutoCAD
 
 
 
-        public int DeleteAllGradeBeams(FoundationContext context)
+        internal int DeleteAllGradeBeams(FoundationContext context)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
 
@@ -255,7 +255,7 @@ namespace FoundationDetailer.AutoCAD
         /// Returns the total number of edge entities erased.
         /// C# 7.3 compliant.
         /// </summary>
-        public static int DeleteAllGradeBeamEdges(FoundationContext context)
+        internal static int DeleteAllGradeBeamEdges(FoundationContext context)
         {
             if (context == null)
                 throw new ArgumentNullException(nameof(context));
@@ -298,7 +298,7 @@ namespace FoundationDetailer.AutoCAD
         /// INTERNAL: Deletes a single grade beam inside an existing transaction.
         /// Deletes edges, centerline, and removes the NOD dictionary.
         /// </summary>
-        private static int DeleteGradeBeamInternal(
+        internal int DeleteGradeBeamInternal(
             FoundationContext context,
             Transaction tr,
             DBDictionary gbRoot,
@@ -329,7 +329,7 @@ namespace FoundationDetailer.AutoCAD
         /// Deletes an entire grade beam by key (edges, centerline, and NOD dictionary).
         /// Returns the number of AutoCAD entities erased.
         /// </summary>
-        public int DeleteGradeBeam(FoundationContext context, string gradeBeamKey)
+        internal int DeleteGradeBeam(FoundationContext context, string gradeBeamKey)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
             if (string.IsNullOrWhiteSpace(gradeBeamKey))
@@ -369,7 +369,7 @@ namespace FoundationDetailer.AutoCAD
             return deleted;
         }
 
-        public int DeleteGradeBeamsBatch(
+        internal int DeleteGradeBeamsBatch(
             FoundationContext context,
             IEnumerable<string> handles)
         {
@@ -404,7 +404,7 @@ namespace FoundationDetailer.AutoCAD
         /// Deletes all edge entities of a single grade beam but keeps centerline and NOD dictionary.
         /// Returns the number of entities erased. Provides debug messages for each edge.
         /// </summary>
-        private static int DeleteGradeBeamEdgesOnly(FoundationContext context, string gradeBeamKey)
+        internal static int DeleteGradeBeamEdgesOnly(FoundationContext context, string gradeBeamKey)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
             if (string.IsNullOrWhiteSpace(gradeBeamKey)) return 0;
@@ -480,7 +480,7 @@ namespace FoundationDetailer.AutoCAD
             return deleted;
         }
 
-        private static int DeleteGradeBeamEdgesOnlyInternal(
+        internal int DeleteGradeBeamEdgesOnlyInternal(
             FoundationContext context,
             Transaction tr,
             string gradeBeamKey)
@@ -537,7 +537,7 @@ namespace FoundationDetailer.AutoCAD
         // Deletes a grade beam (centerline, edges, metadata, subdicts) by handle
         // Returns total number of AutoCAD entities deleted
         // ------------------------------------------------
-        public int DeleteGradeBeamRecursiveByHandle(FoundationContext context, string centerlineHandle)
+        internal int DeleteGradeBeamRecursiveByHandle(FoundationContext context, string centerlineHandle)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
             if (string.IsNullOrWhiteSpace(centerlineHandle)) return 0;
