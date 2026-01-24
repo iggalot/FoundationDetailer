@@ -387,7 +387,8 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             }
 
             var doc = context.Document;
-            if (doc == null) return;
+            if (doc == null)
+                return;
 
             try
             {
@@ -395,7 +396,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
                 // --- Prompt user for first point ---
                 var firstPointRes = ed.GetPoint("\nSelect first point for grade beam:");
-                if (firstPointRes.Status != Autodesk.AutoCAD.EditorInput.PromptStatus.OK)
+                if (firstPointRes.Status != PromptStatus.OK)
                 {
                     TxtStatus.Text = "First point selection canceled.";
                     return;
@@ -403,10 +404,10 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
                 Point3d pt1 = firstPointRes.Value;
 
-                // --- Use jig to get second point (preview) ---
+                // --- Jig for second point ---
                 var jig = new GradeBeamPolylineJig(pt1);
                 var res = ed.Drag(jig);
-                if (res.Status != Autodesk.AutoCAD.EditorInput.PromptStatus.OK)
+                if (res.Status != PromptStatus.OK)
                 {
                     TxtStatus.Text = "Second point selection canceled.";
                     return;
@@ -414,39 +415,49 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
                 Point3d pt2 = jig.Polyline.GetPoint3dAt(1);
 
-                // --- Validate points ---
                 if (pt1.IsEqualTo(pt2))
                 {
                     TxtStatus.Text = "Points cannot be the same.";
                     return;
                 }
 
-                // --- Create Polyline vertices and Polyline ---
-                List<Point2d> verts = new List<Point2d>
+                // --- Build polyline ---
+                var verts = new List<Point2d>
         {
-                    new Point2d(pt1.X, pt1.Y),
-                    new Point2d(pt2.X, pt2.Y)
+            new Point2d(pt1.X, pt1.Y),
+            new Point2d(pt2.X, pt2.Y)
         };
 
                 verts = PolylineConversionService.EnsureMinimumVertices(verts, 5);
-
                 Polyline newPl = PolylineConversionService.CreatePolylineFromVertices(verts);
 
-                // --- Append to ModelSpace and register as GradeBeam ---
+                // --- Register grade beam (centerline only)
                 using (doc.LockDocument())
                 using (var tr = doc.Database.TransactionManager.StartTransaction())
                 {
-                    _gradeBeamService.RegisterGradeBeam(context, newPl, tr, appendToModelSpace: true);
+                    _gradeBeamService.RegisterGradeBeam(
+                        context,
+                        newPl,
+                        tr,
+                        appendToModelSpace: true);
+
                     tr.Commit();
                 }
 
-                // --- Refresh UI ---
+                // --- Delete all existing edges (forces clean rebuild)
+                int edgesDeleted = GradeBeamManager.DeleteAllGradeBeamEdges(context);
+                ed.WriteMessage($"\n[DEBUG] Deleted {edgesDeleted} existing grade beam edges.");
+
+                // --- Rebuild edges for ALL grade beams
+                // --- 7) Rebuild edges for remaining grade beams (NEW TRANSACTION)
+                _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
+                ed.WriteMessage("\n[DEBUG] Rebuilt grade beam edges.");
+
+                // --- UI refresh
                 Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
 
                 TxtStatus.Text = "Custom grade beam added.";
                 PrelimGBControl.ViewModel.IsPreliminaryGenerated = true;
-
-                // Hide the gradebeam control
                 PrelimGBControl.Visibility = System.Windows.Visibility.Collapsed;
             }
             catch (Exception ex)
