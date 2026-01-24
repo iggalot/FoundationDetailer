@@ -1,10 +1,61 @@
 ﻿using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
+using System.Collections.Generic;
 
 namespace FoundationDetailer.AutoCAD
 {
-    public class GradeBeamPolylineJig : EntityJig
+    public class GradeBeamMultiVertexPreview
+    {
+        private readonly Editor _editor;
+        private readonly Database _db;
+        private readonly List<Point3d> _points;
+        private Polyline _previewPolyline;
+
+        public IReadOnlyList<Point3d> Points => _points;
+
+        public GradeBeamMultiVertexPreview(Editor ed, Database db)
+        {
+            _editor = ed;
+            _db = db;
+            _points = new List<Point3d>();
+        }
+
+        public void AddPoint(Point3d pt)
+        {
+            _points.Add(pt);
+            UpdatePreviewPolyline();
+        }
+
+        private void UpdatePreviewPolyline()
+        {
+            if (_previewPolyline != null)
+            {
+                _editor.UpdateScreen(); // remove previous preview
+            }
+
+            _previewPolyline = new Polyline();
+            for (int i = 0; i < _points.Count; i++)
+            {
+                var pt = _points[i];
+                _previewPolyline.AddVertexAt(i, new Point2d(pt.X, pt.Y), 0, 0, 0);
+            }
+
+            _editor.UpdateScreen();
+        }
+
+        public void ErasePreview()
+        {
+            if (_previewPolyline != null)
+            {
+                _previewPolyline = null;
+                _editor.UpdateScreen();
+            }
+        }
+    }
+
+// Keep your existing GradeBeamPolylineJig unchanged
+public class GradeBeamPolylineJig : EntityJig
     {
         private Point3d _start;
         private Point3d _end;
@@ -26,11 +77,6 @@ namespace FoundationDetailer.AutoCAD
             return pl;
         }
 
-        /// <summary>
-        /// Need for inheritance from EntityJig
-        /// </summary>
-        /// <param name="prompts"></param>
-        /// <returns></returns>
         protected override SamplerStatus Sampler(JigPrompts prompts)
         {
             var opts = new JigPromptPointOptions("\nSelect second point:")
@@ -50,18 +96,10 @@ namespace FoundationDetailer.AutoCAD
             return SamplerStatus.OK;
         }
 
-        /// <summary>
-        /// Need for inheritance from EntityJig
-        /// </summary>
-        /// <returns></returns>
         protected override bool Update()
         {
-            // Update preview polyline geometry
             Polyline.SetPointAt(1, new Point2d(_end.X, _end.Y));
             return true;
         }
     }
-
 }
-
-

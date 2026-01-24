@@ -496,84 +496,90 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             var context = CurrentContext;
             _gradeBeamService.HighlightGradeBeams(context);
         }
-
         private void GradeBeamSummary_AddSingleGradeBeamClicked(object sender, EventArgs e)
         {
             var context = CurrentContext;
-            if (context == null)
+            if (context == null || context.Document == null)
             {
                 TxtStatus.Text = "No active document.";
                 return;
             }
 
             var doc = context.Document;
-            if (doc == null)
-                return;
+            var ed = doc.Editor;
+            var db = doc.Database;
 
             try
             {
-                var ed = doc.Editor;
+                var preview = new GradeBeamMultiVertexPreview(ed, db);
 
-                // --- Prompt user for first point ---
-                var firstPointRes = ed.GetPoint("\nSelect first point for grade beam:");
-                if (firstPointRes.Status != PromptStatus.OK)
+                // --- Multi-point selection loop
+                while (true)
                 {
-                    TxtStatus.Text = "First point selection canceled.";
+                    string promptMessage = preview.Points.Count == 0
+                        ? "\nSelect first vertex (ENTER to finish, ESC to cancel):"
+                        : "\nSelect next vertex (ENTER to finish, ESC to cancel):";
+
+                    var opts = new PromptPointOptions(promptMessage)
+                    {
+                        AllowNone = true,   // allows ENTER to finish
+                        AllowArbitraryInput = false
+                    };
+
+                    if (preview.Points.Count > 0)
+                    {
+                        opts.BasePoint = preview.Points[preview.Points.Count - 1];
+                        opts.UseBasePoint = true;
+                    }
+
+                    var res = ed.GetPoint(opts);
+
+                    if (res.Status == PromptStatus.OK)
+                    {
+                        preview.AddPoint(res.Value);
+                    }
+                    else if (res.Status == PromptStatus.None)
+                    {
+                        // ENTER pressed
+                        break;
+                    }
+                    else if (res.Status == PromptStatus.Cancel)
+                    {
+                        TxtStatus.Text = "Grade beam creation canceled.";
+                        preview.ErasePreview();
+                        return;
+                    }
+                }
+
+                if (preview.Points.Count < 2)
+                {
+                    TxtStatus.Text = "At least two points are required to create a grade beam.";
+                    preview.ErasePreview();
                     return;
                 }
 
-                Point3d pt1 = firstPointRes.Value;
-
-                // --- Jig for second point ---
-                var jig = new GradeBeamPolylineJig(pt1);
-                var res = ed.Drag(jig);
-                if (res.Status != PromptStatus.OK)
-                {
-                    TxtStatus.Text = "Second point selection canceled.";
-                    return;
-                }
-
-                Point3d pt2 = jig.Polyline.GetPoint3dAt(1);
-
-                if (pt1.IsEqualTo(pt2))
-                {
-                    TxtStatus.Text = "Points cannot be the same.";
-                    return;
-                }
-
-                // --- Build polyline ---
-                var verts = new List<Point2d>
-        {
-            new Point2d(pt1.X, pt1.Y),
-            new Point2d(pt2.X, pt2.Y)
-        };
-
+                // --- Convert points to 2D polyline
+                var verts = preview.Points.Select(p => new Point2d(p.X, p.Y)).ToList();
                 verts = PolylineConversionService.EnsureMinimumVertices(verts, 5);
-                Polyline newPl = PolylineConversionService.CreatePolylineFromVertices(verts);
+                var newPl = PolylineConversionService.CreatePolylineFromVertices(verts);
 
                 // --- Register grade beam (centerline only)
                 using (doc.LockDocument())
-                using (var tr = doc.Database.TransactionManager.StartTransaction())
+                using (var tr = db.TransactionManager.StartTransaction())
                 {
-                    _gradeBeamService.RegisterGradeBeam(
-                        context,
-                        newPl,
-                        tr,
-                        appendToModelSpace: true);
-
+                    _gradeBeamService.RegisterGradeBeam(context, newPl, tr, appendToModelSpace: true);
                     tr.Commit();
                 }
 
-                // --- Delete all existing edges (forces clean rebuild)
+                // --- Delete all edges for clean rebuild
                 int edgesDeleted = GradeBeamManager.DeleteAllGradeBeamEdges(context);
                 ed.WriteMessage($"\n[DEBUG] Deleted {edgesDeleted} existing grade beam edges.");
 
-                // --- Rebuild edges for ALL grade beams
-                // --- 7) Rebuild edges for remaining grade beams (NEW TRANSACTION)
+                // --- Rebuild edges
                 _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
                 ed.WriteMessage("\n[DEBUG] Rebuilt grade beam edges.");
 
-                // --- UI refresh
+                // --- Update UI
                 Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
 
                 TxtStatus.Text = "Custom grade beam added.";
@@ -585,6 +591,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 TxtStatus.Text = $"Error adding grade beam: {ex.Message}";
             }
         }
+
 
         private void UpdateBoundaryDisplay()
         {
@@ -816,30 +823,35 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             var ed = doc.Editor;
             var db = doc.Database;
 
-            var peo = new PromptEntityOptions(
-                "\nSelect a Line, Polyline, GradeBeam centerline, or edge:");
-            peo.SetRejectMessage("\nOnly Line or Polyline objects are allowed.");
-            peo.AddAllowedClass(typeof(Line), true);
-            peo.AddAllowedClass(typeof(Polyline), true);
-
-            var per = ed.GetEntity(peo);
-            if (per.Status != PromptStatus.OK)
-                return;
-
             try
             {
-                string owningHandle = null;
-                bool isCenterline = false;
-                bool isEdge = false;
-
-                using (doc.LockDocument())
-                using (var tr = db.TransactionManager.StartTransaction())
+                while (true)
                 {
-                    // --------------------------------------------
-                    // Resolve ownership FIRST
-                    // --------------------------------------------
-                    bool belongsToGB =
-                        GradeBeamNOD.TryResolveOwningGradeBeam(
+                    var peo = new PromptEntityOptions(
+                        "\nSelect a Line, Polyline, GradeBeam centerline, or edge <Enter to finish>:")
+                    {
+                        AllowNone = true // allows Enter to finish
+                    };
+                    peo.SetRejectMessage("\nOnly Line or Polyline objects are allowed.");
+                    peo.AddAllowedClass(typeof(Line), true);
+                    peo.AddAllowedClass(typeof(Polyline), true);
+
+                    var per = ed.GetEntity(peo);
+
+                    if (per.Status == PromptStatus.Cancel)
+                        return; // user hit ESC
+
+                    if (per.Status != PromptStatus.OK || per.ObjectId.IsNull)
+                        break; // user hit ENTER with no selection
+
+                    using (doc.LockDocument())
+                    using (var tr = db.TransactionManager.StartTransaction())
+                    {
+                        string owningHandle = null;
+                        bool isCenterline = false;
+                        bool isEdge = false;
+
+                        bool belongsToGB = GradeBeamNOD.TryResolveOwningGradeBeam(
                             context,
                             tr,
                             per.ObjectId,
@@ -847,42 +859,29 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                             out isCenterline,
                             out isEdge);
 
-                    if (belongsToGB)
-                    {
-                        ed.WriteMessage(
-                            $"\n[DEBUG] Selected object belongs to grade beam '{owningHandle}' " +
-                            (isCenterline ? "(centerline)" : "(edge)"));
+                        if (belongsToGB)
+                        {
+                            ed.WriteMessage($"\n[DEBUG] Object {per.ObjectId.Handle} already belongs to grade beam '{owningHandle}' " +
+                                            (isCenterline ? "(centerline)" : "(edge)"));
+                            tr.Commit();
+                            continue; // skip conversion
+                        }
 
-                        // Nothing to convert — it already is a GradeBeam component
-                        tr.Commit();
-                    }
-                    else
-                    {
-                        // --------------------------------------------
-                        // Convert raw geometry to GradeBeam
-                        // --------------------------------------------
                         const int minVertexCount = 5;
-
-                        _gradeBeamService.ConvertToGradeBeam(
-                            context,
-                            per.ObjectId,
-                            minVertexCount,
-                            tr);
+                        _gradeBeamService.ConvertToGradeBeam(context, per.ObjectId, minVertexCount, tr);
 
                         tr.Commit();
+                        ed.WriteMessage($"\n[DEBUG] Converted object {per.ObjectId.Handle} to grade beam.");
                     }
+
+                    // --- Immediate redraw and edge regeneration
+                    int deleted = GradeBeamManager.DeleteAllGradeBeamEdges(context);
+                    ed.WriteMessage($"\n[DEBUG] Deleted {deleted} grade beam edges.");
+                    _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
+
+                    Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
                 }
 
-                // --------------------------------------------
-                // Global edge rebuild (always safe)
-                // --------------------------------------------
-                int deleted = GradeBeamManager.DeleteAllGradeBeamEdges(context);
-                ed.WriteMessage($"\n[DEBUG] Deleted {deleted} grade beam edges.");
-
-                // generate the new edge configuration
-                _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
-
-                Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
                 TxtStatus.Text = "Grade beams updated and edges regenerated.";
             }
             catch (Exception ex)
@@ -891,6 +890,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 TxtStatus.Text = $"Error: {ex.Message}";
             }
         }
+
 
         private void BtnNEqualSpaces_Click(object sender, RoutedEventArgs e)
         {
