@@ -71,7 +71,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 catch (Autodesk.AutoCAD.Runtime.Exception ex)
                 {
                     ed.WriteMessage(
-                        $"\n  #{i}: FAILED ({id.Handle}) → {ex.ErrorStatus}");
+                        $"\n  #{i}: FAILED ({id.Handle}) : {ex.ErrorStatus}");
                 }
             }
 

@@ -83,6 +83,8 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             BtnEraseNODFully.Click += (s, e) => BtnEraseNODFully_Click();
             BtnGenerateGradeBeamEdges.Click += (s, e) => BtnGenerateGradeBeamEdges_Click(s, e);
             BtnDeleteSingleGradeBeamFromSelect.Click += (s, e) => BtnDeleteSingleFromSelect_Click(s, e);
+            BtnDeleteMultipleGradeBeamFromSelect.Click += (s, e) => BtnDeleteMultipleFromSelect_Click(s, e);
+
 
 
             BtnSelectBoundary.Click += (s, e) => BtnDefineFoundationBoundary_Click();
@@ -205,6 +207,74 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             ed.WriteMessage("\n[DEBUG] Rebuilt grade beam edges.");
         }
 
+        private void BtnDeleteMultipleFromSelect_Click(object s, RoutedEventArgs e)
+        {
+            var context = CurrentContext;
+            if (context?.Document == null)
+                return;
+
+            var doc = context.Document;
+            var db = doc.Database;
+            var ed = doc.Editor;
+
+            // --- Multi-select
+            var pso = new PromptSelectionOptions
+            {
+                MessageForAdding = "\nSelect grade beam objects to delete:"
+            };
+
+            var psr = ed.GetSelection(pso);
+            if (psr.Status != PromptStatus.OK)
+                return;
+
+            var handlesToDelete = new HashSet<string>();
+
+            using (doc.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                foreach (var id in psr.Value.GetObjectIds())
+                {
+                    if (GradeBeamNOD.TryResolveOwningGradeBeam(
+                        context, tr, id, out string gbHandle, out bool isCenterline, out bool isEdge))
+                    {
+                        handlesToDelete.Add(gbHandle);
+                        ed.WriteMessage(
+                            $"\n[DEBUG] Object {id.Handle} - beam {gbHandle} (Centerline: {isCenterline}, Edge: {isEdge})");
+                    }
+                }
+                tr.Commit();
+            }
+
+            if (handlesToDelete.Count == 0)
+            {
+                ed.WriteMessage(
+                    "\n[DEBUG] No selected objects belong to grade beams.");
+                return;
+            }
+
+            // --- Confirm
+            var pko = new PromptKeywordOptions(
+                $"\nDelete {handlesToDelete.Count} grade beam(s) and rebuild edges?")
+            {
+                AllowNone = false
+            };
+            pko.Keywords.Add("Yes");
+            pko.Keywords.Add("No");
+
+            var confirm = ed.GetKeywords(pko);
+            if (confirm.Status != PromptStatus.OK ||
+                confirm.StringResult != "Yes")
+                return;
+
+            // --- Batch delete
+            _gradeBeamService.DeleteGradeBeamsBatch(
+                context, handlesToDelete);
+
+            Dispatcher.BeginInvoke(
+                new Action(UpdateBoundaryDisplay));
+        }
+
+
 
         private void BtnGenerateGradeBeamEdges_Click(object sender, RoutedEventArgs e)
         {
@@ -212,11 +282,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             if (context?.Document == null) return;
 
             _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
-
-            ////int count = _gradeBeamService.GenerateEdgesForAllGradeBeams(context, halfWidth: 5.0);
-
-            //context.Document.Editor.WriteMessage(
-            //    $"\n[GradeBeamEdges] Generated edges for {count} grade beams.");
         }
 
 
@@ -339,11 +404,20 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         {
             var context = CurrentContext;
             var doc = context.Document;
-            _gradeBeamService.DeleteAllGradeBeams(context);
-            PrelimGBControl.ViewModel.IsPreliminaryGenerated = false;  // reset the the preliminary input control
+
+            // Delete all grade beams entirely: edges + centerlines + NOD dictionary
+            using (doc.LockDocument())
+            {
+                _gradeBeamService.DeleteAllGradeBeams(context);
+            }
+
+            // Reset preliminary input control
+            PrelimGBControl.ViewModel.IsPreliminaryGenerated = false;
 
             Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
+
+
 
         private void GradeBeam_HighlightGradeBeamsClicked(object sender, EventArgs e)
         {

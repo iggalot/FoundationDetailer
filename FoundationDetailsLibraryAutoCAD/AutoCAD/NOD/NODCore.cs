@@ -81,7 +81,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                     continue; // skip non-ObjectId entries
 
                 var obj = tr.GetObject(objId, OpenMode.ForRead);
-                // Subdictionary → recurse
+                // Subdictionary - recurse
                 if (obj is DBDictionary subDict)
                 {
                     yield return new ExtensionDataItem
@@ -92,7 +92,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                             EnumerateDictionaryWithHandles(context, tr, subDict, db))
                     };
                 }
-                // Xrecord → show typed values
+                // Xrecord - show typed values
                 else if (obj is Xrecord xr)
                 {
                     var xrValues = new List<string>();
@@ -109,7 +109,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                         Value = xrValues
                     };
                 }
-                // Entity → show handle
+                // Entity - show handle
                 else if (obj is Entity ent)
                 {
                     yield return new ExtensionDataItem
@@ -427,7 +427,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
             foreach (var key in keys)
             {
-                // 🔍 READ FIRST
+                // READ FIRST
                 if (current.Contains(key))
                 {
                     current = (DBDictionary)tr.GetObject(
@@ -436,7 +436,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 }
                 else
                 {
-                    // 🔓 UPGRADE ONLY WHEN NEEDED
+                    // UPGRADE ONLY WHEN NEEDED
                     if (!current.IsWriteEnabled)
                         current.UpgradeOpen();
 
@@ -535,12 +535,12 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                     ObjectId id = parent.GetAt(key);
                     DBObject obj = tr.GetObject(id, OpenMode.ForWrite);
 
-                    // Correct type → return
+                    // Correct type - return
                     Xrecord existingRecord = obj as Xrecord;
                     if (existingRecord != null)
                         return existingRecord;
 
-                    // Wrong type → repair
+                    // Wrong type - repair
                     obj.Erase();
 
                     Xrecord repairedRecord = new Xrecord();
@@ -747,10 +747,10 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
 
-            // PASS 1 — Read-only scan
+            // PASS 1 Read-only scan
             var results = NODScanner.ScanFoundationNod(context);
 
-            // PASS 2 — Cleanup if requested
+            // PASS 2 Cleanup if requested
             if (cleanStale && results.Count > 0)
             {
                 CleanupFoundationNod(context, results);
@@ -766,7 +766,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
 
-            // Iterate with cleanup enabled — no need to call Cleanup again manually
+            // Iterate with cleanup enabled - no need to call Cleanup again manually
             IterateFoundationNod(context, cleanStale: true);
         }
 

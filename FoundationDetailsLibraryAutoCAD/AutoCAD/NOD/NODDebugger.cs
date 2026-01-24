@@ -165,12 +165,12 @@ string tag = null)
                 catch (Autodesk.AutoCAD.Runtime.Exception ex)
                 {
                     ed.WriteMessage(
-                        $"\n  #{index}: FAILED ({id.Handle}) → {ex.ErrorStatus}");
+                        $"\n  #{index}: FAILED ({id.Handle}) - {ex.ErrorStatus}");
                 }
                 catch (System.Exception ex)
                 {
                     ed.WriteMessage(
-                        $"\n  #{index}: FAILED ({id.Handle}) → {ex.Message}");
+                        $"\n  #{index}: FAILED ({id.Handle}) - {ex.Message}");
                 }
             }
 

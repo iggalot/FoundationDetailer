@@ -9,6 +9,7 @@ using FoundationDetailsLibraryAutoCAD.Managers;
 using FoundationDetailsLibraryAutoCAD.Services;
 using FoundationDetailsLibraryAutoCAD.UI.Controls.EqualSpacingGBControl;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using static FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.HandleHandler;
@@ -207,63 +208,121 @@ namespace FoundationDetailer.AutoCAD
             oldEnt.Erase();
         }
 
-        /// <summary>
-        /// Recursively deletes a single grade beam: edges, centerline, and its NOD dictionary.
-        /// Returns the total number of AutoCAD entities erased.
-        /// </summary>
-        private int DeleteGradeBeamRecursive(
-            FoundationContext context,
-            Transaction tr,
-            DBDictionary gradeBeamContainer,
-            string gradeBeamKey)
+
+
+
+        public int DeleteAllGradeBeams(FoundationContext context)
         {
-            if (context == null || tr == null || gradeBeamContainer == null || string.IsNullOrWhiteSpace(gradeBeamKey))
-                return 0;
+            if (context == null) throw new ArgumentNullException(nameof(context));
 
-            int deletedCount = 0;
             var doc = context.Document;
-            var ed = doc.Editor;
+            var db = doc.Database;
+            int deleted = 0;
 
-            if (!gradeBeamContainer.Contains(gradeBeamKey))
+            using (doc.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
             {
-                ed.WriteMessage($"\n[DEBUG] Grade beam '{gradeBeamKey}' not found in container.");
-                return 0;
-            }
+                // Open NOD root dictionary
+                var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+                if (!nod.Contains(NODCore.ROOT))
+                    return 0;
 
-            var gbDict = (DBDictionary)tr.GetObject(gradeBeamContainer.GetAt(gradeBeamKey), OpenMode.ForWrite);
+                var root = (DBDictionary)tr.GetObject(nod.GetAt(NODCore.ROOT), OpenMode.ForRead);
+                if (!root.Contains(NODCore.KEY_GRADEBEAM_SUBDICT))
+                    return 0;
 
-            // --- 1) Delete all edges first
-            int edgesDeleted = DeleteGradeBeamEdgesOnly(context, tr, gradeBeamKey);
-            deletedCount += edgesDeleted;
-            ed.WriteMessage($"\n[DEBUG] Deleted {edgesDeleted} edges for grade beam '{gradeBeamKey}'.");
+                var gbRoot = (DBDictionary)tr.GetObject(root.GetAt(NODCore.KEY_GRADEBEAM_SUBDICT), OpenMode.ForWrite);
 
-            // --- 2) Delete centerline
-            if (GradeBeamNOD.TryGetCenterline(context, tr, gbDict, out ObjectId centerlineId))
-            {
-                var clObj = tr.GetObject(centerlineId, OpenMode.ForWrite, false) as Entity;
-                if (clObj != null && !clObj.IsErased)
+                // Collect keys safely
+                var gradeBeamKeys = new List<string>();
+                foreach (DBDictionaryEntry entry in gbRoot)
+                    gradeBeamKeys.Add(entry.Key);
+
+                foreach (var key in gradeBeamKeys)
                 {
-                    clObj.Erase();
-                    deletedCount++;
-                    ed.WriteMessage($"\n[DEBUG] Deleted centerline (ObjectId: {centerlineId}) for grade beam '{gradeBeamKey}'.");
+                    deleted += DeleteGradeBeamInternal(context, tr, gbRoot, key);
                 }
-                else
-                {
-                    ed.WriteMessage($"\n[DEBUG] Centerline ObjectId {centerlineId} already erased or null.");
-                }
-            }
-            else
-            {
-                ed.WriteMessage($"\n[DEBUG] No centerline found for grade beam '{gradeBeamKey}'.");
+
+                tr.Commit();
             }
 
-            // --- 3) Remove grade beam dictionary from parent container
-            gradeBeamContainer.Remove(gradeBeamKey);
-            ed.WriteMessage($"\n[DEBUG] Removed grade beam dictionary '{gradeBeamKey}' from NOD.");
-
-            return deletedCount;
+            return deleted;
         }
 
+        /// <summary>
+        /// Deletes all grade beam edge entities in the drawing,
+        /// leaving centerlines and NOD metadata intact.
+        /// Returns the total number of edge entities erased.
+        /// C# 7.3 compliant.
+        /// </summary>
+        public static int DeleteAllGradeBeamEdges(FoundationContext context)
+        {
+            if (context == null)
+                throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var db = doc.Database;
+            var ed = doc.Editor;
+
+            int totalDeleted = 0;
+            List<string> handles;
+
+            // --- Collect all grade beam handles in one transaction
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                handles = GradeBeamNOD.EnumerateGradeBeams(context, tr)
+                                       .Select(h => h.Handle)
+                                       .ToList();
+                tr.Commit();
+            }
+
+            if (handles.Count == 0)
+            {
+                ed.WriteMessage("\n[DEBUG] No grade beams found. No edges deleted.");
+                return 0;
+            }
+
+            // --- Delete edges for each grade beam individually
+            foreach (var handle in handles)
+            {
+                totalDeleted += DeleteGradeBeamEdgesOnly(context, handle);
+            }
+
+            ed.WriteMessage($"\n[DEBUG] Total grade beam edges deleted: {totalDeleted}");
+            return totalDeleted;
+        }
+
+
+
+        /// <summary>
+        /// INTERNAL: Deletes a single grade beam inside an existing transaction.
+        /// Deletes edges, centerline, and removes the NOD dictionary.
+        /// </summary>
+        private static int DeleteGradeBeamInternal(
+            FoundationContext context,
+            Transaction tr,
+            DBDictionary gbRoot,
+            string handle)
+        {
+            if (!gbRoot.Contains(handle)) return 0;
+
+            int deleted = 0;
+            var gbDict = (DBDictionary)tr.GetObject(gbRoot.GetAt(handle), OpenMode.ForWrite);
+
+            deleted += DeleteGradeBeamEdgesOnlyInternal(context, tr, handle);
+
+            if (GradeBeamNOD.TryGetCenterline(context, tr, gbDict, out ObjectId clId))
+            {
+                if (tr.GetObject(clId, OpenMode.ForWrite) is Entity ent && !ent.IsErased)
+                {
+                    ent.Erase();
+                    deleted++;
+                }
+            }
+
+            gbRoot.Remove(handle);
+            return deleted;
+        }
 
 
         /// <summary>
@@ -273,9 +332,10 @@ namespace FoundationDetailer.AutoCAD
         public int DeleteGradeBeam(FoundationContext context, string gradeBeamKey)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
-            if (string.IsNullOrWhiteSpace(gradeBeamKey)) throw new ArgumentNullException(nameof(gradeBeamKey));
+            if (string.IsNullOrWhiteSpace(gradeBeamKey))
+                throw new ArgumentNullException(nameof(gradeBeamKey));
 
-            int deletedCount = 0;
+            int deleted = 0;
             var doc = context.Document;
             var db = doc.Database;
             var ed = doc.Editor;
@@ -283,73 +343,57 @@ namespace FoundationDetailer.AutoCAD
             using (doc.LockDocument())
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                try
-                {
-                    var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
-                    if (!nod.Contains(NODCore.ROOT)) return 0;
+                var nod = (DBDictionary)tr.GetObject(
+                    db.NamedObjectsDictionaryId, OpenMode.ForRead);
 
-                    var root = (DBDictionary)tr.GetObject(nod.GetAt(NODCore.ROOT), OpenMode.ForWrite);
-                    if (!root.Contains(NODCore.KEY_GRADEBEAM_SUBDICT)) return 0;
+                if (!nod.Contains(NODCore.ROOT))
+                    return 0;
 
-                    var gradeBeamContainer = (DBDictionary)tr.GetObject(root.GetAt(NODCore.KEY_GRADEBEAM_SUBDICT), OpenMode.ForWrite);
+                var root = (DBDictionary)tr.GetObject(
+                    nod.GetAt(NODCore.ROOT), OpenMode.ForRead);
 
-                    deletedCount = DeleteGradeBeamRecursive(context, tr, gradeBeamContainer, gradeBeamKey);
+                if (!root.Contains(NODCore.KEY_GRADEBEAM_SUBDICT))
+                    return 0;
 
-                    tr.Commit();
-                }
-                catch (Exception ex)
-                {
-                    ed.WriteMessage($"\n[GradeBeamManager] Failed to delete grade beam '{gradeBeamKey}': {ex.Message}");
-                }
+                var gbRoot = (DBDictionary)tr.GetObject(
+                    root.GetAt(NODCore.KEY_GRADEBEAM_SUBDICT),
+                    OpenMode.ForWrite);
+
+                deleted = DeleteGradeBeamInternal(
+                    context, tr, gbRoot, gradeBeamKey);
+
+                tr.Commit();
             }
 
-            ed.WriteMessage($"\n[GradeBeamManager] Deleted {deletedCount} entities from grade beam '{gradeBeamKey}'.");
-            return deletedCount;
+            ed.WriteMessage($"\n[GradeBeamManager] Deleted {deleted} entities.");
+            return deleted;
         }
 
-        /// <summary>
-        /// Deletes all grade beams (edges, centerlines, NOD dictionaries) from the drawing.
-        /// Returns the total number of entities deleted.
-        /// </summary>
-        public int DeleteAllGradeBeams(FoundationContext context)
+        public int DeleteGradeBeamsBatch(
+            FoundationContext context,
+            IEnumerable<string> handles)
         {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-            int totalDeleted = 0;
+            var list = handles?.Distinct().ToList();
+            if (list == null || list.Count == 0) return 0;
 
+            int deleted = 0;
             var doc = context.Document;
             var db = doc.Database;
-            var ed = doc.Editor;
 
             using (doc.LockDocument())
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                try
-                {
-                    var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
-                    if (!nod.Contains(NODCore.ROOT)) return 0;
+                var gbRoot = GradeBeamNOD.GetGradeBeamRoot(tr, db);
+                foreach (var handle in list)
+                    deleted += DeleteGradeBeamInternal(context, tr, gbRoot, handle);
 
-                    var root = (DBDictionary)tr.GetObject(nod.GetAt(NODCore.ROOT), OpenMode.ForWrite);
-                    if (!root.Contains(NODCore.KEY_GRADEBEAM_SUBDICT)) return 0;
-
-                    var gradeBeamContainer = (DBDictionary)tr.GetObject(root.GetAt(NODCore.KEY_GRADEBEAM_SUBDICT), OpenMode.ForWrite);
-
-                    // Enumerate all beams and delete each recursively
-                    foreach (var (key, _) in NODCore.EnumerateDictionary(gradeBeamContainer).ToList())
-                    {
-                        totalDeleted += DeleteGradeBeamRecursive(context, tr, gradeBeamContainer, key);
-                    }
-
-                    tr.Commit();
-                }
-                catch (Exception ex)
-                {
-                    ed.WriteMessage($"\n[GradeBeamManager] Failed to delete all grade beams: {ex.Message}");
-                }
+                tr.Commit();
             }
 
-            ed.WriteMessage($"\n[GradeBeamManager] Deleted {totalDeleted} grade beam entities.");
-            return totalDeleted;
+            GenerateEdgesForAllGradeBeams(context);
+            return deleted;
         }
+
 
         /// <summary>
         /// Deletes all edge entities of a single grade beam but keeps the centerline and NOD dictionary.
@@ -360,145 +404,179 @@ namespace FoundationDetailer.AutoCAD
         /// Deletes all edge entities of a single grade beam but keeps centerline and NOD dictionary.
         /// Returns the number of entities erased. Provides debug messages for each edge.
         /// </summary>
-        private static int DeleteGradeBeamEdgesOnly(FoundationContext context, Transaction tr, string gradeBeamKey)
+        private static int DeleteGradeBeamEdgesOnly(FoundationContext context, string gradeBeamKey)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
-            if (tr == null) throw new ArgumentNullException(nameof(tr));
             if (string.IsNullOrWhiteSpace(gradeBeamKey)) return 0;
 
+            var doc = context.Document;
+            var db = doc.Database;
+            var ed = doc.Editor;
             int deleted = 0;
-            var db = context.Document.Database;
-            var ed = context.Document.Editor;
 
-            // Make sure the edges dictionary exists
-            if (!GradeBeamNOD.HasEdgesDictionary(tr, db, gradeBeamKey))
+            using (doc.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
             {
-                ed.WriteMessage($"\n[DEBUG] Grade beam '{gradeBeamKey}' has no edges dictionary.");
-                return 0;
+                // Get the grade beam root dictionary
+                var gbRoot = GradeBeamNOD.GetGradeBeamRoot(tr, db);
+                if (!gbRoot.Contains(gradeBeamKey))
+                {
+                    ed.WriteMessage($"\n[DEBUG] Grade beam '{gradeBeamKey}' not found.");
+                    return 0;
+                }
+
+                var gbDict = (DBDictionary)tr.GetObject(gbRoot.GetAt(gradeBeamKey), OpenMode.ForWrite);
+
+                if (!GradeBeamNOD.HasEdgesDictionary(tr, db, gradeBeamKey))
+                {
+                    ed.WriteMessage($"\n[DEBUG] Grade beam '{gradeBeamKey}' has no edges.");
+                    return 0;
+                }
+
+                var edgesDict = GradeBeamNOD.GetEdgesDictionary(tr, db, gradeBeamKey, forWrite: true);
+
+                // Copy keys safely
+                var edgeKeys = new List<string>();
+                foreach (DictionaryEntry entry in edgesDict)
+                {
+                    edgeKeys.Add((string)entry.Key);
+                }
+
+                foreach (var edgeKey in edgeKeys)
+                {
+                    var xrecId = edgesDict.GetAt(edgeKey);
+                    var xrec = tr.GetObject(xrecId, OpenMode.ForWrite) as Xrecord;
+
+                    if (xrec?.Data != null)
+                    {
+                        foreach (TypedValue tv in xrec.Data)
+                        {
+                            if (tv.TypeCode != (int)DxfCode.Text) continue;
+
+                            string handleStr = tv.Value as string;
+                            if (string.IsNullOrWhiteSpace(handleStr)) continue;
+
+                            if (!NODCore.TryGetObjectIdFromHandleString(context, db, handleStr, out ObjectId oid))
+                                continue;
+
+                            if (oid.IsValid && !oid.IsErased)
+                            {
+                                (tr.GetObject(oid, OpenMode.ForWrite) as Entity)?.Erase();
+                                deleted++;
+                                ed.WriteMessage($"\n[DEBUG] Deleted edge '{edgeKey}' ({oid.Handle}).");
+                            }
+                        }
+                    }
+
+                    // Remove the Xrecord from dictionary
+                    edgesDict.Remove(edgeKey);
+                    xrec?.Erase();
+                    ed.WriteMessage($"\n[DEBUG] Removed edge Xrecord '{edgeKey}'.");
+                }
+
+                tr.Commit();
             }
 
-            // Get the edges dictionary (assumes already exists)
-            var edgesDict = GradeBeamNOD.GetEdgesDictionary(tr, db, gradeBeamKey, forWrite: true, ed);
+            return deleted;
+        }
 
-            // Enumerate all entries
-            foreach (var (edgeKey, xrecObj) in NODCore.EnumerateDictionary(edgesDict).ToList())
+        private static int DeleteGradeBeamEdgesOnlyInternal(
+            FoundationContext context,
+            Transaction tr,
+            string gradeBeamKey)
+        {
+            int deleted = 0;
+            var db = context.Document.Database;
+
+            if (!GradeBeamNOD.HasEdgesDictionary(tr, db, gradeBeamKey))
+                return 0;
+
+            var edgesDict = GradeBeamNOD.GetEdgesDictionary(tr, db, gradeBeamKey, forWrite: true);
+
+            // Copy keys to a list to avoid modifying collection while iterating
+            var keys = new List<string>();
+            foreach (DBDictionaryEntry entry in edgesDict)
+                keys.Add(entry.Key);
+
+            foreach (var edgeKey in keys)
             {
-                if (xrecObj == null || xrecObj.IsNull || xrecObj.IsErased)
+                var xrecId = edgesDict.GetAt(edgeKey);
+                var xrec = tr.GetObject(xrecId, OpenMode.ForRead) as Xrecord;
+
+                if (xrec?.Data != null)
                 {
-                    ed.WriteMessage($"\n[DEBUG] Edge '{edgeKey}' Object is null or erased. Removing from dict.");
-                    edgesDict.Remove(edgeKey);
-                    continue;
-                }
-
-                Xrecord xrec = null;
-                try
-                {
-                    xrec = tr.GetObject(xrecObj, OpenMode.ForRead) as Xrecord;
-                }
-                catch (Autodesk.AutoCAD.Runtime.Exception)
-                {
-                    ed.WriteMessage($"\n[DEBUG] Failed to open Xrecord for edge '{edgeKey}'. Removing from dict.");
-                    edgesDict.Remove(edgeKey);
-                    continue;
-                }
-
-                if (xrec?.Data == null)
-                {
-                    ed.WriteMessage($"\n[DEBUG] Edge '{edgeKey}' has no data. Removing from dict.");
-                    edgesDict.Remove(edgeKey);
-                    continue;
-                }
-
-                bool erasedThisEdge = false;
-
-                foreach (TypedValue tv in xrec.Data)
-                {
-                    if (tv.TypeCode != (int)DxfCode.Text)
-                        continue;
-
-                    string handleStr = tv.Value as string;
-                    if (string.IsNullOrWhiteSpace(handleStr))
-                        continue;
-
-                    if (!NODCore.TryGetObjectIdFromHandleString(context, db, handleStr, out ObjectId oid))
+                    foreach (TypedValue tv in xrec.Data)
                     {
-                        ed.WriteMessage($"\n[DEBUG] Could not resolve handle '{handleStr}' for edge '{edgeKey}'.");
-                        continue;
-                    }
+                        if (tv.TypeCode != (int)DxfCode.Text) continue;
 
-                    if (oid.IsNull || oid.IsErased || !oid.IsValid)
-                    {
-                        ed.WriteMessage($"\n[DEBUG] Edge '{edgeKey}' ObjectId ({oid}) does not exist in drawing.");
-                        continue;
-                    }
+                        string handleStr = tv.Value as string;
+                        if (string.IsNullOrWhiteSpace(handleStr)) continue;
 
-                    var ent = tr.GetObject(oid, OpenMode.ForWrite, false) as Entity;
-                    if (ent != null && !ent.IsErased)
-                    {
-                        ent.Erase();
-                        deleted++;
-                        erasedThisEdge = true;
-                        ed.WriteMessage($"\n[DEBUG] Deleted edge '{edgeKey}' ObjectId ({oid}).");
-                    }
-                    else
-                    {
-                        ed.WriteMessage($"\n[DEBUG] Edge '{edgeKey}' ObjectId ({oid}) already erased or null.");
+                        if (!NODCore.TryGetObjectIdFromHandleString(context, db, handleStr, out ObjectId oid))
+                            continue;
+
+                        if (oid.IsValid && !oid.IsErased)
+                        {
+                            (tr.GetObject(oid, OpenMode.ForWrite) as Entity)?.Erase();
+                            deleted++;
+                        }
                     }
                 }
 
-                // Remove the Xrecord from the dictionary after processing
-                edgesDict.Remove(edgeKey);
-                if (erasedThisEdge)
-                    ed.WriteMessage($"\n[DEBUG] Removed edge '{edgeKey}' from edges dictionary.");
+                // Erase the Xrecord itself from FD_EDGES
+                xrec?.UpgradeOpen(); // ensure writable
+                xrec?.Erase();
             }
 
             return deleted;
         }
 
 
-        /// <summary>
-        /// Deletes all grade beam edges in the drawing, leaving centerlines and NOD metadata intact.
-        /// Returns the total number of edge entities erased.
-        /// </summary>
-        public static int DeleteAllGradeBeamEdges(FoundationContext context)
+
+        // ------------------------------------------------
+        // Deletes a grade beam (centerline, edges, metadata, subdicts) by handle
+        // Returns total number of AutoCAD entities deleted
+        // ------------------------------------------------
+        public int DeleteGradeBeamRecursiveByHandle(FoundationContext context, string centerlineHandle)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
-            int totalDeleted = 0;
+            if (string.IsNullOrWhiteSpace(centerlineHandle)) return 0;
 
             var doc = context.Document;
             var db = doc.Database;
-            var ed = doc.Editor;
+            int deletedCount = 0;
 
             using (doc.LockDocument())
-            using (var tr = db.TransactionManager.StartTransaction())
+            using (Transaction tr = db.TransactionManager.StartTransaction())
             {
-                try
+                var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+                if (!nod.Contains(NODCore.ROOT)) return 0;
+
+                var root = (DBDictionary)tr.GetObject(nod.GetAt(NODCore.ROOT), OpenMode.ForWrite);
+                if (!root.Contains(NODCore.KEY_GRADEBEAM_SUBDICT)) return 0;
+
+                var gradeBeamContainer = (DBDictionary)tr.GetObject(root.GetAt(NODCore.KEY_GRADEBEAM_SUBDICT), OpenMode.ForWrite);
+                if (!gradeBeamContainer.Contains(centerlineHandle)) return 0;
+
+                var gbNodeObj = tr.GetObject(gradeBeamContainer.GetAt(centerlineHandle), OpenMode.ForWrite);
+                if (gbNodeObj is DBDictionary gbNode)
                 {
-                    var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-                    if (!nod.Contains(NODCore.ROOT)) return 0;
+                    // Recursively delete all subdictionary contents
+                    deletedCount += DeleteNODDictionaryRecursive(context, tr, gbNode);
 
-                    var root = (DBDictionary)tr.GetObject(nod.GetAt(NODCore.ROOT), OpenMode.ForRead);
-                    if (!root.Contains(NODCore.KEY_GRADEBEAM_SUBDICT)) return 0;
+                    // Erase the grade beam dictionary itself
+                    try { gbNode.Erase(); } catch { }
 
-                    var gbRoot = (DBDictionary)tr.GetObject(root.GetAt(NODCore.KEY_GRADEBEAM_SUBDICT), OpenMode.ForRead);
-
-                    // Enumerate all beams and delete edges only
-                    foreach (var (key, _) in NODCore.EnumerateDictionary(gbRoot))
-                    {
-                        totalDeleted += DeleteGradeBeamEdgesOnly(context, tr, key);
-                    }
-
-                    tr.Commit();
+                    // Remove from parent container
+                    try { gradeBeamContainer.Remove(centerlineHandle); } catch { }
                 }
-                catch (Exception ex)
-                {
-                    ed.WriteMessage($"\n[GradeBeamManager] Failed to delete all grade beam edges: {ex.Message}");
-                }
+
+                tr.Commit();
             }
 
-            ed.WriteMessage($"\n[GradeBeamManager] Deleted {totalDeleted} grade beam edges.");
-            return totalDeleted;
+            return deletedCount;
         }
+
 
 
 
@@ -598,7 +676,7 @@ namespace FoundationDetailer.AutoCAD
             var ed = doc.Editor;
             var db = doc.Database;
 
-            // STEP 1 — Collect grade beams
+            // STEP 1 Collect grade beams
             var allPolylines = new List<Polyline>();
 
             using (doc.LockDocument())
@@ -619,15 +697,15 @@ namespace FoundationDetailer.AutoCAD
                 // allPolylines now contains every centerline + edge in the drawing
             }
 
-            // STEP 2 — Extract ObjectIds
+            // STEP 2 Extract ObjectIds
             var ids = allPolylines
                 .Where(b => b != null)
                 .Select(b => b.ObjectId);
 
-            // STEP 3 — Use SelectionService to filter valid IDs and get invalid ones for logging
+            // STEP 3 Use SelectionService to filter valid IDs and get invalid ones for logging
             var validIds = SelectionService.FilterValidIds(context, ids, out List<ObjectId> invalidIds);
 
-            // STEP 4 — Log diagnostics
+            // STEP 4 Log diagnostics
             ed.WriteMessage($"\n[GradeBeam] Found={allPolylines.Count}, Valid={validIds.Count}, Invalid={invalidIds.Count}");
             foreach (var id in invalidIds)
             {
@@ -746,49 +824,6 @@ namespace FoundationDetailer.AutoCAD
             return false;
         }
 
-        // ------------------------------------------------
-        // Deletes a grade beam (centerline, edges, metadata, subdicts) by handle
-        // Returns total number of AutoCAD entities deleted
-        // ------------------------------------------------
-        public int DeleteGradeBeamRecursiveByHandle(FoundationContext context, string centerlineHandle)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-            if (string.IsNullOrWhiteSpace(centerlineHandle)) return 0;
-
-            var doc = context.Document;
-            var db = doc.Database;
-            int deletedCount = 0;
-
-            using (doc.LockDocument())
-            using (Transaction tr = db.TransactionManager.StartTransaction())
-            {
-                var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
-                if (!nod.Contains(NODCore.ROOT)) return 0;
-
-                var root = (DBDictionary)tr.GetObject(nod.GetAt(NODCore.ROOT), OpenMode.ForWrite);
-                if (!root.Contains(NODCore.KEY_GRADEBEAM_SUBDICT)) return 0;
-
-                var gradeBeamContainer = (DBDictionary)tr.GetObject(root.GetAt(NODCore.KEY_GRADEBEAM_SUBDICT), OpenMode.ForWrite);
-                if (!gradeBeamContainer.Contains(centerlineHandle)) return 0;
-
-                var gbNodeObj = tr.GetObject(gradeBeamContainer.GetAt(centerlineHandle), OpenMode.ForWrite);
-                if (gbNodeObj is DBDictionary gbNode)
-                {
-                    // Recursively delete all subdictionary contents
-                    deletedCount += DeleteNODDictionaryRecursive(context, tr, gbNode);
-
-                    // Erase the grade beam dictionary itself
-                    try { gbNode.Erase(); } catch { }
-
-                    // Remove from parent container
-                    try { gradeBeamContainer.Remove(centerlineHandle); } catch { }
-                }
-
-                tr.Commit();
-            }
-
-            return deletedCount;
-        }
 
         // ------------------------------------------------
         // Recursively deletes all subdictionaries, XRecords, and AutoCAD entities referenced by handles

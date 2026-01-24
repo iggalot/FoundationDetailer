@@ -509,7 +509,7 @@ namespace FoundationDetailer.Managers
                     string handleStr = entry.Key;
 
                     // ------------------------------
-                    // 3. Convert handle → ObjectId
+                    // 3. Convert handle - ObjectId
                     // ------------------------------
                     if (!NODCore.TryGetObjectIdFromHandleString(context, db, handleStr, out ObjectId boundaryId) ||
                         boundaryId.IsNull)

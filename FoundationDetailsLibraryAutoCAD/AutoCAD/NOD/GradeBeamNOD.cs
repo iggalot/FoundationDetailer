@@ -404,11 +404,11 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             if (edgesDict == null || ids == null)
                 return;
 
-            // 🔓 Ensure write access
+            // Ensure write access
             if (!edgesDict.IsWriteEnabled)
                 edgesDict.UpgradeOpen();
 
-            // 🔢 Count existing edges with this prefix (NO LINQ CAST)
+            // Count existing edges with this prefix (NO LINQ CAST)
             int counter = 0;
             foreach (DBDictionaryEntry entry in edgesDict)
             {
@@ -664,6 +664,28 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Returns the top-level grade beam container dictionary (FD_GRADEBEAM subdictionary) from the NOD.
+        /// Returns null if it does not exist.
+        /// </summary>
+        public static DBDictionary GetGradeBeamRoot(Transaction tr, Database db, bool forWrite = false)
+        {
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+            if (db == null) throw new ArgumentNullException(nameof(db));
+
+            var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+            if (!nod.Contains(NODCore.ROOT))
+                return null;
+
+            var root = (DBDictionary)tr.GetObject(nod.GetAt(NODCore.ROOT), OpenMode.ForRead);
+            if (!root.Contains(NODCore.KEY_GRADEBEAM_SUBDICT))
+                return null;
+
+            return (DBDictionary)tr.GetObject(
+                root.GetAt(NODCore.KEY_GRADEBEAM_SUBDICT),
+                forWrite ? OpenMode.ForWrite : OpenMode.ForRead);
         }
 
 

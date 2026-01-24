@@ -94,7 +94,7 @@ namespace FoundationDetailsLibraryAutoCAD.Services
             if (res.Status == PromptStatus.Cancel)
                 return null;
 
-            // ENTER pressed → default
+            // ENTER pressed - default
             if (res.Status == PromptStatus.None || string.IsNullOrEmpty(res.StringResult))
                 return SpacingDirections.Perpendicular;
 

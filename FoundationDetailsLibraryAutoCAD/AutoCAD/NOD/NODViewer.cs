@@ -140,15 +140,15 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                             if (NODCore.TryGetObjectIdFromHandleString(null, db, handleStr, out var oid))
                             {
                                 if (oid.IsNull)
-                                    handleStatus += $" [Handle {handleStr} → NULL]";
+                                    handleStatus += $" [Handle {handleStr} : NULL]";
                                 else if (oid.IsErased)
-                                    handleStatus += $" [Handle {handleStr} → Erased]";
+                                    handleStatus += $" [Handle {handleStr} : Erased]";
                                 else
-                                    handleStatus += $" [Handle {handleStr} → Valid Object]";
+                                    handleStatus += $" [Handle {handleStr} : Valid Object]";
                             }
                             else
                             {
-                                handleStatus += $" [Handle {handleStr} → NotFound]";
+                                handleStatus += $" [Handle {handleStr} : NotFound]";
                             }
                         }
                     }

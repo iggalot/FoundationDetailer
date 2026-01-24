@@ -49,7 +49,7 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
 
             // Compute number of intervals: largest spacing <= maxSpacing
             int intervals = (int)Math.Ceiling(length / maxSpacing); // minimal number of spaces
-            double spacing = length / intervals; // actual spacing ≤ maxSpacing
+            double spacing = length / intervals; // actual spacing <= maxSpacing
 
             var result = new List<List<Point3d>>(intervals + 1); // +1 for end line
 
