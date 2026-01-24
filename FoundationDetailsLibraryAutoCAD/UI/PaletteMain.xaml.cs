@@ -84,6 +84,8 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             BtnGenerateGradeBeamEdges.Click += (s, e) => BtnGenerateGradeBeamEdges_Click(s, e);
             BtnDeleteSingleGradeBeamFromSelect.Click += (s, e) => BtnDeleteSingleFromSelect_Click(s, e);
             BtnDeleteMultipleGradeBeamFromSelect.Click += (s, e) => BtnDeleteMultipleFromSelect_Click(s, e);
+            BtnRegenerateAll.Click += (s, e) => BtnRegenerateAll_Click(s, e);
+
 
 
 
@@ -315,6 +317,32 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             // --- Rebuild edges for all grade beams
             _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
 
+            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+        }
+
+        private void BtnRegenerateAll_Click(object sender, RoutedEventArgs e)
+        {
+            var context = CurrentContext;
+            if (context?.Document == null)
+                return;
+
+            var doc = context.Document;
+            var ed = doc.Editor;
+
+            using (doc.LockDocument())
+            {
+                ed.WriteMessage("\n[DEBUG] Deleting all grade beam edges...");
+
+                // --- Delete edges only for all grade beams
+                int totalEdgesDeleted = GradeBeamManager.DeleteAllGradeBeamEdges(context);
+                ed.WriteMessage($"\n[DEBUG] Deleted {totalEdgesDeleted} grade beam edges.");
+
+                // --- Rebuild edges for all grade beams
+                _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
+                ed.WriteMessage("\n[DEBUG] Regenerated all grade beam edges.");
+            }
+
+            // --- Refresh boundary display
             Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
 
