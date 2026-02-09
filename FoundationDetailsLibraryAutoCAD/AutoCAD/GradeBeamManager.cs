@@ -1,18 +1,15 @@
 ﻿using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
-using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using FoundationDetailsLibraryAutoCAD.AutoCAD.NOD;
 using FoundationDetailsLibraryAutoCAD.Data;
 using FoundationDetailsLibraryAutoCAD.Managers;
 using FoundationDetailsLibraryAutoCAD.Services;
-using FoundationDetailsLibraryAutoCAD.UI.Controls.EqualSpacingGBControl;
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
-using static FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.HandleHandler;
 
 namespace FoundationDetailer.AutoCAD
 {
@@ -20,6 +17,7 @@ namespace FoundationDetailer.AutoCAD
     {
         public const double DEFAULT_BEAM_WIDTH_IN = 10.0;
         public const double INCHES_TO_DRAWING_UNITS = 1.0 / 12.0;
+        public const int DEFAULT_VERTEX_QTY = 3; 
 
 
         // Track grade beams per document
@@ -43,7 +41,7 @@ namespace FoundationDetailer.AutoCAD
     double horizMax,
     double vertMin,
     double vertMax,
-    int vertexCount = 5)
+    int vertexCount = GradeBeamManager.DEFAULT_VERTEX_QTY)
         {
             if (boundary == null) throw new ArgumentNullException(nameof(boundary));
             if (context?.Document == null) throw new ArgumentNullException(nameof(context));
@@ -124,7 +122,7 @@ namespace FoundationDetailer.AutoCAD
         /// <param name="vertexCount"></param>
         /// <exception cref="ArgumentNullException"></exception>
         /// <exception cref="ArgumentException"></exception>
-        internal Polyline AddInterpolatedGradeBeam(FoundationContext context, Point3d start, Point3d end, int vertexCount)
+        internal Polyline AddInterpolatedGradeBeam(FoundationContext context, Point3d start, Point3d end, int vertexCount=DEFAULT_VERTEX_QTY)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
             if (vertexCount < 2) throw new ArgumentException("Vertex count must be >= 2", nameof(vertexCount));

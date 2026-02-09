@@ -426,7 +426,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
 
                     // Add the grade beam
-                    _gradeBeamService.AddInterpolatedGradeBeam(context, start, end, 5);
+                    _gradeBeamService.AddInterpolatedGradeBeam(context, start, end);
                 }
 
                 tr.Commit();
@@ -457,7 +457,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                     e.HorzMax,
                     e.VertMin,
                     e.VertMax,
-                    vertexCount: 5
+                    vertexCount: GradeBeamManager.DEFAULT_VERTEX_QTY
                 );
 
                 TxtStatus.Text = $"Created {beams.Count} preliminary grade beams.";
