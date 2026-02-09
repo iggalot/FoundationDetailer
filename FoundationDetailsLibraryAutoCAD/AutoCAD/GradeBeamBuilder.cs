@@ -30,12 +30,11 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 if (beams.Count == 0)
                     return;
 
-                // --- Delete existing edges
-                GradeBeamManager.DeleteAllGradeBeamEdges(context);
+                // --- 0) Delete all existing edges AND clear their Xrecords, but keep the edges sub-dictionary
+                GradeBeamManager.DeleteAllGradeBeamEdgesAndClearNOD(context);
 
                 // --- 1) Build footprints for all beams
                 var footprints = new Dictionary<ObjectId, Polyline>();
-
                 foreach (var (_, gbDict) in beams)
                 {
                     if (!GradeBeamNOD.TryGetCenterline(context, tr, gbDict, out ObjectId clId))
@@ -44,13 +43,11 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                     var cl = tr.GetObject(clId, OpenMode.ForRead) as Polyline;
                     if (cl == null) continue;
 
-                    var fp = BuildFootprint(cl, halfWidth);
-                    footprints[clId] = fp;
+                    footprints[clId] = BuildFootprint(cl, halfWidth);
                 }
 
-                // --- 2) Generate all edge segments
+                // --- 2) Generate all offset edges
                 var allEdges = new List<BeamEdgeSegment>();
-
                 foreach (var (_, gbDict) in beams)
                 {
                     if (!GradeBeamNOD.TryGetCenterline(context, tr, gbDict, out ObjectId clId))
@@ -69,13 +66,36 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 // --- 3) Trim edges against all other footprints
                 var trimmedEdges = TrimAllEdges(allEdges, footprints);
 
-                // --- 4) Draw results and optionally color (debug)
-                foreach (var e in trimmedEdges)
+                // --- 4) Store trimmed edges in NOD and draw them
+                foreach (var group in trimmedEdges.GroupBy(e => e.BeamId))
                 {
-                    var ln = new Line(e.Segment.StartPoint, e.Segment.EndPoint);
-                    ln.ColorIndex = e.IsLeft ? 1 : 5; // Red = left, Blue = right
-                    ms.AppendEntity(ln);
-                    tr.AddNewlyCreatedDBObject(ln, true);
+                    var leftSegs = group.Where(g => g.IsLeft).ToList();
+                    var rightSegs = group.Where(g => !g.IsLeft).ToList();
+
+                    var leftIds = leftSegs.Select(seg =>
+                    {
+                        var ln = new Line(seg.Segment.StartPoint, seg.Segment.EndPoint)
+                        {
+                            ColorIndex = 1 // Red for left
+                        };
+                        ms.AppendEntity(ln);
+                        tr.AddNewlyCreatedDBObject(ln, true);
+                        return ln.ObjectId;
+                    }).ToArray();
+
+                    var rightIds = rightSegs.Select(seg =>
+                    {
+                        var ln = new Line(seg.Segment.StartPoint, seg.Segment.EndPoint)
+                        {
+                            ColorIndex = 5 // Blue for right
+                        };
+                        ms.AppendEntity(ln);
+                        tr.AddNewlyCreatedDBObject(ln, true);
+                        return ln.ObjectId;
+                    }).ToArray();
+
+                    // Store ObjectIds in NOD under the beam
+                    GradeBeamNOD.StoreEdgeObjects(context, tr, group.Key, leftIds, rightIds);
                 }
 
                 // --- 5) Commit

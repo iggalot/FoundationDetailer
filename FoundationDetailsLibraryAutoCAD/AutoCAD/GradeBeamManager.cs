@@ -392,12 +392,74 @@ namespace FoundationDetailer.AutoCAD
             return deleted;
         }
 
-
         /// <summary>
-        /// Deletes all edge entities of a single grade beam but keeps the centerline and NOD dictionary.
-        /// Uses handle strings to resolve ObjectIds so it works even across sessions.
-        /// Returns the number of entities erased.
+        /// Deletes all grade beam edge entities in the drawing AND clears their Xrecords,
+        /// but keeps the edges sub-dictionary intact for each beam.
+        /// Returns the total number of AutoCAD entities erased.
         /// </summary>
+        internal static int DeleteAllGradeBeamEdgesAndClearNOD(FoundationContext context)
+        {
+            if (context == null)
+                throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var db = doc.Database;
+            var totalDeleted = 0;
+
+            using (doc.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                // --- Enumerate all grade beams
+                foreach (var (handle, gbDict) in GradeBeamNOD.EnumerateGradeBeams(context, tr))
+                {
+                    // --- Skip beams without edges sub-dictionary
+                    if (!NODCore.TryGetNestedSubDictionary(tr, gbDict, out DBDictionary edgesDict, NODCore.KEY_EDGES_SUBDICT))
+                        continue;
+
+                    // --- Collect keys to safely iterate
+                    var keys = edgesDict.Cast<DBDictionaryEntry>().Select(e => e.Key).ToList();
+
+                    foreach (var edgeKey in keys)
+                    {
+                        var xrecId = edgesDict.GetAt(edgeKey);
+                        var xrec = tr.GetObject(xrecId, OpenMode.ForRead) as Xrecord;
+
+                        if (xrec?.Data != null)
+                        {
+                            foreach (var tv in xrec.Data)
+                            {
+                                if (tv.TypeCode != (int)DxfCode.Text) continue;
+
+                                string handleStr = tv.Value as string;
+                                if (string.IsNullOrWhiteSpace(handleStr)) continue;
+
+                                if (!NODCore.TryGetObjectIdFromHandleString(context, db, handleStr, out ObjectId oid))
+                                    continue;
+
+                                if (oid.IsValid && !oid.IsErased)
+                                {
+                                    (tr.GetObject(oid, OpenMode.ForWrite) as Entity)?.Erase();
+                                    totalDeleted++;
+                                }
+                            }
+                        }
+
+                        // --- Remove the Xrecord itself from the edges dictionary
+                        edgesDict.Remove(edgeKey);
+                        xrec?.UpgradeOpen();
+                        xrec?.Erase();
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            doc.Editor.WriteMessage($"\n[DEBUG] Deleted {totalDeleted} grade beam edges and cleared Xrecords (edges sub-dictionary preserved).");
+            return totalDeleted;
+        }
+
+
+
         /// <summary>
         /// Deletes all edge entities of a single grade beam but keeps centerline and NOD dictionary.
         /// Returns the number of entities erased. Provides debug messages for each edge.
@@ -477,6 +539,8 @@ namespace FoundationDetailer.AutoCAD
 
             return deleted;
         }
+
+
 
         internal int DeleteGradeBeamEdgesOnlyInternal(
             FoundationContext context,
@@ -885,6 +949,7 @@ namespace FoundationDetailer.AutoCAD
 
             return deletedCount;
         }
+
 
 
 

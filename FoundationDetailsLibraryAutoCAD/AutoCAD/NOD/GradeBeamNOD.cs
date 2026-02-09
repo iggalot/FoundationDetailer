@@ -265,6 +265,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
 
 
+
         public static bool TryGetCenterline(
             FoundationContext context,
             Transaction tr,
