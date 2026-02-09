@@ -13,28 +13,28 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
     {
         public static void CreateGradeBeams(FoundationContext context, double halfWidth)
         {
-            if (context == null || halfWidth <= 0) return;
+            if (context == null || halfWidth <= 0)
+                return;
 
             var doc = context.Document;
             var db = doc.Database;
-            if (doc == null || db == null) return;
 
             using (doc.LockDocument())
             using (var tr = db.TransactionManager.StartTransaction())
             {
                 var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-                var btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
                 // --- Enumerate beams
                 var beams = GradeBeamNOD.EnumerateGradeBeams(context, tr).ToList();
-                if (beams.Count == 0) return; // no beams at all
+                if (beams.Count == 0)
+                    return;
 
-                // --- 0) DELETE ALL EXISTING GRADE BEAM EDGES BEFORE REBUILDING
-                int edgesDeleted = GradeBeamManager.DeleteAllGradeBeamEdges(context);
-                doc.Editor.WriteMessage($"\n[DEBUG] Deleted {edgesDeleted} existing grade beam edges before rebuilding.");
+                // --- Delete existing edges
+                GradeBeamManager.DeleteAllGradeBeamEdges(context);
 
-                // --- 1) CREATE ALL UNTRIMMED EDGES (GLOBAL SET)
-                var allTempEdges = new List<(ObjectId centerlineId, bool isLeft, Polyline edge)>();
+                // --- 1) Build footprints for all beams
+                var footprints = new Dictionary<ObjectId, Polyline>();
 
                 foreach (var (_, gbDict) in beams)
                 {
@@ -44,175 +44,268 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                     var cl = tr.GetObject(clId, OpenMode.ForRead) as Polyline;
                     if (cl == null) continue;
 
-                    var left = ManualOffset(cl, halfWidth, true);
-                    var right = ManualOffset(cl, halfWidth, false);
-
-                    if (left != null)
-                    {
-                        btr.AppendEntity(left);
-                        tr.AddNewlyCreatedDBObject(left, true);
-                        allTempEdges.Add((clId, true, left));
-                    }
-
-                    if (right != null)
-                    {
-                        btr.AppendEntity(right);
-                        tr.AddNewlyCreatedDBObject(right, true);
-                        allTempEdges.Add((clId, false, right));
-                    }
+                    var fp = BuildFootprint(cl, halfWidth);
+                    footprints[clId] = fp;
                 }
 
-                // --- 2) Only trim edges if there are 2 or more beams
-                var segmentsToKeep = new List<(ObjectId clId, bool isLeft, Polyline seg)>();
-                var segmentsToErase = new List<Polyline>();
+                // --- 2) Generate all edge segments
+                var allEdges = new List<BeamEdgeSegment>();
 
-                if (beams.Count >= 2)
+                foreach (var (_, gbDict) in beams)
                 {
-                    foreach (var edgeData in allTempEdges)
-                    {
-                        var edge = edgeData.edge;
+                    if (!GradeBeamNOD.TryGetCenterline(context, tr, gbDict, out ObjectId clId))
+                        continue;
 
-                        // --- 2a) Collect intersections with all OTHER beams
-                        var intersections = new List<Point3d>();
-                        foreach (var (otherHandle, otherDict) in beams)
-                        {
-                            if (!GradeBeamNOD.TryGetCenterline(context, tr, otherDict, out ObjectId otherClId))
-                                continue;
+                    var cl = tr.GetObject(clId, OpenMode.ForRead) as Polyline;
+                    if (cl == null) continue;
 
-                            if (otherClId == edgeData.centerlineId)
-                                continue;
+                    var left = OffsetPolyline(cl, +halfWidth);
+                    var right = OffsetPolyline(cl, -halfWidth);
 
-                            var otherLeft = allTempEdges.FirstOrDefault(e => e.centerlineId == otherClId && e.isLeft).edge;
-                            var otherRight = allTempEdges.FirstOrDefault(e => e.centerlineId == otherClId && !e.isLeft).edge;
-
-                            if (otherLeft != null) intersections.AddRange(GetIntersectionPoints(edge, otherLeft));
-                            if (otherRight != null) intersections.AddRange(GetIntersectionPoints(edge, otherRight));
-                        }
-
-                        // --- 2b) Split the edge at intersections
-                        var pieces = SplitPolylineAtPoints(edge, intersections, btr, tr);
-
-                        // --- 2c) Erase the original untrimmed edge
-                        edge.Erase();
-
-                        // --- 2d) Check each segment against all OTHER beams
-                        foreach (var seg in pieces)
-                        {
-                            bool erase = false;
-                            var midPt = GetMidPoint(seg);
-
-                            foreach (var (otherHandle, otherDict) in beams)
-                            {
-                                if (!GradeBeamNOD.TryGetCenterline(context, tr, otherDict, out ObjectId otherClId))
-                                    continue;
-
-                                if (otherClId == edgeData.centerlineId)
-                                    continue;
-
-                                var otherLeft = allTempEdges.FirstOrDefault(e => e.centerlineId == otherClId && e.isLeft).edge;
-                                var otherRight = allTempEdges.FirstOrDefault(e => e.centerlineId == otherClId && !e.isLeft).edge;
-
-                                if (otherLeft == null || otherRight == null)
-                                    continue;
-
-                                if (IsPointInsideOrOnBeam(midPt, otherLeft, otherRight))
-                                {
-                                    erase = true;
-                                    break;
-                                }
-                            }
-
-                            if (erase)
-                                segmentsToErase.Add(seg);
-                            else
-                                segmentsToKeep.Add((edgeData.centerlineId, edgeData.isLeft, seg));
-                        }
-                    }
-
-                    // --- 2e) Erase segments fully contained in other beams
-                    foreach (var seg in segmentsToErase)
-                    {
-                        if (seg != null && !seg.IsErased)
-                            seg.Erase();
-                    }
+                    allEdges.AddRange(ExplodeEdges(clId, left, true));
+                    allEdges.AddRange(ExplodeEdges(clId, right, false));
                 }
-                else
+
+                // --- 3) Trim edges against all other footprints
+                var trimmedEdges = TrimAllEdges(allEdges, footprints);
+
+                // --- 4) Draw results and optionally color (debug)
+                foreach (var e in trimmedEdges)
                 {
-                    // If only one beam, all untrimmed edges are kept
-                    foreach (var edgeData in allTempEdges)
-                    {
-                        segmentsToKeep.Add(edgeData);
-                    }
+                    var ln = new Line(e.Segment.StartPoint, e.Segment.EndPoint);
+                    ln.ColorIndex = e.IsLeft ? 1 : 5; // Red = left, Blue = right
+                    ms.AppendEntity(ln);
+                    tr.AddNewlyCreatedDBObject(ln, true);
                 }
 
-                var trimmedSegments = segmentsToKeep;
-
-                // --- 3) STORE PER BEAM
-                foreach (var group in trimmedSegments.GroupBy(e => e.clId))
-                {
-                    var leftSegs = group.Where(g => g.isLeft).Select(g => g.seg).ToList();
-                    var rightSegs = group.Where(g => !g.isLeft).Select(g => g.seg).ToList();
-
-                    GradeBeamNOD.StoreEdgeObjects(
-                        context,
-                        tr,
-                        group.Key,
-                        leftSegs.Select(p => p.ObjectId).ToArray(),
-                        rightSegs.Select(p => p.ObjectId).ToArray()
-                    );
-
-                    doc.Editor.WriteMessage(
-                        $"\n[DEBUG] Beam {group.Key}: stored {leftSegs.Count} LEFT and {rightSegs.Count} RIGHT edges."
-                    );
-                }
-
+                // --- 5) Commit
                 tr.Commit();
                 doc.Editor.Regen();
             }
         }
 
-        private static bool IsPointInsideBeam(
-            Point3d pt,
-            Polyline left,
-            Polyline right)
+
+        // Beam edge segment data structure
+        class BeamEdgeSegment
         {
-            var pL = left.GetClosestPointTo(pt, false);
-            var pR = right.GetClosestPointTo(pt, false);
-
-            var vLR = pR - pL;
-            var vLP = pt - pL;
-
-            double dot = vLP.DotProduct(vLR);
-            double lenSq = vLR.LengthSqrd;
-
-            // strictly between left and right edges
-            return dot > 0 && dot < lenSq;
+            public ObjectId BeamId;
+            public bool IsLeft;
+            public LineSegment3d Segment;
         }
 
-        private static bool IsPointInsideOrOnBeam(
-    Point3d pt,
-    Polyline left,
-    Polyline right,
-    double tol = 1e-6)
+        // Offset polyline safely
+        static Polyline OffsetPolyline(Polyline pl, double offset)
         {
-            var pL = left.GetClosestPointTo(pt, false);
-            var pR = right.GetClosestPointTo(pt, false);
+            var curves = pl.GetOffsetCurves(offset);
+            return (Polyline)curves[0];
+        }
 
-            var vLR = pR - pL;
-            var vLP = pt - pL;
+        // Build beam footprint polygon from centerline + width
+        static Polyline BuildFootprint(Polyline centerline, double halfWidth)
+        {
+            var left = OffsetPolyline(centerline, +halfWidth);
+            var right = OffsetPolyline(centerline, -halfWidth);
 
-            double dot = vLP.DotProduct(vLR);
-            double lenSq = vLR.LengthSqrd;
+            var poly = new Polyline();
+            int idx = 0;
 
-            return dot >= -tol && dot <= lenSq + tol;
+            for (int i = 0; i < left.NumberOfVertices; i++)
+                poly.AddVertexAt(idx++, left.GetPoint2dAt(i), 0, 0, 0);
+
+            for (int i = right.NumberOfVertices - 1; i >= 0; i--)
+                poly.AddVertexAt(idx++, right.GetPoint2dAt(i), 0, 0, 0);
+
+            poly.Closed = true;
+            return poly;
+        }
+
+        // Explode a polyline into atomic edge segments
+        static List<BeamEdgeSegment> ExplodeEdges(ObjectId beamId, Polyline edge, bool isLeft)
+        {
+            var list = new List<BeamEdgeSegment>();
+            for (int i = 0; i < edge.NumberOfVertices - 1; i++)
+            {
+                var p0 = edge.GetPoint3dAt(i);
+                var p1 = edge.GetPoint3dAt(i + 1);
+                list.Add(new BeamEdgeSegment
+                {
+                    BeamId = beamId,
+                    IsLeft = isLeft,
+                    Segment = new LineSegment3d(p0, p1)
+                });
+            }
+            return list;
+        }
+
+        // Trim all edges against all other beam footprints
+        static List<BeamEdgeSegment> TrimAllEdges(
+            List<BeamEdgeSegment> edges,
+            Dictionary<ObjectId, Polyline> footprints)
+        {
+            var result = new List<BeamEdgeSegment>();
+
+            foreach (var edge in edges)
+            {
+                var segments = new List<LineSegment3d> { edge.Segment };
+
+                foreach (var kvp in footprints)
+                {
+                    if (kvp.Key == edge.BeamId)
+                        continue;
+
+                    var next = new List<LineSegment3d>();
+                    foreach (var s in segments)
+                        next.AddRange(TrimSegmentByPolygon(s, kvp.Value));
+
+                    segments = next;
+                    if (segments.Count == 0) break;
+                }
+
+                foreach (var s in segments)
+                {
+                    result.Add(new BeamEdgeSegment
+                    {
+                        BeamId = edge.BeamId,
+                        IsLeft = edge.IsLeft,
+                        Segment = s
+                    });
+                }
+            }
+
+            return result;
+        }
+
+        // Trim a line segment by a polygon footprint
+        static List<LineSegment3d> TrimSegmentByPolygon(LineSegment3d seg, Polyline poly)
+        {
+            var pts = new List<Point3d> { seg.StartPoint, seg.EndPoint };
+
+            foreach (var edge in ExplodePolylineEdges(poly))
+            {
+                if (TryIntersect2D(seg, edge, out Point3d ip))
+                    pts.Add(ip);
+            }
+
+            pts = pts.Distinct(new Point3dComparer())
+                     .OrderBy(p => GetParameterAlongSegment(seg, p))
+                     .ToList();
+
+
+            var kept = new List<LineSegment3d>();
+
+            for (int i = 0; i < pts.Count - 1; i++)
+            {
+                var a = pts[i];
+                var b = pts[i + 1];
+                var mid = a + (b - a) * 0.5;
+
+                if (!PointInsidePolyline(mid, poly))
+                    kept.Add(new LineSegment3d(a, b));
+            }
+
+            return kept;
+        }
+
+        static double GetParameterAlongSegment(LineSegment3d seg, Point3d pt)
+        {
+            double dx = seg.EndPoint.X - seg.StartPoint.X;
+            double dy = seg.EndPoint.Y - seg.StartPoint.Y;
+
+            double lengthSquared = dx * dx + dy * dy;
+            if (lengthSquared < 1e-12) return 0.0; // degenerate
+
+            double t = ((pt.X - seg.StartPoint.X) * dx + (pt.Y - seg.StartPoint.Y) * dy) / lengthSquared;
+            return t; // t = 0 at StartPoint, t = 1 at EndPoint
+        }
+
+
+        static bool TryIntersect2D(LineSegment3d a, LineSegment3d b, out Point3d ip)
+        {
+            ip = new Point3d();
+
+            // Convert to 2D
+            var p1 = a.StartPoint;
+            var p2 = a.EndPoint;
+            var q1 = b.StartPoint;
+            var q2 = b.EndPoint;
+
+            double s1x = p2.X - p1.X;
+            double s1y = p2.Y - p1.Y;
+            double s2x = q2.X - q1.X;
+            double s2y = q2.Y - q1.Y;
+
+            double det = (-s2x * s1y + s1x * s2y);
+            if (Math.Abs(det) < 1e-10) return false; // parallel
+
+            double s = (-s1y * (p1.X - q1.X) + s1x * (p1.Y - q1.Y)) / det;
+            double t = (s2x * (p1.Y - q1.Y) - s2y * (p1.X - q1.X)) / det;
+
+            if (s >= 0 && s <= 1 && t >= 0 && t <= 1)
+            {
+                ip = new Point3d(p1.X + (t * s1x), p1.Y + (t * s1y), 0);
+                return true;
+            }
+
+            return false;
+        }
+
+
+        // Explode polyline into line segments
+        static IEnumerable<LineSegment3d> ExplodePolylineEdges(Polyline pl)
+        {
+            for (int i = 0; i < pl.NumberOfVertices; i++)
+            {
+                var p0 = pl.GetPoint3dAt(i);
+                var p1 = pl.GetPoint3dAt((i + 1) % pl.NumberOfVertices);
+                yield return new LineSegment3d(p0, p1);
+            }
+        }
+
+        // Point3d comparer for Distinct
+        class Point3dComparer : IEqualityComparer<Point3d>
+        {
+            const double Tol = 1e-6;
+            public bool Equals(Point3d a, Point3d b) => a.DistanceTo(b) < Tol;
+            public int GetHashCode(Point3d p) => 0;
+        }
+
+        static bool PointInsidePolyline(Point3d pt, Polyline poly)
+        {
+            int crossings = 0;
+            int n = poly.NumberOfVertices;
+
+            for (int i = 0; i < n; i++)
+            {
+                var a = poly.GetPoint2dAt(i);
+                var b = poly.GetPoint2dAt((i + 1) % n);
+
+                // Ray casting along +X from pt
+                if (((a.Y > pt.Y) != (b.Y > pt.Y)) &&
+                    (pt.X < (b.X - a.X) * (pt.Y - a.Y) / (b.Y - a.Y + 1e-12) + a.X))
+                {
+                    crossings++;
+                }
+            }
+
+            return (crossings % 2) == 1; // odd = inside, even = outside
         }
 
 
 
-        private static Point3d GetMidPoint(Polyline pl)
-        {
-            return pl.GetPointAtDist(pl.Length * 0.5);
-        }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
         private static List<Point3d> GetIntersectionPoints(Polyline a, Polyline b)
@@ -275,46 +368,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         #endregion
 
         #region --- Step 2 Create Offset Edges ---
-        /// <summary>
-        /// Offsets a single centerline polyline to both sides and adds the new edges to ModelSpace.
-        /// Returns the created edge polylines.
-        /// </summary>
-        private static List<Polyline> CreateOffsetEdges(Polyline centerline, BlockTableRecord btr, Transaction tr, double halfWidth)
-        {
-            var edges = new List<Polyline>();
-            if (centerline == null || btr == null || tr == null || halfWidth <= 0)
-                return edges;
-
-            // --- Offset left (-halfWidth)
-            //DBObjectCollection leftOffset = centerline.GetOffsetCurves(-halfWidth);
-            DBObjectCollection leftOffset = centerline.GetOffsetCurves(-halfWidth);
-
-            foreach (Entity ent in leftOffset)
-            {
-                var pl = ent as Polyline;
-                if (pl != null)
-                {
-                    btr.AppendEntity(pl);
-                    tr.AddNewlyCreatedDBObject(pl, true);
-                    edges.Add(pl);
-                }
-            }
-
-            // --- Offset right (+halfWidth)
-            DBObjectCollection rightOffset = centerline.GetOffsetCurves(halfWidth);
-            foreach (Entity ent in rightOffset)
-            {
-                var pl = ent as Polyline;
-                if (pl != null)
-                {
-                    btr.AppendEntity(pl);
-                    tr.AddNewlyCreatedDBObject(pl, true);
-                    edges.Add(pl);
-                }
-            }
-
-            return edges;
-        }
 
         private static Polyline ManualOffset(Polyline pl, double offsetDistance, bool toLeft)
         {
@@ -363,110 +416,11 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 
             return offsetPl;
         }
-        internal static List<Polyline> CreateOffsetEdgesManual(Polyline centerline, BlockTableRecord btr, Transaction tr, double halfWidth)
-        {
-            var edges = new List<Polyline>();
-            var left = ManualOffset(centerline, halfWidth, true);
-            if (left != null)
-            {
-                btr.AppendEntity(left);
-                tr.AddNewlyCreatedDBObject(left, true);
-                edges.Add(left);
-            }
-
-            var right = ManualOffset(centerline, halfWidth, false);
-            if (right != null)
-            {
-                btr.AppendEntity(right);
-                tr.AddNewlyCreatedDBObject(right, true);
-                edges.Add(right);
-            }
-
-            return edges;
-        }
-
-
 
         #endregion
 
         #region --- Step 3 Trime gradebeam edges at intersections---
-        /// <summary>
-        /// Trims offset edge polylines at intersections and creates new segments in ModelSpace.
-        /// </summary>
-        /// <summary>
-        /// Trims a list of offset edge polylines at intersections with each other.
-        /// Produces new segments in ModelSpace that do not overlap.
-        /// </summary>
-        private static List<Polyline> TrimEdgesAtIntersections(
-            List<Polyline> edges,
-            BlockTableRecord btr,
-            Transaction tr)
-        {
-            var trimmedEdges = new List<Polyline>();
-            if (edges == null || btr == null || tr == null)
-                return trimmedEdges;
 
-            var tol = new Tolerance(1e-9, 1e-9);
-
-            for (int i = 0; i < edges.Count; i++)
-            {
-                var edge = edges[i];
-                if (edge == null || edge.IsErased) continue;
-
-                // Collect all points: start/end + intersections with other edges
-                var points = new List<Point3d> { edge.StartPoint };
-
-                // Add intermediate vertices
-                for (int v = 1; v < edge.NumberOfVertices; v++)
-                    points.Add(edge.GetPoint3dAt(v));
-
-                // Check intersections with other edges
-                for (int j = 0; j < edges.Count; j++)
-                {
-                    if (i == j) continue;
-                    var other = edges[j];
-                    if (other == null || other.IsErased) continue;
-
-                    for (int k = 0; k < edge.NumberOfVertices - 1; k++)
-                    {
-                        var segLine = new Line(edge.GetPoint3dAt(k), edge.GetPoint3dAt(k + 1));
-                        var intersections = FindPolylineIntersectionPoints(segLine, other);
-
-                        foreach (var data in intersections)
-                        {
-                            // Only add if the point lies on the segment
-                            if (segLine.StartPoint.DistanceTo(data.Point) + data.Point.DistanceTo(segLine.EndPoint)
-                                - segLine.StartPoint.DistanceTo(segLine.EndPoint) < 1e-9)
-                            {
-                                points.Add(data.Point);
-                            }
-                        }
-
-                        segLine.Dispose();
-                    }
-                }
-
-                // Remove duplicates and sort along original start
-                points = points.Distinct(new Point3dEqualityComparer(tol)).OrderBy(p => p.DistanceTo(edge.StartPoint)).ToList();
-
-                // Create segments between consecutive points
-                for (int s = 0; s < points.Count - 1; s++)
-                {
-                    if (points[s].DistanceTo(points[s + 1]) < 1e-9) continue;
-
-                    var seg = new Polyline();
-                    seg.AddVertexAt(0, new Point2d(points[s].X, points[s].Y), 0, 0, 0);
-                    seg.AddVertexAt(1, new Point2d(points[s + 1].X, points[s + 1].Y), 0, 0, 0);
-
-                    btr.AppendEntity(seg);
-                    tr.AddNewlyCreatedDBObject(seg, true);
-
-                    trimmedEdges.Add(seg);
-                }
-            }
-
-            return trimmedEdges;
-        }
 
         /// <summary>
         /// Equality comparer for Point3d with tolerance.
@@ -484,148 +438,13 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         }
 
 
-        public class IntersectPointData
-        {
-            public Point3d Point { get; set; }
-            // You can add other properties if needed later (e.g., segment index)
-        }
 
-        /// <summary>
-        /// Finds intersection points between a line and a polyline.
-        /// </summary>
-        public static List<IntersectPointData> FindPolylineIntersectionPoints(Line segLine, Polyline poly, bool extendLine = false)
-        {
-            var results = new List<IntersectPointData>();
-            if (segLine == null || poly == null) return results;
 
-            for (int i = 0; i < poly.NumberOfVertices - 1; i++)
-            {
-                Line polySeg = new Line(poly.GetPoint3dAt(i), poly.GetPoint3dAt(i + 1));
 
-                // IntersectType = OnBothOperands, ignoring tangents
-                Point3dCollection intersections = new Point3dCollection();
-                polySeg.IntersectWith(segLine, Intersect.OnBothOperands, intersections, IntPtr.Zero, IntPtr.Zero);
-
-                foreach (Point3d pt in intersections)
-                {
-                    results.Add(new IntersectPointData { Point = pt });
-                }
-
-                polySeg.Dispose(); // release the temp line
-            }
-
-            return results;
-        }
-
-        /// <summary>
-        /// Sorts points by distance from a reference point.
-        /// </summary>
-        public static List<Point3d> SortByDistanceFromRefPoint(List<Point3d> points, Point3d refPoint)
-        {
-            if (points == null || points.Count == 0) return new List<Point3d>();
-
-            return points.OrderBy(p => p.DistanceTo(refPoint)).ToList();
-        }
-
-        /// <summary>
-        /// Creates a 2-vertex polyline in ModelSpace.
-        /// </summary>
-        public static Polyline CreatePolyline(Point3d start, Point3d end, string layer = "0", string linetype = "ByLayer")
-        {
-            Polyline pl = new Polyline();
-            pl.AddVertexAt(0, new Point2d(start.X, start.Y), 0, 0, 0);
-            pl.AddVertexAt(1, new Point2d(end.X, end.Y), 0, 0, 0);
-
-            pl.Layer = layer;
-            pl.Linetype = linetype;
-
-            return pl;
-        }
 
         #endregion
 
         #region --- Step 4 Join edge segments if they are on the same polyline---
-        /// <summary>
-        /// Joins consecutive edge segments into single polylines where possible.
-        /// Assumes all segments are already added to ModelSpace and part of a valid transaction.
-        /// </summary>
-        public static List<Polyline> JoinEdgeSegments(FoundationContext context, List<Polyline> segments)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-            if (segments == null || segments.Count == 0)
-                return new List<Polyline>();
-
-            var joinedEdges = new List<Polyline>();
-
-            // Tolerance for comparing points
-            var tol = new Tolerance(1e-6, 1e-6);
-
-            bool[] used = new bool[segments.Count];
-
-            for (int i = 0; i < segments.Count; i++)
-            {
-                if (used[i]) continue;
-
-                Polyline baseSeg = segments[i];
-
-                // Skip if segment is erased or has no database
-                if (baseSeg.IsErased || baseSeg.Database == null)
-                {
-                    used[i] = true;
-                    continue;
-                }
-
-                used[i] = true;
-
-                bool foundJoin;
-
-                do
-                {
-                    foundJoin = false;
-
-                    for (int j = 0; j < segments.Count; j++)
-                    {
-                        if (used[j]) continue;
-
-                        Polyline candidate = segments[j];
-
-                        // Skip invalid candidates
-                        if (candidate.IsErased || candidate.Database == null)
-                        {
-                            used[j] = true;
-                            continue;
-                        }
-
-                        // Upgrade both polylines for write if needed
-                        if (!baseSeg.IsWriteEnabled) baseSeg.UpgradeOpen();
-                        if (!candidate.IsWriteEnabled) candidate.UpgradeOpen();
-
-                        // Check if endpoints match (start/end)
-                        if (baseSeg.EndPoint.IsEqualTo(candidate.StartPoint, tol))
-                        {
-                            baseSeg.JoinEntities(new Entity[] { candidate });
-                            candidate.Erase();
-                            used[j] = true;
-                            foundJoin = true;
-                            break;
-                        }
-                        else if (baseSeg.StartPoint.IsEqualTo(candidate.EndPoint, tol))
-                        {
-                            candidate.JoinEntities(new Entity[] { baseSeg });
-                            baseSeg = candidate; // New base
-                            used[j] = true;
-                            foundJoin = true;
-                            break;
-                        }
-                    }
-
-                } while (foundJoin);
-
-                joinedEdges.Add(baseSeg);
-            }
-
-            return segments;
-        }
 
 
         #endregion
