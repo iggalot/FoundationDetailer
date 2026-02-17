@@ -4,7 +4,6 @@
 // 3) Never assume ObjectId validity
 // 4) All writes require DocumentLock
 
-using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Runtime;
 using FoundationDetailsLibraryAutoCAD.Data;
@@ -181,7 +180,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         /// <summary>
         /// Tries to resolve a handle string to an ObjectId.
         /// </summary>
-        private static bool TryResolveHandleToObjectId(
+        internal static bool TryResolveHandleToObjectId(
             FoundationContext context,
             Database db,
             string handleStr,
@@ -196,7 +195,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             {
                 var handle = new Handle(Convert.ToInt64(handleStr, 16));
                 id = db.GetObjectId(false, handle, 0);
-                return id.IsValid && !id.IsNull;
+                return id.IsValid && !id.IsNull && !id.IsErased;
             }
             catch
             {

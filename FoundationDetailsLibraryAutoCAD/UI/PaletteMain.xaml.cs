@@ -2,12 +2,12 @@ using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
+using Autodesk.AutoCAD.Runtime;
 using FoundationDetailer.AutoCAD;
 using FoundationDetailer.Managers;
 using FoundationDetailer.UI.Windows;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using FoundationDetailsLibraryAutoCAD.AutoCAD.NOD;
-using FoundationDetailsLibraryAutoCAD.AutoCAD.Testing;
 using FoundationDetailsLibraryAutoCAD.Data;
 using FoundationDetailsLibraryAutoCAD.Managers;
 using FoundationDetailsLibraryAutoCAD.Services;
@@ -82,9 +82,10 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             BtnTest.Click += (s, e) => BtnTest_Click();
             BtnEraseNODFully.Click += (s, e) => BtnEraseNODFully_Click();
             BtnGenerateGradeBeamEdges.Click += (s, e) => BtnGenerateGradeBeamEdges_Click(s, e);
-            BtnDeleteSingleGradeBeamFromSelect.Click += (s, e) => BtnDeleteSingleFromSelect_Click(s, e);
+            //BtnDeleteSingleGradeBeamFromSelect.Click += (s, e) => BtnDeleteSingleFromSelect_Click(s, e);
             BtnDeleteMultipleGradeBeamFromSelect.Click += (s, e) => BtnDeleteMultipleFromSelect_Click(s, e);
             BtnRegenerateAll.Click += (s, e) => BtnRegenerateAll_Click(s, e);
+            BtnClearAllEdges.Click += (s, e) => BtnDeleteAllGradeBeamEdges(s, e);
 
 
 
@@ -107,107 +108,185 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
         }
 
-        private void BtnDeleteSingleFromSelect_Click(object s, RoutedEventArgs e)
+        /// <summary>
+        /// Deletes the edges al all interior gradebeams
+        /// </summary>
+        /// <param name="context"></param>
+        /// <returns></returns>
+        public int BtnDeleteAllGradeBeamEdges(object s, RoutedEventArgs e)
         {
             var context = CurrentContext;
+
             if (context?.Document == null)
-                return;
+                return 0;
+
+            var doc = context.Document;
+            var db = doc.Database;
+            int deletedCount = 0;
+
+            using (doc.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                // --- Enumerate all grade beams
+                foreach (var (gbHandle, gbDict) in GradeBeamNOD.EnumerateGradeBeams(context, tr))
+                {
+                    if (!gbDict.Contains(NODCore.KEY_EDGES_SUBDICT))
+                        continue;
+
+                    var edgesDict = tr.GetObject(
+                        gbDict.GetAt(NODCore.KEY_EDGES_SUBDICT),
+                        OpenMode.ForWrite) as DBDictionary;
+
+                    if (edgesDict == null)
+                        continue;
+
+                    // --- Collect all Xrecord ObjectIds first
+                    var xrecIds = NODCore.EnumerateDictionary(edgesDict)
+                                          .Select(kv => kv.Item2)
+                                          .Where(id => id.IsValid && !id.IsErased)
+                                          .ToList();
+
+                    // --- Erase each Xrecord and the AutoCAD objects it references
+                    foreach (var xrecId in xrecIds)
+                    {
+                        var xrec = tr.GetObject(xrecId, OpenMode.ForWrite) as Xrecord;
+                        if (xrec != null)
+                        {
+                            var dataArray = xrec.Data?.AsArray();
+                            if (dataArray != null && dataArray.Length > 0)
+                            {
+                                var handleStr = dataArray[0].Value as string;
+                                if (!string.IsNullOrWhiteSpace(handleStr) &&
+                                    NODCore.TryResolveHandleToObjectId(context, db, handleStr, out ObjectId edgeObjId))
+                                {
+                                    if (edgeObjId.IsValid && !edgeObjId.IsErased)
+                                    {
+                                        var obj = tr.GetObject(edgeObjId, OpenMode.ForWrite);
+                                        obj.Erase();
+                                        deletedCount++;
+                                    }
+                                }
+                            }
+
+                            // --- Erase the Xrecord itself
+                            xrec.Erase();
+                        }
+                    }
+
+                    // --- Remove all entries from the edges dictionary
+                    var keysToRemove = edgesDict.Cast<DBDictionaryEntry>()
+                                                .Select(entry => entry.Key)
+                                                .ToList();
+
+                    foreach (var key in keysToRemove)
+                    {
+                        edgesDict.Remove(key); // this removes the entry from the dictionary
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            return deletedCount;
+        }
+
+
+        /// <summary>
+        /// Deletes multiple edges based on user selection.
+        /// </summary>
+        /// <param name="s"></param>
+        /// <param name="e"></param>
+        private void BtnEraseMultipleGradeBeamEdges(object s, RoutedEventArgs e)
+        {
+            var context = CurrentContext;
+            if (context?.Document == null) return;
 
             var doc = context.Document;
             var db = doc.Database;
             var ed = doc.Editor;
 
-            // --------------------------------------------------
-            // 1) Prompt user to select any grade beam object
-            // --------------------------------------------------
-            var peo = new PromptEntityOptions("\nSelect any object of a grade beam to delete:");
-            var pres = ed.GetEntity(peo);
-
-            if (pres.Status != PromptStatus.OK)
+            try
             {
-                ed.WriteMessage("\n[DEBUG] Operation cancelled at selection step.");
-                return;
+                // --- Prompt user to select a centerline or edge fragment
+                var res = ed.GetEntity("\nSelect a grade beam centerline or edge: ");
+                if (res.Status != PromptStatus.OK) return;
+
+                using (doc.LockDocument())
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    var selectedId = res.ObjectId;
+
+                    // --- Step 1: Resolve parent grade beam handle
+                    string parentGradeBeamHandle;
+                    bool isCenterline, isEdge;
+
+                    if (!GradeBeamNOD.TryResolveOwningGradeBeam(
+                        context, tr, selectedId, out parentGradeBeamHandle, out isCenterline, out isEdge))
+                    {
+                        ed.WriteMessage("\nSelected object is not part of a grade beam.");
+                        return;
+                    }
+
+                    // --- Step 2: Enumerate all edges of the parent grade beam
+                    var edgeIds = GradeBeamNOD.EnumerateGradeBeamEdgesByHandle(context, tr, parentGradeBeamHandle).ToList();
+
+                    if (edgeIds.Count == 0)
+                    {
+                        ed.WriteMessage("\nNo edges found for this grade beam.");
+                        return;
+                    }
+
+                    // --- Step 3: Erase all edge entities
+                    int erasedCount = 0;
+                    foreach (var edgeId in edgeIds)
+                    {
+                        var obj = tr.GetObject(edgeId, OpenMode.ForWrite);
+                        if (obj != null && !obj.IsErased)
+                        {
+                            obj.Erase();
+                            erasedCount++;
+                        }
+                    }
+
+                    // --- Step 4: Clear the edges subdictionary
+                    var gbDict = GradeBeamNOD.GetGradeBeamDictionaryByHandle(context, tr, parentGradeBeamHandle);
+                    if (gbDict != null && gbDict.Contains(NODCore.KEY_EDGES_SUBDICT))
+                    {
+                        var edgesDict = tr.GetObject(gbDict.GetAt(NODCore.KEY_EDGES_SUBDICT), OpenMode.ForWrite) as DBDictionary;
+                        if (edgesDict != null)
+                        {
+                            var keys = new List<string>();
+                            foreach (DBDictionaryEntry entry in edgesDict)
+                                keys.Add(entry.Key);
+
+                            foreach (var key in keys)
+                            {
+                                try
+                                {
+                                    var obj = tr.GetObject(edgesDict.GetAt(key), OpenMode.ForWrite);
+                                    obj?.Erase();
+                                    edgesDict.Remove(key);
+                                }
+                                catch
+                                {
+                                    // ignore stale objects
+                                }
+                            }
+                        }
+                    }
+
+                    tr.Commit();
+                    ed.WriteMessage($"\nErased {erasedCount} edge entities for grade beam {parentGradeBeamHandle}.");
+                }
             }
-
-            ObjectId selectedId = pres.ObjectId;
-            ed.WriteMessage($"\n[DEBUG] Selected object handle: {selectedId.Handle}");
-
-            string gradeBeamHandle;
-            bool isCenterline;
-            bool isEdge;
-
-            // --------------------------------------------------
-            // 2) Resolve owning grade beam via NOD helper
-            // --------------------------------------------------
-            using (doc.LockDocument())
-            using (var tr = db.TransactionManager.StartTransaction())
+            catch (System.Exception ex)
             {
-                if (!GradeBeamNOD.TryResolveOwningGradeBeam(
-                        context,
-                        tr,
-                        selectedId,
-                        out gradeBeamHandle,
-                        out isCenterline,
-                        out isEdge))
-                {
-                    ed.WriteMessage(
-                        "\n[DEBUG] Selected object does not belong to any grade beam.");
-                    return;
-                }
-
-                ed.WriteMessage(
-                    $"\n[DEBUG] Object belongs to grade beam '{gradeBeamHandle}' " +
-                    $"({(isCenterline ? "centerline" : "edge")}).");
-
-                // --------------------------------------------------
-                // 3) Confirm deletion
-                // --------------------------------------------------
-                var pko = new PromptKeywordOptions(
-                    $"\nDelete grade beam '{gradeBeamHandle}' and rebuild remaining edges?")
-                {
-                    AllowNone = false
-                };
-                pko.Keywords.Add("Yes");
-                pko.Keywords.Add("No");
-
-                var presConfirm = ed.GetKeywords(pko);
-                if (presConfirm.Status != PromptStatus.OK ||
-                    presConfirm.StringResult != "Yes")
-                {
-                    ed.WriteMessage("\n[DEBUG] Deletion cancelled by user.");
-                    return;
-                }
-
-                // --------------------------------------------------
-                // 4) Delete selected grade beam (centerline + edges + NOD)
-                // --------------------------------------------------
-                int deletedCount =
-                    _gradeBeamService.DeleteGradeBeamRecursiveByHandle(
-                        context,
-                        gradeBeamHandle);
-
-                ed.WriteMessage(
-                    $"\n[DEBUG] Deleted {deletedCount} entities for grade beam '{gradeBeamHandle}'.");
-
-                // --------------------------------------------------
-                // 5) Delete ALL remaining edges (global cleanup)
-                // --------------------------------------------------
-                int edgesDeleted =
-                    GradeBeamManager.DeleteAllGradeBeamEdges(context);
-
-                ed.WriteMessage(
-                    $"\n[DEBUG] Deleted {edgesDeleted} remaining grade beam edges.");
-
-                tr.Commit();
+                ed.WriteMessage($"\nError: {ex.Message}");
             }
-
-            // --------------------------------------------------
-            // 6) Rebuild edges for remaining grade beams
-            // --------------------------------------------------
-            _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
-
-            ed.WriteMessage("\n[DEBUG] Rebuilt grade beam edges.");
         }
+
+
+
 
         private void BtnDeleteMultipleFromSelect_Click(object s, RoutedEventArgs e)
         {
@@ -466,7 +545,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
                 Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
             }
-            catch (Exception ex)
+            catch (System.Exception ex)
             {
                 TxtStatus.Text = $"Error creating grade beams: {ex.Message}";
             }
@@ -586,7 +665,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 PrelimGBControl.ViewModel.IsPreliminaryGenerated = true;
                 PrelimGBControl.Visibility = System.Windows.Visibility.Collapsed;
             }
-            catch (Exception ex)
+            catch (System.Exception ex)
             {
                 TxtStatus.Text = $"Error adding grade beam: {ex.Message}";
             }
@@ -595,7 +674,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
         private void UpdateBoundaryDisplay()
         {
-            var context = CurrentContext ?? throw new Exception("Un UpdateBoundaryDCurrent context is null.");
+            var context = CurrentContext ?? throw new System.Exception("Un UpdateBoundaryDCurrent context is null.");
 
             bool isValid = false;
 
@@ -884,7 +963,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
                 TxtStatus.Text = "Grade beams updated and edges regenerated.";
             }
-            catch (Exception ex)
+            catch (Autodesk.AutoCAD.Runtime.Exception ex)
             {
                 ed.WriteMessage($"\nError converting to GradeBeam: {ex.Message}");
                 TxtStatus.Text = $"Error: {ex.Message}";

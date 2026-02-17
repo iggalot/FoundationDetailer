@@ -199,7 +199,7 @@ namespace FoundationDetailer.AutoCAD
             RegisterGradeBeam(context, newPl, tr, appendToModelSpace: false);
 
             // --- Remove old GradeBeam NOD entry if it exists ---
-            GradeBeamNOD.EraseGradeBeamEntry(tr, db, oldEnt.Handle.ToString());
+            GradeBeamNOD.DeleteGradeBeamNode(context, oldEnt.Handle.ToString());
 
             // --- Delete old entity from ModelSpace ---
             oldEnt.UpgradeOpen();
@@ -800,6 +800,9 @@ namespace FoundationDetailer.AutoCAD
 
             _regAppRegistered.Add(doc);
         }
+
+
+
 
         #region Geometry Calculations (derived)
         /// <summary>

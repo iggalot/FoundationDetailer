@@ -1,11 +1,7 @@
 ﻿using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
-using FoundationDetailsLibraryAutoCAD.AutoCAD;
-using FoundationDetailsLibraryAutoCAD.Data;
 using System;
-using System.Collections.Generic;
 using System.Runtime.InteropServices;
-using System.Windows.Threading;
 
 namespace FoundationDetailer.AutoCAD
 {
@@ -19,20 +15,6 @@ namespace FoundationDetailer.AutoCAD
             pl.Closed = true;
             pl.Elevation = elevation;
             return pl;
-        }
-
-        private static Polyline CreateRectangle(Point3d center, double widthIn, double depthIn)
-        {
-            double hx = widthIn / 2.0;
-            double hy = depthIn / 2.0;
-            var pts = new System.Collections.Generic.List<Point3d>
-            {
-                new Point3d(center.X - hx, center.Y - hy, center.Z),
-                new Point3d(center.X + hx, center.Y - hy, center.Z),
-                new Point3d(center.X + hx, center.Y + hy, center.Z),
-                new Point3d(center.X - hx, center.Y + hy, center.Z)
-            };
-            return CreatePolyline(pts, center.Z);
         }
     }
 
