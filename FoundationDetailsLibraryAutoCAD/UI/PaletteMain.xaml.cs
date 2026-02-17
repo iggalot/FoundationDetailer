@@ -119,6 +119,22 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
             try
             {
+                // --- Confirm deletion
+                var pko = new PromptKeywordOptions(
+                    "\nDelete all edges from ALL grade beams? This cannot be undone.")
+                {
+                    AllowNone = false
+                };
+                pko.Keywords.Add("Yes");
+                pko.Keywords.Add("No");
+
+                var confirm = ed.GetKeywords(pko);
+                if (confirm.Status != PromptStatus.OK || confirm.StringResult != "Yes")
+                {
+                    ed.WriteMessage("\nOperation canceled.");
+                    return;
+                }
+
                 using (doc.LockDocument())
                 using (var tr = db.TransactionManager.StartTransaction())
                 {
