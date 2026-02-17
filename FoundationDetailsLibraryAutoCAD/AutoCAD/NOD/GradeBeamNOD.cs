@@ -682,6 +682,73 @@ Transaction tr)
                 OpenMode.ForRead) as DBDictionary;
         }
 
+        /// <summary>
+        /// Deletes all edge entities for a given grade beam, including the NOD entries.
+        /// Returns the number of AutoCAD entities erased.
+        /// </summary>
+        public static int DeleteAllEdgesForGradeBeam(
+            FoundationContext context,
+            Transaction tr,
+            string gradeBeamHandle)
+        {
+            if (context == null || tr == null || string.IsNullOrWhiteSpace(gradeBeamHandle))
+                return 0;
+
+            var db = context.Document.Database;
+            int erasedCount = 0;
+
+            // --- Get the grade beam dictionary
+            var gbDict = GradeBeamNOD.GetGradeBeamDictionaryByHandle(context, tr, gradeBeamHandle);
+            if (gbDict == null || !gbDict.Contains(NODCore.KEY_EDGES_SUBDICT))
+                return 0;
+
+            var edgesDict = tr.GetObject(
+                gbDict.GetAt(NODCore.KEY_EDGES_SUBDICT),
+                OpenMode.ForWrite) as DBDictionary;
+
+            if (edgesDict == null)
+                return 0;
+
+            // --- Enumerate all edge Xrecords
+            var edgeKeys = new List<string>();
+            foreach (DBDictionaryEntry entry in edgesDict)
+                edgeKeys.Add(entry.Key);
+
+            foreach (var key in edgeKeys)
+            {
+                try
+                {
+                    var xrec = tr.GetObject(edgesDict.GetAt(key), OpenMode.ForWrite) as Xrecord;
+                    var dataArray = xrec.Data.AsArray();
+                    if (dataArray.Length > 0)
+                    {
+                        var firstTv = dataArray[0];
+                        var handleStr = firstTv.Value as string; // safe cast
+                        if (!string.IsNullOrWhiteSpace(handleStr)
+                            && NODCore.TryResolveHandleToObjectId(context, db, handleStr, out ObjectId oid))
+                        {
+                            if (oid.IsValid && !oid.IsErased)
+                            {
+                                var obj = tr.GetObject(oid, OpenMode.ForWrite);
+                                obj?.Erase();
+                                erasedCount++;
+                            }
+                        }
+                    }
+
+                    // --- Remove the Xrecord from the subdictionary
+                    edgesDict.Remove(key);
+                }
+                catch
+                {
+                    // ignore stale or already-erased objects
+                }
+            }
+
+            return erasedCount;
+        }
+
+
 
 
     }
