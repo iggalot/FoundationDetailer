@@ -2,6 +2,7 @@
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
+using FoundationDetailer.Managers;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using FoundationDetailsLibraryAutoCAD.AutoCAD.NOD;
 using FoundationDetailsLibraryAutoCAD.Data;
@@ -69,6 +70,7 @@ namespace FoundationDetailer.AutoCAD
                     List<Point2d> verts = linePts.Select(p => new Point2d(p.X, p.Y)).ToList();
                     Polyline pl = PolylineConversionService.CreatePolylineFromVertices(verts);
                     RegisterGradeBeam(context, pl, tr, appendToModelSpace: true);
+                    MathHelperManager.ClipPolylineToPolyline(pl, boundary);
                     createdBeams.Add(pl);
                 }
 
@@ -78,6 +80,7 @@ namespace FoundationDetailer.AutoCAD
                     List<Point2d> verts = linePts.Select(p => new Point2d(p.X, p.Y)).ToList();
                     Polyline pl = PolylineConversionService.CreatePolylineFromVertices(verts);
                     RegisterGradeBeam(context, pl, tr, appendToModelSpace: true);
+                    MathHelperManager.ClipPolylineToPolyline(pl, boundary);
                     createdBeams.Add(pl);
                 }
 
@@ -170,42 +173,48 @@ namespace FoundationDetailer.AutoCAD
             RegisterGradeBeam(context, pl, tr, appendToModelSpace: false);
         }
 
-        internal void ConvertToGradeBeam(
-            FoundationContext context,
-            ObjectId oldEntityId,
-            int vertexCount,
-            Transaction tr)
+        internal void ConvertToGradeBeam(FoundationContext context, ObjectId oldEntityId, int vertexCount)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
             if (oldEntityId.IsNull) throw new ArgumentException("Invalid ObjectId.", nameof(oldEntityId));
-            if (tr == null) throw new ArgumentNullException(nameof(tr));
 
-            var db = context.Document.Database;
-            var oldEnt = tr.GetObject(oldEntityId, OpenMode.ForRead) as Entity;
-            if (oldEnt == null)
-                throw new ArgumentException("Object is not a valid entity.", nameof(oldEntityId));
+            var doc = context.Document;
+            var db = doc.Database;
 
-            // --- Convert old entity to new Polyline ---
-            var verts = PolylineConversionService.GetVertices(oldEnt);
+            using (doc.LockDocument())
+            {
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    var oldEnt = tr.GetObject(oldEntityId, OpenMode.ForRead) as Entity;
+                    if (oldEnt == null)
+                        throw new ArgumentException("Object is not a valid entity.", nameof(oldEntityId));
 
-            // Ensure minimum vertex count
-            verts = PolylineConversionService.EnsureMinimumVertices(verts, vertexCount);
+                    // --- Convert old entity to new Polyline
+                    var verts = PolylineConversionService.GetVertices(oldEnt);
 
-            Polyline newPl = PolylineConversionService.CreatePolylineFromVertices(verts, oldEnt);
+                    // Ensure minimum vertex count
+                    verts = PolylineConversionService.EnsureMinimumVertices(verts, vertexCount);
 
-            // --- Append to ModelSpace (infrastructure) if needed ---
-            ModelSpaceWriterService.AppendToModelSpace(tr, db, newPl);
+                    Polyline newPl = PolylineConversionService.CreatePolylineFromVertices(verts, oldEnt);
 
-            // --- Write GradeBeam metadata and register in NOD ---
-            RegisterGradeBeam(context, newPl, tr, appendToModelSpace: false);
+                    // --- Append to ModelSpace
+                    ModelSpaceWriterService.AppendToModelSpace(tr, db, newPl);
 
-            // --- Remove old GradeBeam NOD entry if it exists ---
-            DeleteGradeBeamNode(context, oldEnt.Handle.ToString());
+                    // --- Register GradeBeam metadata in NOD
+                    RegisterGradeBeam(context, newPl, tr, appendToModelSpace: false);
 
-            // --- Delete old entity from ModelSpace ---
-            oldEnt.UpgradeOpen();
-            oldEnt.Erase();
+                    // --- Remove old GradeBeam NOD entry if it exists
+                    DeleteGradeBeamNode(context, tr, oldEnt.Handle.ToString());
+
+                    // --- Delete old entity
+                    oldEnt.UpgradeOpen();
+                    oldEnt.Erase();
+
+                    tr.Commit();
+                }
+            }
         }
+
 
 
         public int DeleteEdgesForSingleBeam(FoundationContext context, string handle)
@@ -827,7 +836,7 @@ namespace FoundationDetailer.AutoCAD
         /// <param name="context">Current foundation context</param>
         /// <param name="centerlineHandle">Handle string of the centerline for the grade beam to delete</param>
         /// <returns>True if deletion succeeded, false otherwise</returns>
-        public static bool DeleteGradeBeamNode(FoundationContext context, string centerlineHandle)
+        internal bool DeleteGradeBeamNode(FoundationContext context, Transaction tr, string centerlineHandle)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
             if (string.IsNullOrWhiteSpace(centerlineHandle)) throw new ArgumentNullException(nameof(centerlineHandle));
@@ -836,47 +845,58 @@ namespace FoundationDetailer.AutoCAD
             Database db = doc.Database;
             Editor ed = doc.Editor;
 
-            using (doc.LockDocument())
-            using (Transaction tr = db.TransactionManager.StartTransaction())
+            try
             {
-                try
+                // Get the top-level NOD
+                var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+
+                if (!nod.Contains(NODCore.ROOT))
                 {
-                    // Get the top-level NOD
-                    var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
-
-                    if (!nod.Contains(NODCore.ROOT))
-                    {
-                        ed.WriteMessage($"\n[GradeBeamNOD] No {NODCore.ROOT} dictionary exists.");
-                        return false;
-                    }
-
-                    // Get the FD_GRADEBEAM container
-                    var root = (DBDictionary)tr.GetObject(nod.GetAt(NODCore.ROOT), OpenMode.ForWrite);
-                    if (!root.Contains(NODCore.KEY_GRADEBEAM_SUBDICT))
-                    {
-                        ed.WriteMessage($"\n[GradeBeamNOD] No {NODCore.KEY_GRADEBEAM_SUBDICT} container exists.");
-                        return false;
-                    }
-
-                    var gradeBeamContainer = (DBDictionary)tr.GetObject(root.GetAt(NODCore.KEY_GRADEBEAM_SUBDICT), OpenMode.ForWrite);
-
-                    // Delete using NODCore helper
-                    bool deleted = NODCore.DeleteNODSubDictionary(context, tr, gradeBeamContainer, centerlineHandle);
-
-                    if (deleted)
-                        tr.Commit();
-
-                    return deleted;
-                }
-                catch (Exception ex)
-                {
-                    ed.WriteMessage($"\n[GradeBeamNOD] Failed to delete grade beam: {ex.Message}");
+                    ed.WriteMessage($"\n[GradeBeamNOD] No {NODCore.ROOT} dictionary exists.");
                     return false;
                 }
+
+                // Get the FD_GRADEBEAM container
+                var root = (DBDictionary)tr.GetObject(nod.GetAt(NODCore.ROOT), OpenMode.ForWrite);
+                if (!root.Contains(NODCore.KEY_GRADEBEAM_SUBDICT))
+                {
+                    ed.WriteMessage($"\n[GradeBeamNOD] No {NODCore.KEY_GRADEBEAM_SUBDICT} container exists.");
+                    return false;
+                }
+
+                var gradeBeamContainer = (DBDictionary)tr.GetObject(root.GetAt(NODCore.KEY_GRADEBEAM_SUBDICT), OpenMode.ForWrite);
+
+                // Delete using NODCore helper
+                bool deleted = NODCore.DeleteNODSubDictionary(context, tr, gradeBeamContainer, centerlineHandle);
+
+                if (deleted)
+                    tr.Commit();
+
+                return deleted;
+            }
+            catch (Exception ex)
+            {
+                ed.WriteMessage($"\n[GradeBeamNOD] Failed to delete grade beam: {ex.Message}");
+                return false;
             }
         }
 
+        public IEnumerable<string> ResolveGradeBeamHandles(FoundationContext context, IEnumerable<ObjectId> objectIds)
+        {
+            var handles = new HashSet<string>();
+            if (context?.Document == null || objectIds == null)
+                return handles;
 
+            using (var tr = context.Document.Database.TransactionManager.StartTransaction())
+            {
+                foreach (var id in objectIds)
+                {
+                    if (GradeBeamNOD.TryResolveOwningGradeBeam(context, tr, id, out string handle, out bool _, out bool _))
+                        handles.Add(handle);
+                }
+            }
+            return handles;
+        }
 
 
 

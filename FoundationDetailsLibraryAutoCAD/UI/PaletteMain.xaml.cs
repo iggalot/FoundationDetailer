@@ -12,13 +12,11 @@ using FoundationDetailsLibraryAutoCAD.Managers;
 using FoundationDetailsLibraryAutoCAD.Services;
 using FoundationDetailsLibraryAutoCAD.UI.Controls.EqualSpacingGBControl;
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
-using static FoundationDetailer.AutoCAD.GradeBeamManager;
 using static FoundationDetailsLibraryAutoCAD.UI.Controls.PrelimGBControl.PrelimGradeBeamControl;
 
 namespace FoundationDetailsLibraryAutoCAD.UI
@@ -82,7 +80,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             BtnTest.Click += (s, e) => BtnTest_Click();
             BtnEraseNODFully.Click += (s, e) => BtnEraseNODFully_Click();
             BtnGenerateGradeBeamEdges.Click += (s, e) => BtnGenerateGradeBeamEdges_Click(s, e);
-            //BtnDeleteSingleGradeBeamFromSelect.Click += (s, e) => BtnDeleteSingleFromSelect_Click(s, e);
             BtnDeleteMultipleGradeBeamFromSelect.Click += (s, e) => BtnDeleteMultipleGradeBeamsFromSelect_Click(s, e);
             BtnRegenerateAll.Click += (s, e) => BtnRegenerateAll_Click(s, e);
             BtnClearAllEdges.Click += (s, e) => BtnEraseAllGradeBeamEdges(s, e);
@@ -102,7 +99,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             GradeBeamSummary.HighlightGradeBeamslClicked += GradeBeam_HighlightGradeBeamsClicked;
             GradeBeamSummary.AddSingleGradeBeamClicked += GradeBeamSummary_AddSingleGradeBeamClicked;
 
-            //EqualSpacingGBControl.DrawRequested += OnDrawNewRequested;
             BtnNEqualSpaces.Click += BtnNEqualSpaces_Click;
             BtnConvertExisting.Click += BtnConvertToPolyline_Click;
 
@@ -133,24 +129,8 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 }
 
                 var selectedIds = psr.Value.GetObjectIds();
-                var uniqueHandles = new HashSet<string>();
-
-                // --- Resolve ObjectIds to grade beam handles
-                using (var tr = db.TransactionManager.StartTransaction())
-                {
-                    foreach (var id in selectedIds)
-                    {
-                        if (GradeBeamNOD.TryResolveOwningGradeBeam(
-                                context, tr, id, out string handle, out bool _, out bool _))
-                        {
-                            uniqueHandles.Add(handle);
-                        }
-                    }
-
-                    tr.Commit();
-                }
-
-                if (uniqueHandles.Count == 0)
+                var uniqueHandles = _gradeBeamService.ResolveGradeBeamHandles(context, selectedIds);
+                if (!uniqueHandles.Any())
                 {
                     ed.WriteMessage("\nSelected objects do not belong to any grade beams.");
                     return;
@@ -158,7 +138,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
                 // --- Confirm deletion
                 var pko = new PromptKeywordOptions(
-                    $"\nDelete {uniqueHandles.Count} selected grade beam(s)? This cannot be undone.")
+                    $"\nDelete {uniqueHandles.Count()} selected grade beam(s)? This cannot be undone.")
                 {
                     AllowNone = false
                 };
@@ -328,18 +308,19 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 {
                     double t = request.Count == 1 ? 0 : (double)i / request.Count;
                     Point3d basePt = request.Start + span * t;
-
-                    // Clip the line to the bounding box
-                    if (!MathHelperManager.TryClipLineToBoundingBoxExtents(basePt, dir, ext, out Point3d s, out Point3d e))
-                        continue;
-                    var start = s;
-                    var end = e;
-
+                    Point3d start, end;
+                    
                     //// Clip the line to the bounding box
-                    //if (!MathHelperManager.TryClipLineToPolyline(basePt, dir, boundary, out Point3d s1, out Point3d e1))
+                    //if (!MathHelperManager.TryClipLineToBoundingBoxExtents(basePt, dir, ext, out Point3d s, out Point3d e))
                     //    continue;
-                    //start = s1;
-                    //end = e1;
+                    //var start = s;
+                    //var end = e;
+
+                    // Clip the line to the boundary polyline
+                    if (!MathHelperManager.TryClipLineToPolyline(basePt, dir, boundary, out Point3d s1, out Point3d e1))
+                        continue;
+                    start = s1;
+                    end = e1;
 
 
                     // Add the grade beam
@@ -354,6 +335,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         }
 
         #region --- UI Updates ---
+
         private void PrelimGBControl_AddPreliminaryClicked(object sender, PrelimGBEventArgs e)
         {
             var context = CurrentContext;
@@ -377,6 +359,8 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                     vertexCount: GradeBeamManager.DEFAULT_VERTEX_QTY
                 );
 
+                
+
                 TxtStatus.Text = $"Created {beams.Count} preliminary grade beams.";
                 PrelimGBControl.ViewModel.IsPreliminaryGenerated = true;
                 PrelimGBControl.Visibility = System.Windows.Visibility.Collapsed;
@@ -395,18 +379,13 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             var doc = context.Document;
 
             // Delete all grade beams entirely: edges + centerlines + NOD dictionary
-            using (doc.LockDocument())
-            {
-                _gradeBeamService.DeleteAllGradeBeams(context);
-            }
+            _gradeBeamService.DeleteAllGradeBeams(context);
 
             // Reset preliminary input control
             PrelimGBControl.ViewModel.IsPreliminaryGenerated = false;
 
             Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
-
-
 
         private void GradeBeam_HighlightGradeBeamsClicked(object sender, EventArgs e)
         {
@@ -737,14 +716,14 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
             var doc = context.Document;
             var ed = doc.Editor;
-            var db = doc.Database;
 
             try
             {
-                var convertedAny = false;
+                bool convertedAny = false;
 
                 while (true)
                 {
+                    // --- Prompt user for a Line or Polyline
                     var peo = new PromptEntityOptions(
                         "\nSelect a Line or Polyline to convert to GradeBeam <Enter to finish>:")
                     {
@@ -761,41 +740,32 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                     if (per.Status != PromptStatus.OK || per.ObjectId.IsNull)
                         break; // user hit ENTER with no selection
 
-                    using (doc.LockDocument())
-                    using (var tr = db.TransactionManager.StartTransaction())
+                    // --- Check if object already belongs to a grade beam
+                    var existingHandles = _gradeBeamService.ResolveGradeBeamHandles(context, new[] { per.ObjectId });
+                    if (existingHandles.Any())
                     {
-                        // --- Check if object already belongs to a grade beam
-                        bool isCenterline = false, isEdge = false;
-                        if (GradeBeamNOD.TryResolveOwningGradeBeam(
-                                context, tr, per.ObjectId, out string owningHandle, out isCenterline, out isEdge))
-                        {
-                            ed.WriteMessage($"\n[DEBUG] Object {per.ObjectId.Handle} already belongs to grade beam '{owningHandle}' " +
-                                            (isCenterline ? "(centerline)" : "(edge)"));
-                            tr.Commit();
-                            continue; // skip conversion
-                        }
-
-                        // --- Convert selected object to grade beam
-                        const int minVertexCount = 5;
-                        _gradeBeamService.ConvertToGradeBeam(context, per.ObjectId, minVertexCount, tr);
-
-                        tr.Commit();
-                        ed.WriteMessage($"\n[DEBUG] Converted object {per.ObjectId.Handle} to grade beam.");
-                        convertedAny = true;
+                        ed.WriteMessage($"\n[DEBUG] Object {per.ObjectId.Handle} already belongs to grade beam '{existingHandles.First()}'");
+                        continue; // skip conversion
                     }
+
+                    // --- Convert the object to a new grade beam
+                    const int minVertexCount = 5;
+                    _gradeBeamService.ConvertToGradeBeam(context, per.ObjectId, minVertexCount);
+                    ed.WriteMessage($"\n[DEBUG] Converted object {per.ObjectId.Handle} to grade beam.");
+                    convertedAny = true;
                 }
 
                 if (convertedAny)
                 {
-                    // --- Delete all edges for clean rebuild
+                    // --- Clean all existing edges before rebuilding
                     int edgesDeleted = _gradeBeamService.DeleteEdgesForAllBeams(context);
                     ed.WriteMessage($"\n[DEBUG] Deleted {edgesDeleted} existing grade beam edges.");
 
-                    // --- Rebuild edges for all beams
+                    // --- Regenerate edges for all grade beams
                     _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
                     ed.WriteMessage("\n[DEBUG] Rebuilt grade beam edges.");
 
-                    // --- Refresh UI
+                    // --- Refresh the UI
                     Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
                     TxtStatus.Text = "Grade beams updated and edges regenerated.";
                 }

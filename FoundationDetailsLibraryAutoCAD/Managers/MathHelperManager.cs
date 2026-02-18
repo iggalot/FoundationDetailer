@@ -168,6 +168,152 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
         }
 
         /// <summary>
+        /// Clips a polyline to a rectangular bounding box. Vertices outside the box are trimmed.
+        /// Only segments that cross the box are trimmed; vertices entirely outside are removed.
+        /// </summary>
+        public static Polyline ClipPolylineToBoundingBox(Polyline input, Extents3d ext)
+        {
+            if (input == null || input.NumberOfVertices < 2)
+                return null;
+
+            Polyline result = new Polyline();
+            int outIndex = 0;
+
+            bool prevInside = false;
+            Point3d prevPoint = input.GetPoint3dAt(0);
+            prevInside = IsPointInsideExtents(prevPoint, ext);
+
+            for (int i = 1; i < input.NumberOfVertices; i++)
+            {
+                Point3d currPoint = input.GetPoint3dAt(i);
+                bool currInside = IsPointInsideExtents(currPoint, ext);
+
+                if (prevInside && currInside)
+                {
+                    // Segment fully inside, keep current point
+                    result.AddVertexAt(outIndex++, new Point2d(currPoint.X, currPoint.Y), 0.0, 0.0, 0.0);
+                }
+                else if (prevInside && !currInside)
+                {
+                    // Segment leaving the box: trim end
+                    if (TryClipLineToBoundingBoxExtents(prevPoint, currPoint - prevPoint, ext, out Point3d p1, out Point3d p2))
+                    {
+                        result.AddVertexAt(outIndex++, new Point2d(p2.X, p2.Y), 0.0, 0.0, 0.0);
+                    }
+                }
+                else if (!prevInside && currInside)
+                {
+                    // Segment entering the box: trim start
+                    if (TryClipLineToBoundingBoxExtents(prevPoint, currPoint - prevPoint, ext, out Point3d p1, out Point3d p2))
+                    {
+                        result.AddVertexAt(outIndex++, new Point2d(p1.X, p1.Y), 0.0, 0.0, 0.0);
+                        result.AddVertexAt(outIndex++, new Point2d(currPoint.X, currPoint.Y), 0.0, 0.0, 0.0);
+                    }
+                }
+                // else both outside: ignore segment
+
+                prevPoint = currPoint;
+                prevInside = currInside;
+            }
+
+            if (result.NumberOfVertices < 2)
+                return null;
+
+            return result;
+        }
+
+        public static Polyline ClipPolylineToPolyline(Polyline input, Polyline clipPoly)
+        {
+            if (input == null || input.NumberOfVertices < 2 || clipPoly == null || clipPoly.NumberOfVertices < 2)
+                return null;
+
+            Polyline result = new Polyline();
+            int outIndex = 0;
+
+            bool prevInside = false;
+            Point3d prevPoint = input.GetPoint3dAt(0);
+            prevInside = IsPointInsidePolyline(prevPoint, clipPoly);
+
+            for (int i = 1; i < input.NumberOfVertices; i++)
+            {
+                Point3d currPoint = input.GetPoint3dAt(i);
+                bool currInside = IsPointInsidePolyline(currPoint, clipPoly);
+
+                if (prevInside && currInside)
+                {
+                    // Segment fully inside
+                    result.AddVertexAt(outIndex++, new Point2d(currPoint.X, currPoint.Y), 0.0, 0.0, 0.0);
+                }
+                else if (prevInside && !currInside)
+                {
+                    // Leaving polygon: trim end
+                    if (TryClipLineToPolyline(prevPoint, currPoint - prevPoint, clipPoly, out Point3d p1, out Point3d p2))
+                    {
+                        result.AddVertexAt(outIndex++, new Point2d(p2.X, p2.Y), 0.0, 0.0, 0.0);
+                    }
+                }
+                else if (!prevInside && currInside)
+                {
+                    // Entering polygon: trim start
+                    if (TryClipLineToPolyline(prevPoint, currPoint - prevPoint, clipPoly, out Point3d p1, out Point3d p2))
+                    {
+                        result.AddVertexAt(outIndex++, new Point2d(p1.X, p1.Y), 0.0, 0.0, 0.0);
+                        result.AddVertexAt(outIndex++, new Point2d(currPoint.X, currPoint.Y), 0.0, 0.0, 0.0);
+                    }
+                }
+                // else both outside: ignore segment
+
+                prevPoint = currPoint;
+                prevInside = currInside;
+            }
+
+            if (result.NumberOfVertices < 2)
+                return null;
+
+            return result;
+        }
+
+        // --- Helpers ---
+        private static bool IsPointInsideExtents(Point3d pt, Extents3d ext)
+        {
+            return pt.X >= ext.MinPoint.X && pt.X <= ext.MaxPoint.X &&
+                   pt.Y >= ext.MinPoint.Y && pt.Y <= ext.MaxPoint.Y;
+        }
+
+        // Use AutoCAD’s built-in method for point-in-polygon check
+        // --- Returns true if pt is inside the 2D polygon defined by Polyline pl ---
+        private static bool IsPointInsidePolyline(Point3d pt, Polyline pl)
+        {
+            if (pl == null || pl.NumberOfVertices < 3)
+                return false;
+
+            int count = pl.NumberOfVertices;
+            bool inside = false;
+
+            for (int i = 0, j = count - 1; i < count; j = i++)
+            {
+                Point3d pi = pl.GetPoint3dAt(i);
+                Point3d pj = pl.GetPoint3dAt(j);
+
+                if (((pi.Y > pt.Y) != (pj.Y > pt.Y)) &&
+                    (pt.X < (pj.X - pi.X) * (pt.Y - pi.Y) / (pj.Y - pi.Y + 1e-12) + pi.X))
+                {
+                    inside = !inside;
+                }
+            }
+
+            return inside;
+        }
+
+
+        private static bool IsPointInsideBounds(Point3d pt, Extents3d ext, double eps = 1e-9)
+        {
+            return pt.X >= ext.MinPoint.X - eps && pt.X <= ext.MaxPoint.X + eps &&
+                   pt.Y >= ext.MinPoint.Y - eps && pt.Y <= ext.MaxPoint.Y + eps;
+        }
+
+
+        /// <summary>
         /// Checks intersection of infinite line (origin + t*dir) with a segment [a,b].
         /// Returns true if they intersect and outputs the intersection point.
         /// </summary>
