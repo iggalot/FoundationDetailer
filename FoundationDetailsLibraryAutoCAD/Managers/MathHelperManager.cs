@@ -223,208 +223,174 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
         }
 
         /// <summary>
-        /// Trims a polyline to a closed boundary polyline.
-        /// Returns a list of resulting polylines (may be multiple).
-        /// Returns empty list if fully outside.
+        /// Trims a source polyline to a closed boundary polyline.
+        /// Returns a list of one or more polylines fully inside the boundary.
+        /// Segments fully outside are discarded, segments crossing the boundary are split.
         /// </summary>
+        public static List<Polyline> TrimPolylineToPolyline(Polyline source, Polyline boundary)
+        {
+            var results = new List<Polyline>();
+            if (source == null || boundary == null || !boundary.Closed || boundary.NumberOfVertices < 3)
+                return results;
 
-            private static readonly Tolerance Tol = new Tolerance(1e-8, 1e-8);
-
-            public static List<Polyline> TrimPolylineToPolyline(
-                Polyline source,
-                Polyline boundary)
+            // --- Step 1: Collect all segments of the source polyline
+            var sourceSegments = new List<Line>();
+            int segCount = source.Closed ? source.NumberOfVertices : source.NumberOfVertices - 1;
+            for (int i = 0; i < segCount; i++)
             {
-                var results = new List<Polyline>();
+                int next = (i + 1) % source.NumberOfVertices;
+                sourceSegments.Add(new Line(source.GetPoint3dAt(i), source.GetPoint3dAt(next)));
+            }
 
-                if (source == null)
-                    return results;
+            // --- Step 2: Split each segment at intersections with the boundary
+            var insideSegments = new List<Line>();
+            Curve boundaryCurve = boundary;
 
-                if (boundary == null || !boundary.Closed || boundary.NumberOfVertices < 3)
+            foreach (var seg in sourceSegments)
+            {
+                var intersections = new List<Point3d>();
+
+                // Check intersections with boundary segments
+                int n = boundary.NumberOfVertices;
+                for (int i = 0; i < n; i++)
                 {
-                    results.Add(source);
-                    return results;
-                }
-
-                Curve boundaryCurve = boundary;
-
-                var currentPts = new List<Point2d>();
-
-                int segCount = source.Closed
-                    ? source.NumberOfVertices
-                    : source.NumberOfVertices - 1;
-
-                for (int i = 0; i < segCount; i++)
-                {
-                    int next = (i + 1) % source.NumberOfVertices;
-
-                    Point3d p0 = source.GetPoint3dAt(i);
-                    Point3d p1 = source.GetPoint3dAt(next);
-
-                    using (Line segment = new Line(p0, p1))
+                    Point3d a = boundary.GetPoint3dAt(i);
+                    Point3d b = boundary.GetPoint3dAt((i + 1) % n);
+                    if (TryIntersectLineSegment(seg.StartPoint, seg.EndPoint, a, b, out Point3d ip))
                     {
-                        var pieces = SplitAndClean(segment, boundaryCurve);
-
-                        foreach (Curve piece in pieces)
-                        {
-                            if (IsInsideOrOnBoundary(piece, boundary))
-                            {
-                                var sp = piece.StartPoint;
-                                var ep = piece.EndPoint;
-
-                                var p2d0 = new Point2d(sp.X, sp.Y);
-                                var p2d1 = new Point2d(ep.X, ep.Y);
-
-                                if (currentPts.Count == 0)
-                                    currentPts.Add(p2d0);
-
-                                currentPts.Add(p2d1);
-                            }
-                            else
-                            {
-                                Flush(results, currentPts);
-                            }
-
-                            piece.Dispose();
-                        }
+                        intersections.Add(ip);
                     }
                 }
 
-                Flush(results, currentPts);
+                // Include endpoints if they are inside or on the boundary
+                if (IsPointInsideOrOn(seg.StartPoint, boundary)) intersections.Add(seg.StartPoint);
+                if (IsPointInsideOrOn(seg.EndPoint, boundary)) intersections.Add(seg.EndPoint);
 
-                return results;
-            }
-
-            // ---------------------------------------------
-            // Robust curve splitting
-            // ---------------------------------------------
-            private static List<Curve> SplitAndClean(Curve curve, Curve boundary)
-            {
-                var intersectionPts = new Point3dCollection();
-
-                curve.IntersectWith(
-                    boundary,
-                    Intersect.OnBothOperands,
-                    intersectionPts,
-                    IntPtr.Zero,
-                    IntPtr.Zero);
-
-                // Remove duplicates using tolerance
-                var uniquePts = intersectionPts
-                    .Cast<Point3d>()
-                    .Distinct(new Point3dTolComparer(Tol.EqualPoint))
+                // --- Step 3: Sort intersections along segment
+                intersections = intersections
+                    .Distinct(new Point3dComparer(1e-8))
+                    .OrderBy(p => (p - seg.StartPoint).Length)
                     .ToList();
 
-                // Handle full collinear overlap case
-                if (uniquePts.Count == 0)
+                // --- Step 4: Create sub-segments and test midpoint inside
+                for (int i = 0; i < intersections.Count - 1; i++)
                 {
-                    // Could be fully inside, fully outside, or fully on boundary
-                    return new List<Curve> { curve.Clone() as Curve };
-                }
+                    var p0 = intersections[i];
+                    var p1 = intersections[i + 1];
+                    if (p0.DistanceTo(p1) < 1e-9) continue; // skip zero-length
 
-                var parameters = new DoubleCollection();
+                    var mid = new Point3d(
+                        (p0.X + p1.X) / 2.0,
+                        (p0.Y + p1.Y) / 2.0,
+                        (p0.Z + p1.Z) / 2.0
+                    );
 
-                foreach (var pt in uniquePts)
-                {
-                    try
+                    if (IsPointInsideOrOn(mid, boundary))
                     {
-                        double param = curve.GetParameterAtPoint(pt);
-                        parameters.Add(param);
+                        insideSegments.Add(new Line(p0, p1));
                     }
-                    catch { }
+                }
+            }
+
+            // --- Step 5: Merge consecutive inside segments into polylines
+            var currentPts = new List<Point2d>();
+            Point3d? lastEnd = null;
+
+            foreach (var seg in insideSegments.OrderBy(s => s.StartPoint.X).ThenBy(s => s.StartPoint.Y))
+            {
+                if (lastEnd == null || seg.StartPoint.DistanceTo(lastEnd.Value) > 1e-6)
+                {
+                    // New polyline
+                    if (currentPts.Count > 1)
+                        results.Add(PolylineFromPoints(currentPts));
+
+                    currentPts.Clear();
+                    currentPts.Add(new Point2d(seg.StartPoint.X, seg.StartPoint.Y));
+                }
+                currentPts.Add(new Point2d(seg.EndPoint.X, seg.EndPoint.Y));
+                lastEnd = seg.EndPoint;
+            }
+
+            if (currentPts.Count > 1)
+                results.Add(PolylineFromPoints(currentPts));
+
+            // --- Cleanup
+            foreach (var l in sourceSegments) l.Dispose();
+
+            return results;
+        }
+
+        private static Polyline PolylineFromPoints(List<Point2d> pts)
+        {
+            Polyline pl = new Polyline();
+            for (int i = 0; i < pts.Count; i++)
+                pl.AddVertexAt(i, pts[i], 0, 0, 0);
+            return pl;
+        }
+
+        // Simple point-in-polyline test using Ray Casting (2D)
+        private static bool IsPointInsideOrOn(Point3d pt, Polyline boundary)
+        {
+            var p2d = new Point2d(pt.X, pt.Y);
+            bool inside = false;
+            int n = boundary.NumberOfVertices;
+            for (int i = 0, j = n - 1; i < n; j = i++)
+            {
+                Point2d vi = boundary.GetPoint2dAt(i);
+                Point2d vj = boundary.GetPoint2dAt(j);
+
+                if (((vi.Y > p2d.Y) != (vj.Y > p2d.Y)) &&
+                    (p2d.X < (vj.X - vi.X) * (p2d.Y - vi.Y) / (vj.Y - vi.Y + 1e-12) + vi.X))
+                {
+                    inside = !inside;
                 }
 
-                if (parameters.Count == 0)
-                    return new List<Curve> { curve.Clone() as Curve };
-
-                var pieces = curve.GetSplitCurves(parameters);
-                return pieces.Cast<Curve>().ToList();
+                // On edge check
+                double cross = Math.Abs((vj.X - vi.X) * (p2d.Y - vi.Y) - (vj.Y - vi.Y) * (p2d.X - vi.X));
+                double len = Math.Sqrt((vj.X - vi.X) * (vj.X - vi.X) + (vj.Y - vi.Y) * (vj.Y - vi.Y));
+                if (len > 0 && cross / len < 1e-9)
+                    return true; // exactly on boundary
             }
+            return inside;
+        }
 
-            // ---------------------------------------------
-            // Inside test (treat boundary as inside)
-            // ---------------------------------------------
-            private static bool IsInsideOrOnBoundary(Curve piece, Polyline boundary)
-            {
-                double midParam = (piece.StartParam + piece.EndParam) / 2.0;
-                Point3d mid = piece.GetPointAtParameter(midParam);
-
-                var pt2d = new Point2d(mid.X, mid.Y);
-
-                if (IsPointOnBoundary(pt2d, boundary))
-                    return true;
-
-                return IsPointInside(boundary, pt2d);
-            }
-
-        private static bool IsPointOnBoundary(Point2d pt, Polyline boundary)
+        // Segment intersection utility
+        private static bool TryIntersectLineSegment(Point3d p1, Point3d p2, Point3d q1, Point3d q2, out Point3d ip)
         {
-            Point3d testPt = new Point3d(pt.X, pt.Y, 0.0);
+            ip = Point3d.Origin;
 
-            for (int i = 0; i < boundary.NumberOfVertices; i++)
+            Vector2d r = new Vector2d(p2.X - p1.X, p2.Y - p1.Y);
+            Vector2d s = new Vector2d(q2.X - q1.X, q2.Y - q1.Y);
+            double rxs = r.X * s.Y - r.Y * s.X;
+            double qpxr = (q1.X - p1.X) * r.Y - (q1.Y - p1.Y) * r.X;
+            if (Math.Abs(rxs) < 1e-12) return false; // parallel
+
+            double t = ((q1.X - p1.X) * s.Y - (q1.Y - p1.Y) * s.X) / rxs;
+            double u = qpxr / rxs;
+            if (t >= -1e-12 && t <= 1 + 1e-12 && u >= -1e-12 && u <= 1 + 1e-12)
             {
-                Point3d a = boundary.GetPoint3dAt(i);
-                Point3d b = boundary.GetPoint3dAt((i + 1) % boundary.NumberOfVertices);
-
-                Vector3d ab = b - a;
-                Vector3d ap = testPt - a;
-
-                double abLengthSq = ab.DotProduct(ab);
-                if (abLengthSq < 1e-16)
-                    continue; // Degenerate edge
-
-                // Project point onto edge
-                double t = ap.DotProduct(ab) / abLengthSq;
-
-                // Check if projection lies within segment
-                if (t < -1e-8 || t > 1.0 + 1e-8)
-                    continue;
-
-                Point3d projection = a + ab * t;
-
-                // Check distance to projected point
-                if (projection.DistanceTo(testPt) <= 1e-8)
-                    return true;
+                ip = new Point3d(p1.X + t * r.X, p1.Y + t * r.Y, 0);
+                return true;
             }
-
             return false;
         }
 
+        // Comparer for Point3d deduplication
+        private class Point3dComparer : IEqualityComparer<Point3d>
+        {
+            private readonly double _eps;
+            public Point3dComparer(double eps) { _eps = eps; }
+            public bool Equals(Point3d a, Point3d b) => a.DistanceTo(b) < _eps;
+            public int GetHashCode(Point3d obj) => 0; // not used
+        }
 
-        private static bool IsPointInside(Polyline poly, Point2d pt)
-            {
-                int crossings = 0;
+        private static readonly Tolerance Tol = new Tolerance(1e-8, 1e-8);
 
-                for (int i = 0; i < poly.NumberOfVertices; i++)
-                {
-                    var a = poly.GetPoint2dAt(i);
-                    var b = poly.GetPoint2dAt((i + 1) % poly.NumberOfVertices);
 
-                    if (((a.Y > pt.Y) != (b.Y > pt.Y)) &&
-                        (pt.X < (b.X - a.X) * (pt.Y - a.Y) / (b.Y - a.Y + 1e-12) + a.X))
-                    {
-                        crossings++;
-                    }
-                }
 
-                return (crossings % 2) == 1;
-            }
 
-            private static void Flush(List<Polyline> results, List<Point2d> pts)
-            {
-                if (pts.Count < 2)
-                {
-                    pts.Clear();
-                    return;
-                }
 
-                var pl = new Polyline();
 
-                for (int i = 0; i < pts.Count; i++)
-                    pl.AddVertexAt(i, pts[i], 0, 0, 0);
-
-                results.Add(pl);
-                pts.Clear();
-            }
 
         // ---------------------------------------------
         // Tolerance comparer

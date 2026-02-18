@@ -78,7 +78,8 @@ namespace FoundationDetailer.AutoCAD
                     Polyline original = PolylineConversionService
                         .CreatePolylineFromVertices(verts);
 
-                    var trimmedPieces = MathHelperManager
+                    List<Polyline> trimmedPieces = null;
+                    trimmedPieces = MathHelperManager
                         .TrimPolylineToPolyline(original, boundary);
 
                     if (trimmedPieces == null || trimmedPieces.Count == 0)
@@ -112,7 +113,8 @@ namespace FoundationDetailer.AutoCAD
                     Polyline original = PolylineConversionService
                         .CreatePolylineFromVertices(verts);
 
-                    var trimmedPieces = MathHelperManager
+                    List<Polyline> trimmedPieces = null;
+                    trimmedPieces = MathHelperManager
                         .TrimPolylineToPolyline(original, boundary);
 
                     if (trimmedPieces == null || trimmedPieces.Count == 0)
