@@ -227,7 +227,7 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
         /// Returns a list of one or more polylines fully inside the boundary.
         /// Segments fully outside are discarded, segments crossing the boundary are split.
         /// </summary>
-        public static List<Polyline> TrimPolylineToPolyline(Polyline source, Polyline boundary)
+        public static List<Polyline> TrimPolylineToPolyline(Polyline source, Polyline boundary, double minSegmentLength = 1e-6)
         {
             var results = new List<Polyline>();
             if (source == null || boundary == null || !boundary.Closed || boundary.NumberOfVertices < 3)
@@ -250,7 +250,7 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
             {
                 var intersections = new List<Point3d>();
 
-                // Check intersections with boundary segments
+                // --- Check intersections with boundary segments
                 int n = boundary.NumberOfVertices;
                 for (int i = 0; i < n; i++)
                 {
@@ -260,6 +260,12 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
                     {
                         intersections.Add(ip);
                     }
+
+                    // --- Artificial node: add boundary vertex if segment passes through it
+                    if (IsPointOnSegment(a, seg.StartPoint, seg.EndPoint, 1e-9))
+                    {
+                        intersections.Add(a);
+                    }
                 }
 
                 // Include endpoints if they are inside or on the boundary
@@ -268,7 +274,7 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
 
                 // --- Step 3: Sort intersections along segment
                 intersections = intersections
-                    .Distinct(new Point3dComparer(1e-8))
+                    .Distinct(new Point3dComparer(1e-9))
                     .OrderBy(p => (p - seg.StartPoint).Length)
                     .ToList();
 
@@ -277,7 +283,8 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
                 {
                     var p0 = intersections[i];
                     var p1 = intersections[i + 1];
-                    if (p0.DistanceTo(p1) < 1e-9) continue; // skip zero-length
+                    double segLength = p0.DistanceTo(p1);
+                    if (segLength < minSegmentLength) continue; // skip too-short segments
 
                     var mid = new Point3d(
                         (p0.X + p1.X) / 2.0,
@@ -307,6 +314,7 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
                     currentPts.Clear();
                     currentPts.Add(new Point2d(seg.StartPoint.X, seg.StartPoint.Y));
                 }
+
                 currentPts.Add(new Point2d(seg.EndPoint.X, seg.EndPoint.Y));
                 lastEnd = seg.EndPoint;
             }
@@ -318,6 +326,22 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
             foreach (var l in sourceSegments) l.Dispose();
 
             return results;
+        }
+
+        /// <summary>
+        /// Returns true if pt lies on the line segment [a,b] within tolerance eps.
+        /// </summary>
+        private static bool IsPointOnSegment(Point3d pt, Point3d a, Point3d b, double eps)
+        {
+            Vector3d ab = b - a;
+            Vector3d ap = pt - a;
+            double cross = ab.X * ap.Y - ab.Y * ap.X; // 2D cross
+            if (Math.Abs(cross) > eps) return false;
+
+            double dot = ap.DotProduct(ab);
+            if (dot < -eps || dot > ab.DotProduct(ab) + eps) return false;
+
+            return true;
         }
 
         private static Polyline PolylineFromPoints(List<Point2d> pts)
