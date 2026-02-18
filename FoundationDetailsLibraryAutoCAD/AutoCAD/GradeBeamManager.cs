@@ -37,21 +37,23 @@ namespace FoundationDetailer.AutoCAD
         // Internal Helpers
         // -------------------------
         public List<Polyline> CreatePreliminaryGradeBeamLayout(
-    FoundationContext context,
-    Polyline boundary,
-    double horizMin,
-    double horizMax,
-    double vertMin,
-    double vertMax,
-    int vertexCount = GradeBeamManager.DEFAULT_VERTEX_QTY)
+            FoundationContext context,
+            Polyline boundary,
+            double horizMin,
+            double horizMax,
+            double vertMin,
+            double vertMax,
+            int vertexCount = GradeBeamManager.DEFAULT_VERTEX_QTY)
         {
-            if (boundary == null) throw new ArgumentNullException(nameof(boundary));
-            if (context?.Document == null) throw new ArgumentNullException(nameof(context));
+            if (boundary == null)
+                throw new ArgumentNullException(nameof(boundary));
+
+            if (context?.Document == null)
+                throw new ArgumentNullException(nameof(context));
 
             var db = context.Document.Database;
             List<Polyline> createdBeams = new List<Polyline>();
 
-            // --- Compute horizontal and vertical gridlines using GridlineManager ---
             var gridlines = GridlineManager.ComputeBothGridlines(
                 boundary,
                 horizMin,
@@ -64,24 +66,70 @@ namespace FoundationDetailer.AutoCAD
             using (context.Document.LockDocument())
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                // --- Horizontal grade beams ---
+                // -------------------------------
+                // HORIZONTAL BEAMS
+                // -------------------------------
                 foreach (var linePts in gridlines.Horizontal)
                 {
-                    List<Point2d> verts = linePts.Select(p => new Point2d(p.X, p.Y)).ToList();
-                    Polyline pl = PolylineConversionService.CreatePolylineFromVertices(verts);
-                    RegisterGradeBeam(context, pl, tr, appendToModelSpace: true);
-                    MathHelperManager.ClipPolylineToPolyline(pl, boundary);
-                    createdBeams.Add(pl);
+                    List<Point2d> verts = linePts
+                        .Select(p => new Point2d(p.X, p.Y))
+                        .ToList();
+
+                    Polyline original = PolylineConversionService
+                        .CreatePolylineFromVertices(verts);
+
+                    var trimmedPieces = MathHelperManager
+                        .TrimPolylineToPolyline(original, boundary);
+
+                    if (trimmedPieces == null || trimmedPieces.Count == 0)
+                    {
+                        // Fully outside → register original
+                        RegisterGradeBeam(context, original, tr, true);
+                        createdBeams.Add(original);
+                    }
+                    else
+                    {
+                        foreach (var piece in trimmedPieces)
+                        {
+                            RegisterGradeBeam(context, piece, tr, true);
+                            createdBeams.Add(piece);
+                        }
+
+                        // dispose original if not used
+                        original.Dispose();
+                    }
                 }
 
-                // --- Vertical grade beams ---
+                // -------------------------------
+                // VERTICAL BEAMS
+                // -------------------------------
                 foreach (var linePts in gridlines.Vertical)
                 {
-                    List<Point2d> verts = linePts.Select(p => new Point2d(p.X, p.Y)).ToList();
-                    Polyline pl = PolylineConversionService.CreatePolylineFromVertices(verts);
-                    RegisterGradeBeam(context, pl, tr, appendToModelSpace: true);
-                    MathHelperManager.ClipPolylineToPolyline(pl, boundary);
-                    createdBeams.Add(pl);
+                    List<Point2d> verts = linePts
+                        .Select(p => new Point2d(p.X, p.Y))
+                        .ToList();
+
+                    Polyline original = PolylineConversionService
+                        .CreatePolylineFromVertices(verts);
+
+                    var trimmedPieces = MathHelperManager
+                        .TrimPolylineToPolyline(original, boundary);
+
+                    if (trimmedPieces == null || trimmedPieces.Count == 0)
+                    {
+                        RegisterGradeBeam(context, original, tr, true);
+                        createdBeams.Add(original);
+                    }
+                    else
+                    {
+                        foreach (var piece in trimmedPieces)
+                        {
+                            RegisterGradeBeam(context, piece, tr, true);
+                            createdBeams.Add(piece);
+                        }
+
+                        original.Dispose();
+                    }
                 }
 
                 tr.Commit();
@@ -89,6 +137,7 @@ namespace FoundationDetailer.AutoCAD
 
             return createdBeams;
         }
+
 
         internal Polyline RegisterGradeBeam(
     FoundationContext context,

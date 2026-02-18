@@ -222,55 +222,231 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
             return result;
         }
 
-        public static Polyline ClipPolylineToPolyline(Polyline input, Polyline clipPoly)
-        {
-            if (input == null || input.NumberOfVertices < 2 || clipPoly == null || clipPoly.NumberOfVertices < 2)
-                return null;
+        /// <summary>
+        /// Trims a polyline to a closed boundary polyline.
+        /// Returns a list of resulting polylines (may be multiple).
+        /// Returns empty list if fully outside.
+        /// </summary>
 
-            Polyline result = new Polyline();
-            int outIndex = 0;
+            private static readonly Tolerance Tol = new Tolerance(1e-8, 1e-8);
 
-            bool prevInside = false;
-            Point3d prevPoint = input.GetPoint3dAt(0);
-            prevInside = IsPointInsidePolyline(prevPoint, clipPoly);
-
-            for (int i = 1; i < input.NumberOfVertices; i++)
+            public static List<Polyline> TrimPolylineToPolyline(
+                Polyline source,
+                Polyline boundary)
             {
-                Point3d currPoint = input.GetPoint3dAt(i);
-                bool currInside = IsPointInsidePolyline(currPoint, clipPoly);
+                var results = new List<Polyline>();
 
-                if (prevInside && currInside)
+                if (source == null)
+                    return results;
+
+                if (boundary == null || !boundary.Closed || boundary.NumberOfVertices < 3)
                 {
-                    // Segment fully inside
-                    result.AddVertexAt(outIndex++, new Point2d(currPoint.X, currPoint.Y), 0.0, 0.0, 0.0);
+                    results.Add(source);
+                    return results;
                 }
-                else if (prevInside && !currInside)
+
+                Curve boundaryCurve = boundary;
+
+                var currentPts = new List<Point2d>();
+
+                int segCount = source.Closed
+                    ? source.NumberOfVertices
+                    : source.NumberOfVertices - 1;
+
+                for (int i = 0; i < segCount; i++)
                 {
-                    // Leaving polygon: trim end
-                    if (TryClipLineToPolyline(prevPoint, currPoint - prevPoint, clipPoly, out Point3d p1, out Point3d p2))
+                    int next = (i + 1) % source.NumberOfVertices;
+
+                    Point3d p0 = source.GetPoint3dAt(i);
+                    Point3d p1 = source.GetPoint3dAt(next);
+
+                    using (Line segment = new Line(p0, p1))
                     {
-                        result.AddVertexAt(outIndex++, new Point2d(p2.X, p2.Y), 0.0, 0.0, 0.0);
+                        var pieces = SplitAndClean(segment, boundaryCurve);
+
+                        foreach (Curve piece in pieces)
+                        {
+                            if (IsInsideOrOnBoundary(piece, boundary))
+                            {
+                                var sp = piece.StartPoint;
+                                var ep = piece.EndPoint;
+
+                                var p2d0 = new Point2d(sp.X, sp.Y);
+                                var p2d1 = new Point2d(ep.X, ep.Y);
+
+                                if (currentPts.Count == 0)
+                                    currentPts.Add(p2d0);
+
+                                currentPts.Add(p2d1);
+                            }
+                            else
+                            {
+                                Flush(results, currentPts);
+                            }
+
+                            piece.Dispose();
+                        }
                     }
                 }
-                else if (!prevInside && currInside)
-                {
-                    // Entering polygon: trim start
-                    if (TryClipLineToPolyline(prevPoint, currPoint - prevPoint, clipPoly, out Point3d p1, out Point3d p2))
-                    {
-                        result.AddVertexAt(outIndex++, new Point2d(p1.X, p1.Y), 0.0, 0.0, 0.0);
-                        result.AddVertexAt(outIndex++, new Point2d(currPoint.X, currPoint.Y), 0.0, 0.0, 0.0);
-                    }
-                }
-                // else both outside: ignore segment
 
-                prevPoint = currPoint;
-                prevInside = currInside;
+                Flush(results, currentPts);
+
+                return results;
             }
 
-            if (result.NumberOfVertices < 2)
-                return null;
+            // ---------------------------------------------
+            // Robust curve splitting
+            // ---------------------------------------------
+            private static List<Curve> SplitAndClean(Curve curve, Curve boundary)
+            {
+                var intersectionPts = new Point3dCollection();
 
-            return result;
+                curve.IntersectWith(
+                    boundary,
+                    Intersect.OnBothOperands,
+                    intersectionPts,
+                    IntPtr.Zero,
+                    IntPtr.Zero);
+
+                // Remove duplicates using tolerance
+                var uniquePts = intersectionPts
+                    .Cast<Point3d>()
+                    .Distinct(new Point3dTolComparer(Tol.EqualPoint))
+                    .ToList();
+
+                // Handle full collinear overlap case
+                if (uniquePts.Count == 0)
+                {
+                    // Could be fully inside, fully outside, or fully on boundary
+                    return new List<Curve> { curve.Clone() as Curve };
+                }
+
+                var parameters = new DoubleCollection();
+
+                foreach (var pt in uniquePts)
+                {
+                    try
+                    {
+                        double param = curve.GetParameterAtPoint(pt);
+                        parameters.Add(param);
+                    }
+                    catch { }
+                }
+
+                if (parameters.Count == 0)
+                    return new List<Curve> { curve.Clone() as Curve };
+
+                var pieces = curve.GetSplitCurves(parameters);
+                return pieces.Cast<Curve>().ToList();
+            }
+
+            // ---------------------------------------------
+            // Inside test (treat boundary as inside)
+            // ---------------------------------------------
+            private static bool IsInsideOrOnBoundary(Curve piece, Polyline boundary)
+            {
+                double midParam = (piece.StartParam + piece.EndParam) / 2.0;
+                Point3d mid = piece.GetPointAtParameter(midParam);
+
+                var pt2d = new Point2d(mid.X, mid.Y);
+
+                if (IsPointOnBoundary(pt2d, boundary))
+                    return true;
+
+                return IsPointInside(boundary, pt2d);
+            }
+
+        private static bool IsPointOnBoundary(Point2d pt, Polyline boundary)
+        {
+            Point3d testPt = new Point3d(pt.X, pt.Y, 0.0);
+
+            for (int i = 0; i < boundary.NumberOfVertices; i++)
+            {
+                Point3d a = boundary.GetPoint3dAt(i);
+                Point3d b = boundary.GetPoint3dAt((i + 1) % boundary.NumberOfVertices);
+
+                Vector3d ab = b - a;
+                Vector3d ap = testPt - a;
+
+                double abLengthSq = ab.DotProduct(ab);
+                if (abLengthSq < 1e-16)
+                    continue; // Degenerate edge
+
+                // Project point onto edge
+                double t = ap.DotProduct(ab) / abLengthSq;
+
+                // Check if projection lies within segment
+                if (t < -1e-8 || t > 1.0 + 1e-8)
+                    continue;
+
+                Point3d projection = a + ab * t;
+
+                // Check distance to projected point
+                if (projection.DistanceTo(testPt) <= 1e-8)
+                    return true;
+            }
+
+            return false;
+        }
+
+
+        private static bool IsPointInside(Polyline poly, Point2d pt)
+            {
+                int crossings = 0;
+
+                for (int i = 0; i < poly.NumberOfVertices; i++)
+                {
+                    var a = poly.GetPoint2dAt(i);
+                    var b = poly.GetPoint2dAt((i + 1) % poly.NumberOfVertices);
+
+                    if (((a.Y > pt.Y) != (b.Y > pt.Y)) &&
+                        (pt.X < (b.X - a.X) * (pt.Y - a.Y) / (b.Y - a.Y + 1e-12) + a.X))
+                    {
+                        crossings++;
+                    }
+                }
+
+                return (crossings % 2) == 1;
+            }
+
+            private static void Flush(List<Polyline> results, List<Point2d> pts)
+            {
+                if (pts.Count < 2)
+                {
+                    pts.Clear();
+                    return;
+                }
+
+                var pl = new Polyline();
+
+                for (int i = 0; i < pts.Count; i++)
+                    pl.AddVertexAt(i, pts[i], 0, 0, 0);
+
+                results.Add(pl);
+                pts.Clear();
+            }
+
+        // ---------------------------------------------
+        // Tolerance comparer
+        // ---------------------------------------------
+        private class Point3dTolComparer : IEqualityComparer<Point3d>
+        {
+            private readonly double _tol;
+
+            public Point3dTolComparer(double tol)
+            {
+                _tol = tol;
+            }
+
+            public bool Equals(Point3d a, Point3d b)
+            {
+                return a.DistanceTo(b) <= _tol;
+            }
+
+            public int GetHashCode(Point3d obj)
+            {
+                return 0;
+            }
         }
 
         // --- Helpers ---
@@ -280,37 +456,10 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
                    pt.Y >= ext.MinPoint.Y && pt.Y <= ext.MaxPoint.Y;
         }
 
-        // Use AutoCAD’s built-in method for point-in-polygon check
-        // --- Returns true if pt is inside the 2D polygon defined by Polyline pl ---
-        private static bool IsPointInsidePolyline(Point3d pt, Polyline pl)
-        {
-            if (pl == null || pl.NumberOfVertices < 3)
-                return false;
-
-            int count = pl.NumberOfVertices;
-            bool inside = false;
-
-            for (int i = 0, j = count - 1; i < count; j = i++)
-            {
-                Point3d pi = pl.GetPoint3dAt(i);
-                Point3d pj = pl.GetPoint3dAt(j);
-
-                if (((pi.Y > pt.Y) != (pj.Y > pt.Y)) &&
-                    (pt.X < (pj.X - pi.X) * (pt.Y - pi.Y) / (pj.Y - pi.Y + 1e-12) + pi.X))
-                {
-                    inside = !inside;
-                }
-            }
-
-            return inside;
-        }
 
 
-        private static bool IsPointInsideBounds(Point3d pt, Extents3d ext, double eps = 1e-9)
-        {
-            return pt.X >= ext.MinPoint.X - eps && pt.X <= ext.MaxPoint.X + eps &&
-                   pt.Y >= ext.MinPoint.Y - eps && pt.Y <= ext.MaxPoint.Y + eps;
-        }
+
+
 
 
         /// <summary>
