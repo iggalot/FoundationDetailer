@@ -31,7 +31,10 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                     return;
 
                 // --- 0) Delete all existing edges AND clear their Xrecords, but keep the edges sub-dictionary
-                GradeBeamManager.DeleteAllGradeBeamEdgesAndClearNOD(context);
+                foreach (var (_, gbDict) in beams)
+                {
+                    GradeBeamNOD.DeleteBeamEdgesOnly(context, tr, gbDict);
+                }
 
                 // --- 1) Build footprints for all beams
                 var footprints = new Dictionary<ObjectId, Polyline>();
