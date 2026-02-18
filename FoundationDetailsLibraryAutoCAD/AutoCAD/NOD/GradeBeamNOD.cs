@@ -588,7 +588,8 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             }
 
             return deleted;
-        }
+        
+       }
 
         internal static DBDictionary GetGradeBeamDictionaryByHandle(
     FoundationContext context,

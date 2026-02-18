@@ -207,38 +207,6 @@ namespace FoundationDetailer.AutoCAD
             oldEnt.Erase();
         }
 
-        public DeleteMultipleGradeBeamResult DeleteMultipleGradeBeamsByHandles(FoundationContext context, string[] gradeBeamHandles)
-        {
-            if (context?.Document == null || gradeBeamHandles == null || gradeBeamHandles.Length == 0)
-                return DeleteMultipleGradeBeamResult.CreateFailure("No grade beam handles provided.");
-
-            int beamsDeleted = 0;
-            int edgesDeleted = 0;
-
-            using (var docLock = context.Document.LockDocument())
-            using (var tr = context.Document.Database.TransactionManager.StartTransaction())
-            {
-                // --- Delete each grade beam recursively
-                foreach (var handle in gradeBeamHandles)
-                {
-                    if (string.IsNullOrWhiteSpace(handle))
-                        continue;
-
-                    //// Delete beam recursively (centerline + metadata + subdicts)
-                    //beamsDeleted += DeleteGradeBeamRecursiveByHandle(context, tr, handle);
-
-                    //// Delete any remaining edges
-                    //edgesDeleted += DeleteGradeBeamEdgesOnlyInternal(context, tr, handle);
-                }
-
-                // --- Rebuild edges for all remaining beams
-                GenerateEdgesForAllGradeBeams(context);
-
-                tr.Commit();
-            }
-
-            return DeleteMultipleGradeBeamResult.CreateSuccess(beamsDeleted, edgesDeleted);
-        }
 
         public int DeleteEdgesForSingleBeam(FoundationContext context, string handle)
         {
@@ -285,14 +253,16 @@ namespace FoundationDetailer.AutoCAD
 
             int total = 0;
             using (var lockDoc = context.Document.LockDocument())
-            using (var tr = context.Document.Database.TransactionManager.StartTransaction())
             {
-                foreach (var (handle, _) in GradeBeamNOD.EnumerateGradeBeams(context, tr))
+                using (var tr = context.Document.Database.TransactionManager.StartTransaction())
                 {
-                    total += DeleteGradeBeamEdgesOnlyInternal(context, tr, handle);
-                }
+                    foreach (var (handle, _) in GradeBeamNOD.EnumerateGradeBeams(context, tr))
+                    {
+                        total += DeleteGradeBeamEdgesOnlyInternal(context, tr, handle);
+                    }
 
-                tr.Commit();
+                    tr.Commit();
+                }
             }
 
             return total;
@@ -365,34 +335,37 @@ namespace FoundationDetailer.AutoCAD
                 return 0;
 
             using (var lockDoc = context.Document.LockDocument())
-            using (var tr = context.Document.Database.TransactionManager.StartTransaction())
             {
-                int deleted = DeleteBeamFullInternal(context, tr, handle);
-                tr.Commit();
-                return deleted;
+                using (var tr = context.Document.Database.TransactionManager.StartTransaction())
+                {
+                    int deleted = DeleteBeamFullInternal(context, tr, handle);
+                    tr.Commit();
+                    return deleted;
+                }
             }
         }
 
-        public DeleteMultipleGradeBeamResult DeleteMultipleGradeBeamsByHandles(FoundationContext context, IEnumerable<string> handles)
+        public DeleteMultipleGradeBeamResult DeleteMultipleGradeBeamsByHandles(
+            FoundationContext context,
+            IEnumerable<string> handles,
+            Transaction tr)
         {
-            if (context?.Document == null || handles == null)
+            if (context?.Document == null || handles == null || tr == null)
                 return new DeleteMultipleGradeBeamResult { Success = false, Message = "Invalid input." };
 
             int totalBeamsDeleted = 0;
             int totalEdgesDeleted = 0;
 
-            using (var lockDoc = context.Document.LockDocument())
-            using (var tr = context.Document.Database.TransactionManager.StartTransaction())
+            foreach (var handle in handles)
             {
-                foreach (var handle in handles)
-                {
-                    int edges, beams;
-                    DeleteBeamFullInternal(context, tr, handle, out edges, out beams);
-                    totalEdgesDeleted += edges;
-                    totalBeamsDeleted += beams;
-                }
+                int edgesDeleted = 0;
+                int beamsDeleted = 0;
 
-                tr.Commit();
+                // --- Call the internal that returns out params
+                DeleteGradeBeamFullInternal(context, tr, handle, out edgesDeleted, out beamsDeleted);
+
+                totalEdgesDeleted += edgesDeleted;
+                totalBeamsDeleted += beamsDeleted;
             }
 
             return new DeleteMultipleGradeBeamResult
@@ -402,6 +375,7 @@ namespace FoundationDetailer.AutoCAD
                 EdgesDeleted = totalEdgesDeleted
             };
         }
+
 
 
         public int DeleteAllGradeBeams(FoundationContext context)
@@ -422,7 +396,7 @@ namespace FoundationDetailer.AutoCAD
             }
         }
 
-        private int DeleteBeamFullInternal(FoundationContext context, Transaction tr, string handle, out int edgesDeleted, out int beamsDeleted)
+        private int DeleteGradeBeamFullInternal(FoundationContext context, Transaction tr, string handle, out int edgesDeleted, out int beamsDeleted)
         {
             edgesDeleted = 0;
             beamsDeleted = 0;
@@ -444,7 +418,7 @@ namespace FoundationDetailer.AutoCAD
         private int DeleteBeamFullInternal(FoundationContext context, Transaction tr, string handle)
         {
             int edges, beams;
-            DeleteBeamFullInternal(context, tr, handle, out edges, out beams);
+            DeleteGradeBeamFullInternal(context, tr, handle, out edges, out beams);
             return edges + beams;
         }
 
@@ -695,13 +669,21 @@ namespace FoundationDetailer.AutoCAD
         /// and stores handles in the NOD.
         /// Returns the number of grade beams processed.
         /// </summary>
-        public void GenerateEdgesForAllGradeBeams(
-            FoundationContext context,
-            double halfWidth = DEFAULT_BEAM_WIDTH_IN)
+        public void GenerateEdgesForAllGradeBeams(FoundationContext context, double halfWidth = DEFAULT_BEAM_WIDTH_IN, Transaction tr = null)
         {
+            //if (tr != null)
+            //{
+            //    // Use the provided transaction
+            //    GradeBeamBuilder.CreateGradeBeams(context, halfWidth, tr);
+            //}
+            //else
+            //{
+            // No transaction provided: create our own LockDocument + transaction
+            DeleteEdgesForAllBeams(context);
             GradeBeamBuilder.CreateGradeBeams(context, halfWidth);
-            return;
+            //}
         }
+
 
 
         // ------------------------------------------------

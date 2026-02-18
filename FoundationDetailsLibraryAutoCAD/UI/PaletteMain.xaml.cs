@@ -114,27 +114,13 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             if (context?.Document == null)
                 return;
 
-            var ed = context.Document.Editor;
+            var doc = context.Document;
+            var ed = doc.Editor;
+            var db = doc.Database;
 
             try
             {
-                // --- Prompt user to confirm deletion
-                var pko = new PromptKeywordOptions(
-                    "\nDelete all selected grade beams? This cannot be undone.")
-                {
-                    AllowNone = false
-                };
-                pko.Keywords.Add("Yes");
-                pko.Keywords.Add("No");
-
-                var confirm = ed.GetKeywords(pko);
-                if (confirm.Status != PromptStatus.OK || confirm.StringResult != "Yes")
-                {
-                    ed.WriteMessage("\nOperation canceled.");
-                    return;
-                }
-
-                // --- Prompt user to select multiple objects
+                // --- Prompt user to select multiple grade beam objects
                 var pso = new PromptSelectionOptions
                 {
                     MessageForAdding = "\nSelect grade beam objects to delete:"
@@ -149,11 +135,11 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 var selectedIds = psr.Value.GetObjectIds();
                 var uniqueHandles = new HashSet<string>();
 
-                using (var tr = context.Document.TransactionManager.StartTransaction())
+                // --- Resolve ObjectIds to grade beam handles
+                using (var tr = db.TransactionManager.StartTransaction())
                 {
                     foreach (var id in selectedIds)
                     {
-                        // --- Resolve each object to its owning grade beam
                         if (GradeBeamNOD.TryResolveOwningGradeBeam(
                                 context, tr, id, out string handle, out bool _, out bool _))
                         {
@@ -170,17 +156,37 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                     return;
                 }
 
-                // --- Use the manager function to delete the grade beams
-                DeleteMultipleGradeBeamResult result = _gradeBeamService.DeleteMultipleGradeBeamsByHandles(
-                    context, uniqueHandles);
-
-                if (!result.Success)
+                // --- Confirm deletion
+                var pko = new PromptKeywordOptions(
+                    $"\nDelete {uniqueHandles.Count} selected grade beam(s)? This cannot be undone.")
                 {
-                    ed.WriteMessage("\nError deleting grade beams: " + result.Message);
+                    AllowNone = false
+                };
+                pko.Keywords.Add("Yes");
+                pko.Keywords.Add("No");
+
+                var confirm = ed.GetKeywords(pko);
+                if (confirm.Status != PromptStatus.OK || confirm.StringResult != "Yes")
+                {
+                    ed.WriteMessage("\nOperation canceled.");
                     return;
                 }
 
-                ed.WriteMessage($"\nDeleted {result.GradeBeamsDeleted} grade beam(s) and {result.EdgesDeleted} edge entities.");
+                int totalBeamsDeleted = 0;
+
+                ed.WriteMessage("\n[DEBUG] Deleting all grade beam edges...");
+
+                // --- Delete all edges
+                foreach (var handle in uniqueHandles)
+                {
+                    totalBeamsDeleted += _gradeBeamService.DeleteSingleBeam(context, handle);
+
+                }
+                ed.WriteMessage($"\n[DEBUG] Deleted {totalBeamsDeleted} grade beam edges.");
+
+                // --- Delete remaining beam edges and rebuild edges for all beams
+                _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
+                ed.WriteMessage("\n[DEBUG] Regenerated all grade beam edges.");
 
                 // --- Refresh UI
                 Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
@@ -190,6 +196,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 ed.WriteMessage("\nError deleting selected grade beams: " + ex.Message);
             }
         }
+
 
 
         private void BtnEraseAllGradeBeamEdges(object s, RoutedEventArgs e)
@@ -238,18 +245,15 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
             try
             {
-                using (doc.LockDocument())
-                {
-                    ed.WriteMessage("\n[DEBUG] Deleting all grade beam edges...");
+                ed.WriteMessage("\n[DEBUG] Deleting all grade beam edges...");
 
-                    // --- Delete all edges
-                    int totalEdgesDeleted = _gradeBeamService.DeleteEdgesForAllBeams(context);
-                    ed.WriteMessage($"\n[DEBUG] Deleted {totalEdgesDeleted} grade beam edges.");
+                // --- Delete all edges
+                int totalEdgesDeleted = _gradeBeamService.DeleteEdgesForAllBeams(context);
+                ed.WriteMessage($"\n[DEBUG] Deleted {totalEdgesDeleted} grade beam edges.");
 
-                    // --- Rebuild edges for all beams
-                    _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
-                    ed.WriteMessage("\n[DEBUG] Regenerated all grade beam edges.");
-                }
+                // --- Rebuild edges for all beams
+                _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
+                ed.WriteMessage("\n[DEBUG] Regenerated all grade beam edges.");
 
                 Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
             }

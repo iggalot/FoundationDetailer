@@ -1,6 +1,5 @@
 ﻿using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
-using FoundationDetailer.AutoCAD;
 using FoundationDetailsLibraryAutoCAD.AutoCAD.NOD;
 using FoundationDetailsLibraryAutoCAD.Data;
 using System;
@@ -11,100 +10,105 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 {
     public static class GradeBeamBuilder
     {
-        public static void CreateGradeBeams(FoundationContext context, double halfWidth)
+        internal static void CreateGradeBeams(FoundationContext context, double halfWidth, Transaction existingTr = null)
         {
-            if (context == null || halfWidth <= 0)
-                return;
+            if (context == null || halfWidth <= 0) return;
 
             var doc = context.Document;
             var db = doc.Database;
 
             using (doc.LockDocument())
-            using (var tr = db.TransactionManager.StartTransaction())
             {
-                var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
-
-                // --- Enumerate beams
-                var beams = GradeBeamNOD.EnumerateGradeBeams(context, tr).ToList();
-                if (beams.Count == 0)
-                    return;
-
-                // --- 0) Delete all existing edges AND clear their Xrecords, but keep the edges sub-dictionary
-                foreach (var (_, gbDict) in beams)
+                if (existingTr != null)
                 {
-                    GradeBeamNOD.DeleteBeamEdgesOnly(context, tr, gbDict);
+                    // --- Use existing transaction
+                    CreateGradeBeamsInternal(context, halfWidth, existingTr);
                 }
-
-                // --- 1) Build footprints for all beams
-                var footprints = new Dictionary<ObjectId, Polyline>();
-                foreach (var (_, gbDict) in beams)
+                else
                 {
-                    if (!GradeBeamNOD.TryGetCenterline(context, tr, gbDict, out ObjectId clId))
-                        continue;
-
-                    var cl = tr.GetObject(clId, OpenMode.ForRead) as Polyline;
-                    if (cl == null) continue;
-
-                    footprints[clId] = BuildFootprint(cl, halfWidth);
-                }
-
-                // --- 2) Generate all offset edges
-                var allEdges = new List<BeamEdgeSegment>();
-                foreach (var (_, gbDict) in beams)
-                {
-                    if (!GradeBeamNOD.TryGetCenterline(context, tr, gbDict, out ObjectId clId))
-                        continue;
-
-                    var cl = tr.GetObject(clId, OpenMode.ForRead) as Polyline;
-                    if (cl == null) continue;
-
-                    var left = OffsetPolyline(cl, +halfWidth);
-                    var right = OffsetPolyline(cl, -halfWidth);
-
-                    allEdges.AddRange(ExplodeEdges(clId, left, true));
-                    allEdges.AddRange(ExplodeEdges(clId, right, false));
-                }
-
-                // --- 3) Trim edges against all other footprints
-                var trimmedEdges = TrimAllEdges(allEdges, footprints);
-
-                // --- 4) Store trimmed edges in NOD and draw them
-                foreach (var group in trimmedEdges.GroupBy(e => e.BeamId))
-                {
-                    var leftSegs = group.Where(g => g.IsLeft).ToList();
-                    var rightSegs = group.Where(g => !g.IsLeft).ToList();
-
-                    var leftIds = leftSegs.Select(seg =>
+                    // --- Lock and create new transaction
+                    using (var tr = db.TransactionManager.StartTransaction())
                     {
-                        var ln = new Line(seg.Segment.StartPoint, seg.Segment.EndPoint)
-                        {
-                            ColorIndex = 1 // Red for left
-                        };
-                        ms.AppendEntity(ln);
-                        tr.AddNewlyCreatedDBObject(ln, true);
-                        return ln.ObjectId;
-                    }).ToArray();
-
-                    var rightIds = rightSegs.Select(seg =>
-                    {
-                        var ln = new Line(seg.Segment.StartPoint, seg.Segment.EndPoint)
-                        {
-                            ColorIndex = 5 // Blue for right
-                        };
-                        ms.AppendEntity(ln);
-                        tr.AddNewlyCreatedDBObject(ln, true);
-                        return ln.ObjectId;
-                    }).ToArray();
-
-                    // Store ObjectIds in NOD under the beam
-                    GradeBeamNOD.StoreEdgeObjects(context, tr, group.Key, leftIds, rightIds);
+                        CreateGradeBeamsInternal(context, halfWidth, tr);
+                        tr.Commit();
+                    }
                 }
-
-                // --- 5) Commit
-                tr.Commit();
-                doc.Editor.Regen();
             }
+        }
+
+        // Internal helper that assumes transaction is open
+        private static void CreateGradeBeamsInternal(FoundationContext context, double halfWidth, Transaction tr)
+        {
+            var db = context.Document.Database;
+            var doc = context.Document;
+            var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+            var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+
+            var beams = GradeBeamNOD.EnumerateGradeBeams(context, tr).ToList();
+            if (beams.Count == 0) return;
+
+            // --- Delete all existing edges
+            foreach (var (_, gbDict) in beams)
+                GradeBeamNOD.DeleteBeamEdgesOnly(context, tr, gbDict);
+
+            // --- Build footprints
+            var footprints = new Dictionary<ObjectId, Polyline>();
+            foreach (var (_, gbDict) in beams)
+            {
+                if (!GradeBeamNOD.TryGetCenterline(context, tr, gbDict, out ObjectId clId))
+                    continue;
+
+                var cl = tr.GetObject(clId, OpenMode.ForRead) as Polyline;
+                if (cl == null) continue;
+
+                footprints[clId] = BuildFootprint(cl, halfWidth);
+            }
+
+            // --- Generate and explode edges
+            var allEdges = new List<BeamEdgeSegment>();
+            foreach (var (_, gbDict) in beams)
+            {
+                if (!GradeBeamNOD.TryGetCenterline(context, tr, gbDict, out ObjectId clId))
+                    continue;
+
+                var cl = tr.GetObject(clId, OpenMode.ForRead) as Polyline;
+                if (cl == null) continue;
+
+                var left = OffsetPolyline(cl, +halfWidth);
+                var right = OffsetPolyline(cl, -halfWidth);
+
+                allEdges.AddRange(ExplodeEdges(clId, left, true));
+                allEdges.AddRange(ExplodeEdges(clId, right, false));
+            }
+
+            var trimmedEdges = TrimAllEdges(allEdges, footprints);
+
+            // --- Store edges in NOD and draw
+            foreach (var group in trimmedEdges.GroupBy(e => e.BeamId))
+            {
+                var leftSegs = group.Where(g => g.IsLeft).ToList();
+                var rightSegs = group.Where(g => !g.IsLeft).ToList();
+
+                var leftIds = leftSegs.Select(seg =>
+                {
+                    var ln = new Line(seg.Segment.StartPoint, seg.Segment.EndPoint) { ColorIndex = 1 };
+                    ms.AppendEntity(ln);
+                    tr.AddNewlyCreatedDBObject(ln, true);
+                    return ln.ObjectId;
+                }).ToArray();
+
+                var rightIds = rightSegs.Select(seg =>
+                {
+                    var ln = new Line(seg.Segment.StartPoint, seg.Segment.EndPoint) { ColorIndex = 5 };
+                    ms.AppendEntity(ln);
+                    tr.AddNewlyCreatedDBObject(ln, true);
+                    return ln.ObjectId;
+                }).ToArray();
+
+                GradeBeamNOD.StoreEdgeObjects(context, tr, group.Key, leftIds, rightIds);
+            }
+
+            doc.Editor.Regen();
         }
 
 
