@@ -62,7 +62,7 @@
                     <gb_ctrl:PrelimGradeBeamControl x:Name="PrelimGBControl" Margin="0,5"/>
                     <StackPanel Orientation="Horizontal">
                         <Button x:Name="BtnNEqualSpaces" Content="N Equal Spa" Width="90" Height="26" Margin="0,0,0,6"/>
-                        <Button x:Name="BtnConvertExisting" Content="Convert Line or PLine" Width="90" Height="26" Margin="0,0,0,6"/>
+                        <Button x:Name="BtnConvertExisting" Content="Convert Line" Width="90" Height="26" Margin="0,0,0,6"/>
                         <Button x:Name="BtnRegenerateAll" Content="Regenerate" Width="90" Height="26" Margin="0,0,0,6"/>
                         <Button x:Name="BtnClearAllEdges" Content="Clear Edges" Width="90" Height="26" Margin="0,0,0,6"/>
                         <Button x:Name="BtnDeleteMultipleGradeBeamFromSelect" Content="Delete Multiple" Width="90" Height="26" Margin="0,0,0,6"/>
