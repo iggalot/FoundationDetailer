@@ -440,21 +440,33 @@ namespace FoundationDetailer.AutoCAD
 
         public int DeleteAllGradeBeams(FoundationContext context)
         {
+            if (context?.Document == null)
+                return 0;
+
+            int total = 0;
+
             using (var lockDoc = context.Document.LockDocument())
-            using (var tr = context.Document.Database.TransactionManager.StartTransaction())
             {
-                var beams = GradeBeamNOD
-                    .EnumerateGradeBeams(context, tr)
-                    .Select(b => b.Handle)
-                    .ToList();
+                var edgesDeleted = 0;
+                var beamsDeleted = 0;
 
-                int total = beams.Sum(h =>
-                    GradeBeamNOD.DeleteBeamFull(context, tr, h));
 
-                tr.Commit();
-                return total;
+                using (var tr = context.Document.Database.TransactionManager.StartTransaction())
+                {
+                    foreach (var (handle, _) in GradeBeamNOD.EnumerateGradeBeams(context, tr))
+                    {
+                        DeleteGradeBeamFullInternal(context, tr, handle, out edgesDeleted, out beamsDeleted);
+                        total += beamsDeleted;
+                    }
+                    tr.Commit();
+                }
             }
+
+            return total;
         }
+
+
+
 
         private int DeleteGradeBeamFullInternal(FoundationContext context, Transaction tr, string handle, out int edgesDeleted, out int beamsDeleted)
         {

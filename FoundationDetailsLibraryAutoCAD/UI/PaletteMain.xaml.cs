@@ -95,7 +95,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             BtnZoomBoundary.Click += (s, e) => _boundaryService.ZoomToBoundary(context);
 
             PrelimGBControl.AddPreliminaryClicked += PrelimGBControl_AddPreliminaryClicked;
-            GradeBeamSummary.ClearAllClicked += GradeBeam_ClearAllClicked;
+            GradeBeamSummary.ClearAllClicked += GradeBeam_DeleteAllClicked;
             GradeBeamSummary.HighlightGradeBeamslClicked += GradeBeam_HighlightGradeBeamsClicked;
             GradeBeamSummary.AddSingleGradeBeamClicked += GradeBeamSummary_AddSingleGradeBeamClicked;
 
@@ -156,7 +156,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
                 ed.WriteMessage("\n[DEBUG] Deleting all grade beam edges...");
 
-                // --- Delete all edges
+                // --- Delete selected beam
                 foreach (var handle in uniqueHandles)
                 {
                     totalBeamsDeleted += _gradeBeamService.DeleteSingleBeam(context, handle);
@@ -373,19 +373,57 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             }
         }
 
-        private void GradeBeam_ClearAllClicked(object sender, EventArgs e)
+        private void GradeBeam_DeleteAllClicked(object sender, EventArgs e)
         {
             var context = CurrentContext;
+            if (context?.Document == null)
+                return;
+
             var doc = context.Document;
+            var ed = doc.Editor;
 
-            // Delete all grade beams entirely: edges + centerlines + NOD dictionary
-            _gradeBeamService.DeleteAllGradeBeams(context);
+            try
+            {
+                // --- Confirm deletion
+                var pko = new PromptKeywordOptions(
+                    $"\nDelete ALL grade beam(s)? This cannot be undone.")
+                {
+                    AllowNone = false
+                };
+                pko.Keywords.Add("Yes");
+                pko.Keywords.Add("No");
 
-            // Reset preliminary input control
+                var confirm = ed.GetKeywords(pko);
+                if (confirm.Status != PromptStatus.OK || confirm.StringResult != "Yes")
+                {
+                    ed.WriteMessage("\nOperation canceled.");
+                    return;
+                }
+
+                int totalBeamsDeleted = 0;
+
+                ed.WriteMessage("\n[DEBUG] Deleting all grade beams...");
+
+                totalBeamsDeleted += _gradeBeamService.DeleteAllGradeBeams(context);
+
+                ed.WriteMessage($"\n[DEBUG] Deleted {totalBeamsDeleted} grade beam edges.");
+
+                // --- Rebuild edges
+                _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
+                ed.WriteMessage("\n[DEBUG] Regenerated all grade beam edges.");
+
+                // --- Refresh UI
+                Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+            }
+            catch (Exception ex)
+            {
+                ed.WriteMessage("\nError deleting all grade beams: " + ex.Message);
+            }
+
             PrelimGBControl.ViewModel.IsPreliminaryGenerated = false;
-
             Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
+
 
         private void GradeBeam_HighlightGradeBeamsClicked(object sender, EventArgs e)
         {
