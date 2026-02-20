@@ -1,12 +1,12 @@
 ﻿<UserControl x:Class="FoundationDetailsLibraryAutoCAD.UI.Controls.BeamDimensionControl.BeamDimensionControl"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Name="Root"
              MinHeight="34"
              MinWidth="260">
 
     <Border Background="#2D2D30" Padding="4" CornerRadius="3">
         <Grid VerticalAlignment="Center">
-
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="4"/>
@@ -22,57 +22,81 @@
             </Grid.ColumnDefinitions>
 
             <!-- Width Label -->
-            <TextBlock Text="W:"
+            <TextBlock x:Name="WidthText"
+                       Text="W:"
                        Foreground="White"
                        FontSize="11"
-                       VerticalAlignment="Center"/>
+                       VerticalAlignment="Center">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Mode, ElementName=Root}" Value="Display">
+                                <Setter Property="Visibility" Value="Visible"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
 
-            <!-- Width Combo (Input Mode) -->
+            <!-- Width Combo -->
             <ComboBox x:Name="WidthCombo"
                       Grid.Column="2"
                       Width="60"
                       Height="22"
                       FontSize="11"
                       VerticalContentAlignment="Center"
-                      SelectedItem="{Binding WidthValue, RelativeSource={RelativeSource AncestorType=UserControl}, Mode=TwoWay}"
-                      ToolTip="Width (inches)"/>
-
-            <!-- Width Display (Display Mode) -->
-            <TextBlock x:Name="WidthText"
-                       Grid.Column="2"
-                       Width="60"
-                       FontSize="11"
-                       Foreground="White"
-                       VerticalAlignment="Center"
-                       Text="{Binding WidthValue, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                       Visibility="Collapsed"/>
+                      ToolTip="Width (inches)">
+                <ComboBox.Style>
+                    <Style TargetType="ComboBox">
+                        <Setter Property="Visibility" Value="Visible"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Mode, ElementName=Root}" Value="Display">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ComboBox.Style>
+            </ComboBox>
 
             <!-- Depth Label -->
-            <TextBlock Text="D:"
+            <TextBlock x:Name="DepthText"
                        Grid.Column="4"
+                       Text="D:"
                        Foreground="White"
                        FontSize="11"
-                       VerticalAlignment="Center"/>
+                       VerticalAlignment="Center">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Mode, ElementName=Root}" Value="Display">
+                                <Setter Property="Visibility" Value="Visible"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
 
-            <!-- Depth Combo (Input Mode) -->
+            <!-- Depth Combo -->
             <ComboBox x:Name="DepthCombo"
                       Grid.Column="6"
                       Width="60"
                       Height="22"
                       FontSize="11"
                       VerticalContentAlignment="Center"
-                      SelectedItem="{Binding DepthValue, RelativeSource={RelativeSource AncestorType=UserControl}, Mode=TwoWay}"
-                      ToolTip="Depth (inches)"/>
-
-            <!-- Depth Display (Display Mode) -->
-            <TextBlock x:Name="DepthText"
-                       Grid.Column="6"
-                       Width="60"
-                       FontSize="11"
-                       Foreground="White"
-                       VerticalAlignment="Center"
-                       Text="{Binding DepthValue, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                       Visibility="Collapsed"/>
+                      ToolTip="Depth (inches)">
+                <ComboBox.Style>
+                    <Style TargetType="ComboBox">
+                        <Setter Property="Visibility" Value="Visible"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Mode, ElementName=Root}" Value="Display">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ComboBox.Style>
+            </ComboBox>
 
             <!-- OK Button -->
             <Button x:Name="OkButton"
@@ -82,7 +106,18 @@
                     Height="22"
                     FontSize="11"
                     Padding="0"
-                    Click="Ok_Click"/>
+                    Click="Ok_Click">
+                <Button.Style>
+                    <Style TargetType="Button">
+                        <Setter Property="Visibility" Value="Visible"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Mode, ElementName=Root}" Value="Display">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
 
             <!-- Cancel Button -->
             <Button x:Name="CancelButton"
@@ -92,34 +127,19 @@
                     Height="22"
                     FontSize="11"
                     Padding="0"
-                    Click="Cancel_Click"/>
+                    Click="Cancel_Click">
+                <Button.Style>
+                    <Style TargetType="Button">
+                        <Setter Property="Visibility" Value="Visible"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Mode, ElementName=Root}" Value="Display">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
+
         </Grid>
     </Border>
-
-    <!-- Mode Switching -->
-    <UserControl.Style>
-        <Style TargetType="UserControl">
-            <Style.Triggers>
-
-                <!-- DISPLAY MODE -->
-                <DataTrigger Binding="{Binding Mode, RelativeSource={RelativeSource Self}}"
-                             Value="Display">
-
-                    <!-- Hide combos -->
-                    <Setter TargetName="WidthCombo" Property="Visibility" Value="Collapsed"/>
-                    <Setter TargetName="DepthCombo" Property="Visibility" Value="Collapsed"/>
-
-                    <!-- Show text -->
-                    <Setter TargetName="WidthText" Property="Visibility" Value="Visible"/>
-                    <Setter TargetName="DepthText" Property="Visibility" Value="Visible"/>
-
-                    <!-- Hide buttons -->
-                    <Setter TargetName="OkButton" Property="Visibility" Value="Collapsed"/>
-                    <Setter TargetName="CancelButton" Property="Visibility" Value="Collapsed"/>
-                </DataTrigger>
-
-            </Style.Triggers>
-        </Style>
-    </UserControl.Style>
-
 </UserControl>

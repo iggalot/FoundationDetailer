@@ -1,44 +1,29 @@
-﻿// Usage of this control:
-// INPUT SELECTOR
-//using FoundationDetailsLibraryAutoCAD.UI.Controls.BeamDimensionControl;
-
-//var control = new BeamDimensionControl
-//{
-//    Mode = BeamDimensionMode.Input
-//};
-
-//control.Submitted += (s, e) =>
-//{
-//    int width = e.Width;
-//    int depth = e.Depth;
-//};
-
-// DISPLAY MODE:
-//using FoundationDetailsLibraryAutoCAD.UI.Controls.BeamDimensionControl;
-
-//var control = new BeamDimensionControl
-//{
-//    Mode = BeamDimensionMode.Display,
-//    WidthValue = 16,
-//    DepthValue = 30
-//};
-
-
-using System;
+﻿using System;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 
 namespace FoundationDetailsLibraryAutoCAD.UI.Controls.BeamDimensionControl
 {
-    public enum BeamDimensionMode
-    {
-        Input,
-        Display
-    }
-
     public partial class BeamDimensionControl : UserControl
     {
+        public enum BeamControlMode { Input, Display }
+
+        // Dependency property for mode
+        public static readonly DependencyProperty ModeProperty =
+            DependencyProperty.Register(
+                nameof(Mode),
+                typeof(BeamControlMode),
+                typeof(BeamDimensionControl),
+                new PropertyMetadata(BeamControlMode.Input));
+
+        public BeamControlMode Mode
+        {
+            get => (BeamControlMode)GetValue(ModeProperty);
+            set => SetValue(ModeProperty, value);
+        }
+
+        // Event args for submitted beam size
         public class BeamSizeEventArgs : EventArgs
         {
             public int Width { get; }
@@ -51,80 +36,42 @@ namespace FoundationDetailsLibraryAutoCAD.UI.Controls.BeamDimensionControl
             }
         }
 
-        // -----------------------------
-        // Dependency Properties
-        // -----------------------------
-
-        public static readonly DependencyProperty WidthValueProperty =
-            DependencyProperty.Register(nameof(WidthValue),
-                typeof(int),
-                typeof(BeamDimensionControl),
-                new PropertyMetadata(10));
-
-        public static readonly DependencyProperty DepthValueProperty =
-            DependencyProperty.Register(nameof(DepthValue),
-                typeof(int),
-                typeof(BeamDimensionControl),
-                new PropertyMetadata(28));
-
-        public static readonly DependencyProperty ModeProperty =
-            DependencyProperty.Register(nameof(Mode),
-                typeof(BeamDimensionMode),
-                typeof(BeamDimensionControl),
-                new PropertyMetadata(BeamDimensionMode.Input));
-
-        public int WidthValue
-        {
-            get => (int)GetValue(WidthValueProperty);
-            set => SetValue(WidthValueProperty, value);
-        }
-
-        public int DepthValue
-        {
-            get => (int)GetValue(DepthValueProperty);
-            set => SetValue(DepthValueProperty, value);
-        }
-
-        public BeamDimensionMode Mode
-        {
-            get => (BeamDimensionMode)GetValue(ModeProperty);
-            set => SetValue(ModeProperty, value);
-        }
-
-        // -----------------------------
-        // Events
-        // -----------------------------
-
         public event EventHandler<BeamSizeEventArgs> Submitted;
         public event EventHandler Canceled;
-
-        // -----------------------------
-        // Constructor
-        // -----------------------------
 
         public BeamDimensionControl()
         {
             InitializeComponent();
 
-            var sizes = Enumerable.Range(4, 57).ToList(); // 4–60 inches
-
+            var sizes = Enumerable.Range(4, 57).ToList(); // 4–60
             WidthCombo.ItemsSource = sizes;
             DepthCombo.ItemsSource = sizes;
-        }
 
-        // -----------------------------
-        // Button Handlers
-        // -----------------------------
+            WidthCombo.SelectedItem = 10;
+            DepthCombo.SelectedItem = 28;
+        }
 
         private void Ok_Click(object sender, RoutedEventArgs e)
         {
-            Submitted?.Invoke(this,
-                new BeamSizeEventArgs(WidthValue, DepthValue));
+            if (WidthCombo.SelectedItem == null || DepthCombo.SelectedItem == null)
+                return;
+
+            int width = (int)WidthCombo.SelectedItem;
+            int depth = (int)DepthCombo.SelectedItem;
+
+            Submitted?.Invoke(this, new BeamSizeEventArgs(width, depth));
         }
 
         private void Cancel_Click(object sender, RoutedEventArgs e)
         {
             Canceled?.Invoke(this, EventArgs.Empty);
+        }
+
+        // Set displayed width/depth in Display mode
+        public void SetDisplayValues(int width, int depth)
+        {
+            WidthText.Text = $"W: {width}\"";
+            DepthText.Text = $"D: {depth}\"";
         }
     }
 }
