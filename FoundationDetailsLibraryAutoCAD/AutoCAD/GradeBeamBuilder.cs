@@ -55,7 +55,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             var footprints = new Dictionary<ObjectId, Polyline>();
             foreach (var (_, gbDict) in beams)
             {
-                if (!GradeBeamNOD.TryGetCenterline(context, tr, gbDict, out ObjectId clId))
+                if (!GradeBeamNOD.TryGetGradeBeamCenterline(context, tr, gbDict, out ObjectId clId))
                     continue;
 
                 var cl = tr.GetObject(clId, OpenMode.ForRead) as Polyline;
@@ -68,7 +68,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             var allEdges = new List<BeamEdgeSegment>();
             foreach (var (_, gbDict) in beams)
             {
-                if (!GradeBeamNOD.TryGetCenterline(context, tr, gbDict, out ObjectId clId))
+                if (!GradeBeamNOD.TryGetGradeBeamCenterline(context, tr, gbDict, out ObjectId clId))
                     continue;
 
                 var cl = tr.GetObject(clId, OpenMode.ForRead) as Polyline;

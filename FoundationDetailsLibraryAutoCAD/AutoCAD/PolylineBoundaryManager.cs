@@ -5,7 +5,9 @@ using Autodesk.AutoCAD.Geometry;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using FoundationDetailsLibraryAutoCAD.AutoCAD.NOD;
 using FoundationDetailsLibraryAutoCAD.Data;
+using FoundationDetailsLibraryAutoCAD.Services;
 using System;
+using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
@@ -56,64 +58,7 @@ namespace FoundationDetailer.Managers
             BoundaryChanged?.Invoke(null, EventArgs.Empty);
         }
 
-        public PolylineBoundaryManager()
-        {
-        }
-
-        #region NOD Helpers
-        /// <summary>
-        /// Function to add a polyline boundary handle to the NOD
-        /// </summary>
-        /// <param name="id"></param>
-        internal static void AddBoundaryHandleToNOD(FoundationContext context, Transaction tr, ObjectId id)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-            if (tr == null) throw new ArgumentNullException(nameof(tr));
-            if (id.IsNull) return;
-
-            var doc = context.Document;
-            var db = doc.Database;
-
-            // Ensure NOD structure exists
-            NODCore.InitFoundationNOD(context, tr);
-
-            var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-            var root = (DBDictionary)tr.GetObject(nod.GetAt(NODCore.ROOT), OpenMode.ForWrite);
-            var boundaryDict = (DBDictionary)tr.GetObject(root.GetAt(NODCore.KEY_BOUNDARY_SUBDICT), OpenMode.ForWrite);
-
-            string handleStr = id.Handle.ToString().ToUpperInvariant();
-            NODCore.AddHandleToMetadataDictionary(tr, boundaryDict, handleStr);
-
-        }
-
-        #endregion
-
         #region Initialization & Attach/Detach
-
-        public void Initialize(FoundationContext context)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-
-            var doc = context.Document;
-
-
-            // Attach to existing documents
-            AttachDocumentEvents(context);
-
-            // Document lifecycle events
-            var dm = Application.DocumentManager;
-            dm.DocumentCreated -= (s, e) => DocManager_DocumentCreated(s, e, context);
-            dm.DocumentCreated += (s, e) => DocManager_DocumentCreated(s, e, context);
-
-            dm.DocumentToBeDestroyed -= (s, e) => DocManager_DocumentToBeDestroyed(s, e, context);
-            dm.DocumentToBeDestroyed += (s, e) => DocManager_DocumentToBeDestroyed(s, e, context);
-
-            dm.DocumentActivated -= (s, e) => DocManager_DocumentActivated(s, e, context);
-            dm.DocumentActivated += (s, e) => DocManager_DocumentActivated(s, e, context);
-
-            // Load for active document (deferred to be safe)
-            LoadBoundaryForActiveDocument(context);
-        }
 
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "Required by event handler signature")]
         private void DocManager_DocumentCreated(object sender, DocumentCollectionEventArgs e, FoundationContext context)
@@ -225,6 +170,222 @@ namespace FoundationDetailer.Managers
         #endregion
 
         #region Public API (original functionality preserved)
+
+        public void Initialize(FoundationContext context)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+
+
+            // Attach to existing documents
+            AttachDocumentEvents(context);
+
+            // Document lifecycle events
+            var dm = Application.DocumentManager;
+            dm.DocumentCreated -= (s, e) => DocManager_DocumentCreated(s, e, context);
+            dm.DocumentCreated += (s, e) => DocManager_DocumentCreated(s, e, context);
+
+            dm.DocumentToBeDestroyed -= (s, e) => DocManager_DocumentToBeDestroyed(s, e, context);
+            dm.DocumentToBeDestroyed += (s, e) => DocManager_DocumentToBeDestroyed(s, e, context);
+
+            dm.DocumentActivated -= (s, e) => DocManager_DocumentActivated(s, e, context);
+            dm.DocumentActivated += (s, e) => DocManager_DocumentActivated(s, e, context);
+
+            // Load for active document (deferred to be safe)
+            LoadBoundaryForActiveDocument(context);
+        }
+
+        internal Polyline RegisterBoundaryBeam(FoundationContext context, Polyline pl, Transaction tr, bool appendToModelSpace = false)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (pl == null) throw new ArgumentNullException(nameof(pl));
+
+            Database db = context.Document.Database;
+
+            // --- Append to ModelSpace if requested ---
+            if (appendToModelSpace)
+            {
+                ModelSpaceWriterService.AppendToModelSpace(tr, db, pl);
+            }
+
+            // --- Write grade beam metadata (domain-specific) ---
+            FoundationEntityData.Write(tr, pl, NODCore.KEY_BOUNDARY_SUBDICT);
+
+            // --- Add centerline handle (domain-specific) ---
+            ///GradeBeamNOD.AddGradeBeamCenterlineHandleToNOD(context, pl.ObjectId, tr);
+
+            return pl;
+        }
+
+        /// <summary>
+        /// Converts a polyline or line object in AutoCAD to a boundary beam, creating the NOD tree entry for the centerline.
+        /// </summary>
+        /// <param name="context"></param>
+        /// <param name="oldEntityId"></param>
+        /// <param name="vertexCount"></param>
+        /// <exception cref="ArgumentNullException"></exception>
+        /// <exception cref="ArgumentException"></exception>
+        internal void ConvertToBoundaryBeam(FoundationContext context, ObjectId oldEntityId, int vertexCount)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (oldEntityId.IsNull) throw new ArgumentException("Invalid ObjectId.", nameof(oldEntityId));
+
+            var doc = context.Document;
+            var db = doc.Database;
+
+            using (doc.LockDocument())
+            {
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    var oldEnt = tr.GetObject(oldEntityId, OpenMode.ForRead) as Entity;
+                    if (oldEnt == null)
+                        throw new ArgumentException("Object is not a valid entity.", nameof(oldEntityId));
+
+                    // --- Convert old entity to new Polyline
+                    var verts = PolylineConversionService.GetVertices(oldEnt);
+
+                    // Ensure minimum vertex count
+                    verts = PolylineConversionService.EnsureMinimumVertices(verts, vertexCount);
+
+                    Polyline newPl = PolylineConversionService.CreatePolylineFromVertices(verts, oldEnt);
+
+                    // --- Append to ModelSpace
+                    ModelSpaceWriterService.AppendToModelSpace(tr, db, newPl);
+
+                    // --- Register GradeBeam metadata in NOD
+                    RegisterBoundaryBeam(context, newPl, tr, appendToModelSpace: false);
+
+                    //// --- Remove old GradeBeam NOD entry if it exists
+                    //DeleteGradeBeamNode(context, tr, oldEnt.Handle.ToString());
+
+                    // --- Delete old entity
+                    oldEnt.UpgradeOpen();
+                    oldEnt.Erase();
+
+                    tr.Commit();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Function to fully delete a single grade beam from the NOD and AutoCAD drawing
+        /// </summary>
+        /// <param name="context"></param>
+        /// <param name="handle"></param>
+        /// <returns></returns>
+        public int DeleteBoundaryBeam(FoundationContext context, string handle)
+        {
+            if (context?.Document == null || string.IsNullOrWhiteSpace(handle))
+                return 0;
+
+            using (var lockDoc = context.Document.LockDocument())
+            {
+                using (var tr = context.Document.Database.TransactionManager.StartTransaction())
+                {
+                    var edgesDeleted = 0;
+                    var beamsDeleted = 0;
+                    int deleted = DeleteBoundaryBeamFullInternal(context, tr, handle, out edgesDeleted, out beamsDeleted);
+                    tr.Commit();
+                    return deleted;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Deletes all edge entities of a single grade beam but keeps centerline and NOD dictionary.
+        /// Returns the number of entities erased.
+        /// </summary>
+        internal int DeleteBoundaryBeamEdgesOnlyInternal(FoundationContext context, Transaction tr, string gradeBeamHandle)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+            if (string.IsNullOrWhiteSpace(gradeBeamHandle))
+                return 0;
+
+            int deleted = 0;
+            var db = context.Document.Database;
+
+            // --- Get the beam's edges dictionary
+            if (!GradeBeamNOD.HasEdgesDictionary(tr, db, gradeBeamHandle))
+                return 0;
+
+            var edgesDict = GradeBeamNOD.GetBeamEdgesDictionary(tr, db, gradeBeamHandle, forWrite: true);
+
+            // --- Copy keys to safely iterate
+            var keys = new List<string>();
+            foreach (DictionaryEntry entry in edgesDict)
+                keys.Add((string)entry.Key);
+
+            foreach (var edgeKey in keys)
+            {
+                var xrecId = edgesDict.GetAt(edgeKey);
+                var xrec = tr.GetObject(xrecId, OpenMode.ForWrite) as Xrecord;
+
+                if (xrec?.Data != null)
+                {
+                    foreach (TypedValue tv in xrec.Data)
+                    {
+                        if (tv.TypeCode != (int)DxfCode.Text) continue;
+
+                        string handleStr = tv.Value as string;
+                        if (string.IsNullOrWhiteSpace(handleStr)) continue;
+
+                        if (!NODCore.TryGetObjectIdFromHandleString(context, db, handleStr, out ObjectId oid))
+                            continue;
+
+                        if (oid.IsValid && !oid.IsErased)
+                        {
+                            (tr.GetObject(oid, OpenMode.ForWrite) as Entity)?.Erase();
+                            deleted++;
+                        }
+                    }
+                }
+
+                // --- Remove the Xrecord itself from the dictionary
+                edgesDict.Remove(edgeKey);
+                xrec?.Erase();
+            }
+
+            return deleted;
+        }
+
+        /// <summary>
+        /// Internal function to delete a gradebeam with a specified centerline handle.  Removes all edges and associated data.  Clears the NOD entry.
+        /// </summary>
+        /// <param name="context"></param>
+        /// <param name="tr"></param>
+        /// <param name="handle"></param>
+        /// <param name="edgesDeleted"></param>
+        /// <param name="beamsDeleted"></param>
+        /// <returns></returns>
+        private int DeleteBoundaryBeamFullInternal(FoundationContext context, Transaction tr, string handle, out int edgesDeleted, out int beamsDeleted)
+        {
+            edgesDeleted = 0;
+            beamsDeleted = 0;
+
+            if (context?.Document == null || string.IsNullOrWhiteSpace(handle))
+                return 0;
+
+            // --- Look up the beam dictionary
+            var gbDict = GradeBeamNOD.GetGradeBeamDictionaryByHandle(context, tr, handle);
+            if (gbDict == null) return 0;
+
+            // --- Delete edges + centerline + metadata
+            edgesDeleted = DeleteBoundaryBeamEdgesOnlyInternal(context, tr, handle);
+
+            return GradeBeamNOD.DeleteBeamFull(context, tr, handle);
+        }
+
+
+
+
+
+
+
+
+
+
 
         public bool TrySetBoundary(FoundationContext context, ObjectId candidateId, out string error)
         {
@@ -379,45 +540,6 @@ namespace FoundationDetailer.Managers
             catch { }
         }
 
-        public static void ClearBoundaryForActiveDocument(FoundationContext context)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-
-            var doc = context.Document;
-            var model = context.Model;
-
-            if (doc == null) return;
-
-            var db = doc.Database;
-            var ed = doc.Editor;
-
-            try
-            {
-                using (doc.LockDocument())
-                using (var tr = doc.TransactionManager.StartTransaction())
-                {
-                    var nod = (DBDictionary)tr.GetObject(doc.Database.NamedObjectsDictionaryId, OpenMode.ForWrite);
-                    if (nod.Contains(XrecordKey))
-                    {
-                        var xrId = nod.GetAt(XrecordKey);
-                        var xr = tr.GetObject(xrId, OpenMode.ForWrite) as Xrecord;
-                        if (xr != null)
-                        {
-                            xr.Data = null;
-                        }
-
-                        nod.Remove(XrecordKey);
-                    }
-
-                    tr.Commit();
-                }
-
-                _docBoundaryIds.AddOrUpdate(doc, ObjectId.Null, (d, old) => ObjectId.Null);
-                _lastSnapshots.TryRemove(doc, out _);
-                BoundaryChanged?.Invoke(null, EventArgs.Empty);
-            }
-            catch { }
-        }
 
         #endregion
 
@@ -825,16 +947,6 @@ namespace FoundationDetailer.Managers
 
         #region Helper Methods & Replacement Detection
 
-        private static Document TryGetDocumentForDatabase(Database db)
-        {
-            if (db == null) return null;
-            foreach (Document d in Application.DocumentManager)
-            {
-                if (d.Database == db) return d;
-            }
-            return null;
-        }
-
         private void LoadBoundaryForActiveDocument(FoundationContext context)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
@@ -917,32 +1029,6 @@ namespace FoundationDetailer.Managers
             }
         }
 
-        /// <summary>
-        /// Store the ObjectId (via its handle string) into NamedObjectsDictionary / XRecord
-        /// </summary>
-        private static void StorePolylineId(Document doc, ObjectId id, Transaction tr)
-        {
-            if (doc == null || tr == null) throw new ArgumentNullException();
-            var db = doc.Database;
-
-            var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
-
-            Xrecord xr;
-            if (nod.Contains(XrecordKey))
-            {
-                xr = (Xrecord)tr.GetObject(nod.GetAt(XrecordKey), OpenMode.ForWrite) as Xrecord;
-            }
-            else
-            {
-                xr = new Xrecord();
-                nod.SetAt(XrecordKey, xr);
-                tr.AddNewlyCreatedDBObject(xr, true);
-            }
-
-            // Save the handle string so conversion later is robust
-            var handleString = id.Handle.ToString();
-            xr.Data = new ResultBuffer(new TypedValue((int)DxfCode.Handle, handleString));
-        }
 
         /// <summary>
         /// Try to adopt a replacement polyline by geometric similarity.
@@ -1547,6 +1633,35 @@ namespace FoundationDetailer.Managers
                 }
             }
         }
+
+
+        #region NOD Helpers
+        /// <summary>
+        /// Function to add a polyline boundary handle to the NOD
+        /// </summary>
+        /// <param name="id"></param>
+        internal static void AddBoundaryHandleToNOD(FoundationContext context, Transaction tr, ObjectId id)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+            if (id.IsNull) return;
+
+            var doc = context.Document;
+            var db = doc.Database;
+
+            // Ensure NOD structure exists
+            NODCore.InitFoundationNOD(context, tr);
+
+            var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+            var root = (DBDictionary)tr.GetObject(nod.GetAt(NODCore.ROOT), OpenMode.ForWrite);
+            var boundaryDict = (DBDictionary)tr.GetObject(root.GetAt(NODCore.KEY_BOUNDARY_SUBDICT), OpenMode.ForWrite);
+
+            string handleStr = id.Handle.ToString().ToUpperInvariant();
+            NODCore.AddHandleToMetadataDictionary(tr, boundaryDict, handleStr);
+
+        }
+
+        #endregion
 
 
     }

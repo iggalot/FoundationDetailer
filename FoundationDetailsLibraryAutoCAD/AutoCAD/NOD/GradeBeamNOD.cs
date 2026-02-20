@@ -1,11 +1,8 @@
-﻿using Autodesk.AutoCAD.ApplicationServices;
-using Autodesk.AutoCAD.DatabaseServices;
+﻿using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using FoundationDetailsLibraryAutoCAD.Data;
 using System;
-using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
 
 namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 {
@@ -128,7 +125,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             return edgesDict;
         }
 
-        internal static bool TryGetCenterline(
+        internal static bool TryGetGradeBeamCenterline(
             FoundationContext context,
             Transaction tr,
             DBDictionary gradeBeamDict,
@@ -412,10 +409,10 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             isCenterline = false;
             isEdge = false;
 
-            foreach (var (handle, gbDict) in GradeBeamNOD.EnumerateGradeBeams(context, tr))
+            foreach (var (handle, gbDict) in EnumerateGradeBeams(context, tr))
             {
                 // --- Check centerline
-                if (GradeBeamNOD.TryGetCenterline(context, tr, gbDict, out ObjectId clId) &&
+                if (TryGetGradeBeamCenterline(context, tr, gbDict, out ObjectId clId) &&
                     !clId.IsNull &&
                     clId == selectedId)
                 {
@@ -425,10 +422,10 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 }
 
                 // --- Check edges
-                if (!GradeBeamNOD.HasEdgesDictionary(tr, context.Document.Database, handle))
+                if (!HasEdgesDictionary(tr, context.Document.Database, handle))
                     continue;
 
-                var edgesDict = GradeBeamNOD.GetBeamEdgesDictionary(
+                var edgesDict = GetBeamEdgesDictionary(
                     tr,
                     context.Document.Database,
                     handle,
@@ -514,7 +511,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             deleted += DeleteBeamEdgesOnly(context, tr, gbDict);
 
             // 2️ Delete centerline
-            if (TryGetCenterline(context, tr, gbDict, out ObjectId clId))
+            if (TryGetGradeBeamCenterline(context, tr, gbDict, out ObjectId clId))
             {
                 var ent = tr.GetObject(clId, OpenMode.ForWrite) as Entity;
                 if (ent != null && !ent.IsErased)
@@ -608,13 +605,5 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
             return tr.GetObject(root.GetAt(handle), OpenMode.ForRead) as DBDictionary;
         }
-
-
-
-
-
-
-
-
     }
 }
