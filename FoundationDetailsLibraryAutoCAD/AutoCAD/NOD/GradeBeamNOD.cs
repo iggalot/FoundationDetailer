@@ -3,6 +3,7 @@ using Autodesk.AutoCAD.EditorInput;
 using FoundationDetailsLibraryAutoCAD.Data;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 {
@@ -585,8 +586,8 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             }
 
             return deleted;
-        
-       }
+
+        }
 
         internal static DBDictionary GetGradeBeamDictionaryByHandle(
     FoundationContext context,
@@ -604,6 +605,65 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 return null;
 
             return tr.GetObject(root.GetAt(handle), OpenMode.ForRead) as DBDictionary;
+        }
+
+        public static void SetBeamSection(
+            Transaction tr,
+            DBDictionary beamNode,
+            double width,
+            double depth)
+        {
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+            if (beamNode == null) throw new ArgumentNullException(nameof(beamNode));
+
+            // FD_METADATA
+            var metadata = NODCore.GetOrCreateNestedSubDictionary(
+                tr,
+                beamNode,
+                NODCore.KEY_METADATA_SUBDICT);
+
+            // SECTION
+            var sectionDict = NODCore.GetOrCreateNestedSubDictionary(
+                tr,
+                metadata,
+                NODCore.KEY_SECTION);
+
+            // WIDTH / DEPTH
+            NODCore.SetRealValue(tr, sectionDict, NODCore.KEY_WIDTH, width);
+            NODCore.SetRealValue(tr, sectionDict, NODCore.KEY_DEPTH, depth);
+        }
+
+        internal struct BeamSection
+        {
+            public double Width;
+            public double Depth;
+        }
+
+        public static (double? Width, double? Depth) GetBeamSection(
+            Transaction tr,
+            DBDictionary beamNode)
+        {
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+            if (beamNode == null) throw new ArgumentNullException(nameof(beamNode));
+
+            if (!NODCore.TryGetNestedSubDictionary(
+                    tr,
+                    beamNode,
+                    out var metadata,
+                    NODCore.KEY_METADATA_SUBDICT))
+                return (null, null);
+
+            if (!NODCore.TryGetNestedSubDictionary(
+                    tr,
+                    metadata,
+                    out var sectionDict,
+                    NODCore.KEY_SECTION))
+                return (null, null);
+
+            var width = NODCore.GetRealValue(tr, sectionDict, NODCore.KEY_WIDTH);
+            var depth = NODCore.GetRealValue(tr, sectionDict, NODCore.KEY_DEPTH);
+
+            return (width, depth);
         }
     }
 }

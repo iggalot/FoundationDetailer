@@ -708,32 +708,44 @@ namespace FoundationDetailer.AutoCAD
             _regAppRegistered.Add(doc);
         }
 
-
-
-
-
-
-
-
         #region Geometry Calculations (derived)
         /// <summary>
         /// Generates edge polylines for all grade beams, adds them to ModelSpace, 
         /// and stores handles in the NOD.
         /// Returns the number of grade beams processed.
         /// </summary>
-        public void GenerateEdgesForAllGradeBeams(FoundationContext context, double halfWidth = DEFAULT_BEAM_WIDTH_IN, Transaction tr = null)
+        public void GenerateEdgesForAllGradeBeams(
+            FoundationContext context,
+            double halfWidth = DEFAULT_BEAM_WIDTH_IN)
         {
-            //if (tr != null)
-            //{
-            //    // Use the provided transaction
-            //    GradeBeamBuilder.CreateGradeBeams(context, halfWidth, tr);
-            //}
-            //else
-            //{
-            // No transaction provided: create our own LockDocument + transaction
-            DeleteEdgesForAllBeams(context);
-            GradeBeamBuilder.CreateGradeBeams(context, halfWidth);
-            //}
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var doc = context.Document;
+            var db = doc.Database;
+
+            using (doc.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                // --- Enumerate all beams in the NOD
+                var beams = GradeBeamNOD.EnumerateGradeBeams(context, tr).ToList();
+                if (beams.Count == 0)
+                {
+                    tr.Commit();
+                    return;
+                }
+
+                // --- Delete existing edges for each beam (keeps centerlines)
+                foreach (var (_, gbDict) in beams)
+                {
+                    GradeBeamNOD.DeleteBeamEdgesOnly(context, tr, gbDict);
+                }
+
+                // --- Recreate edges for each beam
+                GradeBeamBuilder.CreateGradeBeams(context, halfWidth, tr);
+
+                tr.Commit();
+                doc.Editor.Regen();
+            }
         }
 
 
@@ -908,11 +920,90 @@ namespace FoundationDetailer.AutoCAD
             return handles;
         }
 
-
-
-
-
         #endregion
+
+        public static void UpdateBeamSection(
+            FoundationContext context,
+            string centerlineHandle,
+            double halfWidth,
+            double depth)
+        {
+            if (context?.Document == null)
+                return;
+
+            var doc = context.Document;
+            var db = doc.Database;
+
+            using (doc.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                // 1️ Ensure EE_Foundation root exists
+                var foundationRoot = NODCore.InitFoundationNOD(context, tr);
+
+                // 2️⃣ Get or create FD_GRADEBEAM root
+                var gradeBeamRoot = NODCore.GetOrCreateNestedSubDictionary(
+                    tr,
+                    foundationRoot,
+                    NODCore.KEY_GRADEBEAM_SUBDICT);
+
+                // 3️ Safe beam node retrieval (self-healing)
+                var beamNode = NODCore.GetOrCreateGradeBeamNode(
+                    tr,
+                    gradeBeamRoot,
+                    centerlineHandle);
+
+                // 4️ Store section values
+                GradeBeamNOD.SetBeamSection(
+                    tr,
+                    beamNode,
+                    halfWidth,
+                    depth);
+
+                // 5️ Regenerate edges using new workflow
+                if (GradeBeamNOD.TryGetGradeBeamCenterline(context, tr, beamNode, out ObjectId clId))
+                {
+                    var cl = tr.GetObject(clId, OpenMode.ForRead) as Polyline;
+                    if (cl != null)
+                    {
+                        // Rebuild the edges for this beam only
+                        GradeBeamBuilder.CreateGradeBeams(
+                            context,
+                            halfWidth,
+                            tr);
+                    }
+                }
+
+                // 6️ Mark design as dirty
+                InvalidateBeamDesign(tr, beamNode);
+
+                tr.Commit();
+            }
+        }
+
+        private static void InvalidateBeamDesign(
+            Transaction tr,
+            DBDictionary beamNode)
+        {
+            var metadata = NODCore.GetOrCreateNestedSubDictionary(
+                tr,
+                beamNode,
+                NODCore.KEY_METADATA_SUBDICT);
+
+            var designDict = NODCore.GetOrCreateNestedSubDictionary(
+                tr,
+                metadata,
+                NODCore.KEY_DESIGN);
+
+            var statusRecord = NODCore.GetOrCreateMetadataXrecord(
+                tr,
+                designDict,
+                NODCore.KEY_STATUS);
+
+            statusRecord.Data = new ResultBuffer(
+                new TypedValue((int)DxfCode.Text, "DIRTY"));
+        }
+
+
     }
 }
 

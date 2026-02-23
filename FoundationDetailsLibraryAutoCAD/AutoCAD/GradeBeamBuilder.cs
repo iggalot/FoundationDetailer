@@ -51,6 +51,38 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             foreach (var (_, gbDict) in beams)
                 GradeBeamNOD.DeleteBeamEdgesOnly(context, tr, gbDict);
 
+            List<BeamEdgeSegment> trimmedEdges = CreateEdgesForGradeBeams(context, halfWidth, tr, beams);
+
+            // --- Store edges in NOD and draw
+            foreach (var group in trimmedEdges.GroupBy(e => e.BeamId))
+            {
+                var leftSegs = group.Where(g => g.IsLeft).ToList();
+                var rightSegs = group.Where(g => !g.IsLeft).ToList();
+
+                var leftIds = leftSegs.Select(seg =>
+                {
+                    var ln = new Line(seg.Segment.StartPoint, seg.Segment.EndPoint) { ColorIndex = 1 };
+                    ms.AppendEntity(ln);
+                    tr.AddNewlyCreatedDBObject(ln, true);
+                    return ln.ObjectId;
+                }).ToArray();
+
+                var rightIds = rightSegs.Select(seg =>
+                {
+                    var ln = new Line(seg.Segment.StartPoint, seg.Segment.EndPoint) { ColorIndex = 5 };
+                    ms.AppendEntity(ln);
+                    tr.AddNewlyCreatedDBObject(ln, true);
+                    return ln.ObjectId;
+                }).ToArray();
+
+                GradeBeamNOD.StoreEdgeObjects(context, tr, group.Key, leftIds, rightIds);
+            }
+
+            doc.Editor.Regen();
+        }
+
+        private static List<BeamEdgeSegment> CreateEdgesForGradeBeams(FoundationContext context, double halfWidth, Transaction tr, List<(string Handle, DBDictionary Dict)> beams)
+        {
             // --- Build footprints
             var footprints = new Dictionary<ObjectId, Polyline>();
             foreach (var (_, gbDict) in beams)
@@ -82,33 +114,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             }
 
             var trimmedEdges = TrimAllEdges(allEdges, footprints);
-
-            // --- Store edges in NOD and draw
-            foreach (var group in trimmedEdges.GroupBy(e => e.BeamId))
-            {
-                var leftSegs = group.Where(g => g.IsLeft).ToList();
-                var rightSegs = group.Where(g => !g.IsLeft).ToList();
-
-                var leftIds = leftSegs.Select(seg =>
-                {
-                    var ln = new Line(seg.Segment.StartPoint, seg.Segment.EndPoint) { ColorIndex = 1 };
-                    ms.AppendEntity(ln);
-                    tr.AddNewlyCreatedDBObject(ln, true);
-                    return ln.ObjectId;
-                }).ToArray();
-
-                var rightIds = rightSegs.Select(seg =>
-                {
-                    var ln = new Line(seg.Segment.StartPoint, seg.Segment.EndPoint) { ColorIndex = 5 };
-                    ms.AppendEntity(ln);
-                    tr.AddNewlyCreatedDBObject(ln, true);
-                    return ln.ObjectId;
-                }).ToArray();
-
-                GradeBeamNOD.StoreEdgeObjects(context, tr, group.Key, leftIds, rightIds);
-            }
-
-            doc.Editor.Regen();
+            return trimmedEdges;
         }
 
 
@@ -316,24 +322,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 
             return (crossings % 2) == 1; // odd = inside, even = outside
         }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
         private static List<Point3d> GetIntersectionPoints(Polyline a, Polyline b)
         {

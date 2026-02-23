@@ -79,7 +79,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             BtnQuery.Click += BtnQueryNOD_Click;
             BtnTest.Click += (s, e) => BtnTest_Click();
             BtnEraseNODFully.Click += (s, e) => BtnEraseNODFully_Click();
-            BtnGenerateGradeBeamEdges.Click += (s, e) => BtnGenerateGradeBeamEdges_Click(s, e);
             BtnDeleteMultipleGradeBeamFromSelect.Click += (s, e) => BtnDeleteMultipleGradeBeamsFromSelect_Click(s, e);
             BtnRegenerateAll.Click += (s, e) => BtnRegenerateAll_Click(s, e);
             BtnClearAllEdges.Click += (s, e) => BtnEraseAllGradeBeamEdges(s, e);
@@ -165,7 +164,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 ed.WriteMessage($"\n[DEBUG] Deleted {totalBeamsDeleted} grade beam edges.");
 
                 // --- Delete remaining beam edges and rebuild edges for all beams
-                _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
+                //_gradeBeamService.GenerateEdgesForAllGradeBeams(context);
                 ed.WriteMessage("\n[DEBUG] Regenerated all grade beam edges.");
 
                 // --- Refresh UI
@@ -241,16 +240,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             {
                 ed.WriteMessage("\nError regenerating grade beam edges: " + ex.Message);
             }
-        }
-
-
-
-        private void BtnGenerateGradeBeamEdges_Click(object sender, RoutedEventArgs e)
-        {
-            var context = CurrentContext;
-            if (context?.Document == null) return;
-
-            _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
         }
 
 

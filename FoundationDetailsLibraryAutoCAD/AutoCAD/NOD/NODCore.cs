@@ -36,6 +36,14 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         public const string KEY_BEAMSTRAND_SUBDICT = "FD_BEAMSTRAND";
         public const string KEY_METADATA_SUBDICT = "FD_METADATA";
 
+        public const string KEY_SECTION = "SECTION";
+        public const string KEY_WIDTH = "WIDTH";
+        public const string KEY_DEPTH = "DEPTH";
+
+        public const string KEY_ANALYSIS = "ANALYSIS";
+        public const string KEY_DESIGN = "DESIGN";
+        public const string KEY_STATUS = "STATUS";
+
         public static readonly string[] KNOWN_ROOT_SUBDIRS =
         {
             KEY_BOUNDARY_SUBDICT,
@@ -881,5 +889,44 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
 
         #endregion
+
+        internal static void SetRealValue(
+Transaction tr,
+DBDictionary dict,
+string key,
+double value)
+        {
+            Xrecord xr;
+
+            if (dict.Contains(key))
+            {
+                xr = (Xrecord)tr.GetObject(dict.GetAt(key), OpenMode.ForWrite);
+            }
+            else
+            {
+                xr = new Xrecord();
+                dict.SetAt(key, xr);
+                tr.AddNewlyCreatedDBObject(xr, true);
+            }
+
+            xr.Data = new ResultBuffer(
+                new TypedValue((int)DxfCode.Real, value));
+        }
+
+        internal static double? GetRealValue(
+    Transaction tr,
+    DBDictionary dict,
+    string key)
+        {
+            if (!dict.Contains(key))
+                return null;
+
+            var xr = (Xrecord)tr.GetObject(dict.GetAt(key), OpenMode.ForRead);
+
+            return xr.Data?
+                .AsArray()
+                .FirstOrDefault(tv => tv.TypeCode == (int)DxfCode.Real)
+                .Value as double?;
+        }
     }
 }
