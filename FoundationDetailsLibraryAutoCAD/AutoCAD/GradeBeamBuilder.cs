@@ -10,9 +10,11 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 {
     public static class GradeBeamBuilder
     {
-        internal static void CreateGradeBeams(FoundationContext context, double halfWidth, Transaction existingTr = null)
+        public const double DEFAULT_BEAM_WIDTH_IN = 10.0;
+        public const double DEFAULT_BEAM_DEPTH_IN = 28.0;
+        internal static void CreateGradeBeams(FoundationContext context, Transaction existingTr = null)
         {
-            if (context == null || halfWidth <= 0) return;
+            if (context == null) return;
 
             var doc = context.Document;
             var db = doc.Database;
@@ -22,14 +24,14 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 if (existingTr != null)
                 {
                     // --- Use existing transaction
-                    CreateGradeBeamsInternal(context, halfWidth, existingTr);
+                    CreateGradeBeamsInternal(context, existingTr);
                 }
                 else
                 {
                     // --- Lock and create new transaction
                     using (var tr = db.TransactionManager.StartTransaction())
                     {
-                        CreateGradeBeamsInternal(context, halfWidth, tr);
+                        CreateGradeBeamsInternal(context, tr);
                         tr.Commit();
                     }
                 }
@@ -37,13 +39,14 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         }
 
         // Internal helper that assumes transaction is open
-        private static void CreateGradeBeamsInternal(FoundationContext context, double halfWidth, Transaction tr)
+        private static void CreateGradeBeamsInternal(FoundationContext context, Transaction tr)
         {
             var db = context.Document.Database;
             var doc = context.Document;
             var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
             var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
+            // --- Enumerate all beams
             var beams = GradeBeamNOD.EnumerateGradeBeams(context, tr).ToList();
             if (beams.Count == 0) return;
 
@@ -51,7 +54,49 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             foreach (var (_, gbDict) in beams)
                 GradeBeamNOD.DeleteBeamEdgesOnly(context, tr, gbDict);
 
-            List<BeamEdgeSegment> trimmedEdges = CreateEdgesForGradeBeams(context, halfWidth, tr, beams);
+            // --- Build beam-specific width dictionary
+            var beamWidths = new Dictionary<string, double>();
+            foreach (var (handle, gbDict) in beams)
+            {
+                var (w, d) = GradeBeamNOD.GetBeamSection(tr, gbDict);
+                double widthToUse = w;
+                beamWidths[handle] = widthToUse;
+            }
+
+            // --- Build footprints
+            var footprints = new Dictionary<ObjectId, Polyline>();
+            foreach (var (handle, gbDict) in beams)
+            {
+                if (!GradeBeamNOD.TryGetGradeBeamCenterline(context, tr, gbDict, out ObjectId clId))
+                    continue;
+
+                var cl = tr.GetObject(clId, OpenMode.ForRead) as Polyline;
+                if (cl == null) continue;
+
+                footprints[clId] = BuildFootprint(cl, beamWidths[handle]);
+            }
+
+            // --- Generate and explode edges
+            var allEdges = new List<BeamEdgeSegment>();
+            foreach (var (handle, gbDict) in beams)
+            {
+                if (!GradeBeamNOD.TryGetGradeBeamCenterline(context, tr, gbDict, out ObjectId clId))
+                    continue;
+
+                var cl = tr.GetObject(clId, OpenMode.ForRead) as Polyline;
+                if (cl == null) continue;
+
+                double widthToUse = beamWidths[handle];
+
+                var left = OffsetPolyline(cl, +widthToUse);
+                var right = OffsetPolyline(cl, -widthToUse);
+
+                allEdges.AddRange(ExplodeEdges(clId, left, true));
+                allEdges.AddRange(ExplodeEdges(clId, right, false));
+            }
+
+            // --- Trim edges using footprint algorithm
+            var trimmedEdges = TrimAllEdges(allEdges, footprints);
 
             // --- Store edges in NOD and draw
             foreach (var group in trimmedEdges.GroupBy(e => e.BeamId))
@@ -80,43 +125,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 
             doc.Editor.Regen();
         }
-
-        private static List<BeamEdgeSegment> CreateEdgesForGradeBeams(FoundationContext context, double halfWidth, Transaction tr, List<(string Handle, DBDictionary Dict)> beams)
-        {
-            // --- Build footprints
-            var footprints = new Dictionary<ObjectId, Polyline>();
-            foreach (var (_, gbDict) in beams)
-            {
-                if (!GradeBeamNOD.TryGetGradeBeamCenterline(context, tr, gbDict, out ObjectId clId))
-                    continue;
-
-                var cl = tr.GetObject(clId, OpenMode.ForRead) as Polyline;
-                if (cl == null) continue;
-
-                footprints[clId] = BuildFootprint(cl, halfWidth);
-            }
-
-            // --- Generate and explode edges
-            var allEdges = new List<BeamEdgeSegment>();
-            foreach (var (_, gbDict) in beams)
-            {
-                if (!GradeBeamNOD.TryGetGradeBeamCenterline(context, tr, gbDict, out ObjectId clId))
-                    continue;
-
-                var cl = tr.GetObject(clId, OpenMode.ForRead) as Polyline;
-                if (cl == null) continue;
-
-                var left = OffsetPolyline(cl, +halfWidth);
-                var right = OffsetPolyline(cl, -halfWidth);
-
-                allEdges.AddRange(ExplodeEdges(clId, left, true));
-                allEdges.AddRange(ExplodeEdges(clId, right, false));
-            }
-
-            var trimmedEdges = TrimAllEdges(allEdges, footprints);
-            return trimmedEdges;
-        }
-
 
         // Beam edge segment data structure
         class BeamEdgeSegment

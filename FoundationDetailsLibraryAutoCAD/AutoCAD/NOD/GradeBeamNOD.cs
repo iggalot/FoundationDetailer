@@ -639,31 +639,120 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             public double Depth;
         }
 
-        public static (double? Width, double? Depth) GetBeamSection(
+        public static (double Width, double Depth) GetBeamSection(
             Transaction tr,
             DBDictionary beamNode)
         {
             if (tr == null) throw new ArgumentNullException(nameof(tr));
             if (beamNode == null) throw new ArgumentNullException(nameof(beamNode));
 
-            if (!NODCore.TryGetNestedSubDictionary(
-                    tr,
-                    beamNode,
-                    out var metadata,
-                    NODCore.KEY_METADATA_SUBDICT))
-                return (null, null);
+            // --- Get or create metadata subdictionary
+            var metadataDict = NODCore.GetOrCreateNestedSubDictionary(
+                tr,
+                beamNode,
+                NODCore.KEY_METADATA_SUBDICT);
 
-            if (!NODCore.TryGetNestedSubDictionary(
-                    tr,
-                    metadata,
-                    out var sectionDict,
-                    NODCore.KEY_SECTION))
-                return (null, null);
+            // --- Get or create SECTION subdictionary under metadata
+            var sectionDict = NODCore.GetOrCreateNestedSubDictionary(
+                tr,
+                metadataDict,
+                NODCore.KEY_SECTION);
 
+            // --- Try to get stored width/depth
             var width = NODCore.GetRealValue(tr, sectionDict, NODCore.KEY_WIDTH);
             var depth = NODCore.GetRealValue(tr, sectionDict, NODCore.KEY_DEPTH);
 
-            return (width, depth);
+            // --- If missing, set defaults
+            if (!width.HasValue)
+                NODCore.SetRealValue(tr, sectionDict, NODCore.KEY_WIDTH, GradeBeamBuilder.DEFAULT_BEAM_WIDTH_IN);
+            if (!depth.HasValue)
+                NODCore.SetRealValue(tr, sectionDict, NODCore.KEY_DEPTH, GradeBeamBuilder.DEFAULT_BEAM_DEPTH_IN);
+
+            // --- Return stored or default values
+            return (
+                width ?? GradeBeamBuilder.DEFAULT_BEAM_WIDTH_IN,
+                depth ?? GradeBeamBuilder.DEFAULT_BEAM_DEPTH_IN
+            );
+        }
+
+        public static void UpdateBeamSection(
+    FoundationContext context,
+    string centerlineHandle,
+    double halfWidth,
+    double depth)
+        {
+            if (context?.Document == null)
+                return;
+
+            var doc = context.Document;
+            var db = doc.Database;
+
+            using (doc.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                // 1️ Ensure EE_Foundation root exists
+                var foundationRoot = NODCore.InitFoundationNOD(context, tr);
+
+                // 2️⃣ Get or create FD_GRADEBEAM root
+                var gradeBeamRoot = NODCore.GetOrCreateNestedSubDictionary(
+                    tr,
+                    foundationRoot,
+                    NODCore.KEY_GRADEBEAM_SUBDICT);
+
+                // 3️ Safe beam node retrieval (self-healing)
+                var beamNode = NODCore.GetOrCreateGradeBeamNode(
+                    tr,
+                    gradeBeamRoot,
+                    centerlineHandle);
+
+                // 4️ Store section values
+                GradeBeamNOD.SetBeamSection(
+                    tr,
+                    beamNode,
+                    halfWidth,
+                    depth);
+
+                // 5️ Regenerate edges using new workflow
+                if (GradeBeamNOD.TryGetGradeBeamCenterline(context, tr, beamNode, out ObjectId clId))
+                {
+                    var cl = tr.GetObject(clId, OpenMode.ForRead) as Polyline;
+                    if (cl != null)
+                    {
+                        // Rebuild the edges for this beam only
+                        GradeBeamBuilder.CreateGradeBeams(
+                            context,
+                            tr);
+                    }
+                }
+
+                // 6️ Mark design as dirty
+                InvalidateBeamDesign(tr, beamNode);
+
+                tr.Commit();
+            }
+        }
+
+        private static void InvalidateBeamDesign(
+    Transaction tr,
+    DBDictionary beamNode)
+        {
+            var metadata = NODCore.GetOrCreateNestedSubDictionary(
+                tr,
+                beamNode,
+                NODCore.KEY_METADATA_SUBDICT);
+
+            var designDict = NODCore.GetOrCreateNestedSubDictionary(
+                tr,
+                metadata,
+                NODCore.KEY_DESIGN);
+
+            var statusRecord = NODCore.GetOrCreateMetadataXrecord(
+                tr,
+                designDict,
+                NODCore.KEY_STATUS);
+
+            statusRecord.Data = new ResultBuffer(
+                new TypedValue((int)DxfCode.Text, "DIRTY"));
         }
     }
 }

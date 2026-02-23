@@ -142,10 +142,42 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
         // ==========================================================
         private static string BuildHeader(ExtensionDataItem dataItem)
         {
-            if (dataItem.Value != null)
-                return $"{dataItem.Name} ({dataItem.Type}): {FormatValue(dataItem.Value)}";
+            if (dataItem == null) return string.Empty;
 
-            return $"{dataItem.Name} ({dataItem.Type})";
+            string extraInfo = "";
+
+            if (dataItem.Children != null)
+            {
+                foreach (var child in dataItem.Children)
+                {
+                    // Width / Depth
+                    if (child.Name.Equals("Width", StringComparison.OrdinalIgnoreCase) && child.Value?.Count > 0)
+                        extraInfo += $" Width={child.Value[0]}";
+                    if (child.Name.Equals("Depth", StringComparison.OrdinalIgnoreCase) && child.Value?.Count > 0)
+                        extraInfo += $" Depth={child.Value[0]}";
+
+                    // Edge counts
+                    if (child.Name.Equals(NODCore.KEY_EDGES_SUBDICT, StringComparison.OrdinalIgnoreCase) && child.Children != null)
+                    {
+                        int leftCount = 0, rightCount = 0;
+                        foreach (var edgeChild in child.Children)
+                        {
+                            // Assume left edges are stored with "L_" prefix or IsLeft stored in value
+                            if (edgeChild.Name.StartsWith("L_", StringComparison.OrdinalIgnoreCase) ||
+                                (edgeChild.Value?.Count > 0 && edgeChild.Value[0].ToString().Contains("Left") == true))
+                                leftCount++;
+                            else
+                                rightCount++;
+                        }
+                        extraInfo += $" [Edges: L={leftCount}, R={rightCount}]";
+                    }
+                }
+            }
+
+            if (dataItem.Value != null && dataItem.Value.Count > 0)
+                return $"{dataItem.Name} ({dataItem.Type}): {FormatValue(dataItem.Value)}{extraInfo}";
+
+            return $"{dataItem.Name} ({dataItem.Type}){extraInfo}";
         }
 
         private static string FormatValue(object value)

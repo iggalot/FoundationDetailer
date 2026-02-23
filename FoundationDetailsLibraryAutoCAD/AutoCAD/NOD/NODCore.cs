@@ -434,23 +434,38 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
             foreach (var key in keys)
             {
-                // READ FIRST
                 if (current.Contains(key))
                 {
-                    current = (DBDictionary)tr.GetObject(
-                        current.GetAt(key),
-                        OpenMode.ForRead);
+                    // --- Read existing object
+                    var objId = current.GetAt(key);
+                    var obj = tr.GetObject(objId, OpenMode.ForRead);
+
+                    if (obj is DBDictionary dict)
+                    {
+                        current = dict;
+                    }
+                    else
+                    {
+                        // --- Replace invalid object with dictionary
+                        current.UpgradeOpen();
+                        var newDict = new DBDictionary();
+                        current.SetAt(key, newDict);
+                        tr.AddNewlyCreatedDBObject(newDict, true);
+
+                        // Optionally erase old object if safe:
+                        obj.UpgradeOpen();
+                        obj.Erase();
+
+                        current = newDict;
+                    }
                 }
                 else
                 {
-                    // UPGRADE ONLY WHEN NEEDED
-                    if (!current.IsWriteEnabled)
-                        current.UpgradeOpen();
-
+                    // --- Create new dictionary if key missing
+                    if (!current.IsWriteEnabled) current.UpgradeOpen();
                     var sub = new DBDictionary();
                     current.SetAt(key, sub);
                     tr.AddNewlyCreatedDBObject(sub, true);
-
                     current = sub;
                 }
             }

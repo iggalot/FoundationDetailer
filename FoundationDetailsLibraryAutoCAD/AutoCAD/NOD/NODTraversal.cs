@@ -3,6 +3,7 @@ using FoundationDetailsLibraryAutoCAD.Data;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Linq;
 using System.Text;
 using static FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.HandleHandler;
 using static FoundationDetailsLibraryAutoCAD.Data.FoundationEntityData;
@@ -15,10 +16,11 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
     /// </summary>
     public static class NODTraversal
     {
-        /// <summary>
-        /// Converts an ObservableCollection tree into a formatted string for debugging/logging.
-        /// </summary>
-        internal static string TreeToString(IEnumerable<ExtensionDataItem> tree, int indentLevel = 0)
+        internal static string TreeToString(
+            IEnumerable<ExtensionDataItem> tree,
+            Transaction tr,
+            Database db,
+            int indentLevel = 0)
         {
             if (tree == null) return string.Empty;
 
@@ -27,36 +29,82 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
             foreach (var item in tree)
             {
-                // Count subdictionaries in children
-                int subDictCount = 0;
+                string extraInfo = "";
+
                 if (item.Children != null)
                 {
-                    foreach (var c in item.Children)
+                    // --- Width / Depth
+                    foreach (var child in item.Children)
                     {
-                        if (c.Type == "Subdictionary")
-                            subDictCount++;
+                        if (child.Name.Equals("Width", StringComparison.OrdinalIgnoreCase) && child.Value?.Count > 0)
+                            extraInfo += $" Width={child.Value[0]}";
+                        if (child.Name.Equals("Depth", StringComparison.OrdinalIgnoreCase) && child.Value?.Count > 0)
+                            extraInfo += $" Depth={child.Value[0]}";
+                    }
+
+                    // --- Edge counts
+                    var edgesNode = item.Children.FirstOrDefault(c => c.Name == NODCore.KEY_EDGES_SUBDICT);
+                    if (edgesNode != null && edgesNode.Children != null)
+                    {
+                        int leftCount = 0, rightCount = 0;
+                        foreach (var edgeChild in edgesNode.Children)
+                        {
+                            if (edgeChild.Name.StartsWith("L_", StringComparison.OrdinalIgnoreCase))
+                                leftCount++;
+                            else
+                                rightCount++;
+                        }
+                        extraInfo += $" [Edges: L={leftCount}, R={rightCount}]";
                     }
                 }
 
-                // Format handles if present
-                string handlesText = string.Empty;
-                if (item.Value is List<string> handleList && handleList.Count > 0)
+                // --- Handles / Value strings
+                string handlesText = "";
+                if (item.Value != null && item.Value.Count > 0)
                 {
-                    handlesText = $" [Handles: {string.Join(", ", handleList)}]";
+                    foreach (var val in item.Value)
+                    {
+                        if (val is string handleStr)
+                        {
+                            if (NODCore.TryGetObjectIdFromHandleString(null, db, handleStr, out var oid))
+                            {
+                                if (oid.IsNull)
+                                    handlesText += $" [Handle {handleStr} : NULL]";
+                                else if (oid.IsErased)
+                                    handlesText += $" [Handle {handleStr} : Erased]";
+                                else
+                                    handlesText += $" [Handle {handleStr} : Valid Object]";
+                            }
+                            else
+                            {
+                                handlesText += $" [Handle {handleStr} : NotFound]";
+                            }
+                        }
+                    }
                 }
 
-                sb.AppendLine($"{indent}{item.Name} ({item.Type})" +
-                    (subDictCount > 0 ? $" [{subDictCount} sub-dictionaries]" : "") +
-                    handlesText);
+                // --- Compose final line
+                string line;
+                if (item.Value != null && item.Value.Count > 0)
+                    line = $"{indent}{item.Name} ({item.Type}): {FormatValue(item.Value)}{extraInfo}{handlesText}";
+                else
+                    line = $"{indent}{item.Name} ({item.Type}){extraInfo}{handlesText}";
 
-                // Recurse into children
+                sb.AppendLine(line);
+
+                // --- Recurse children
                 if (item.Children != null && item.Children.Count > 0)
                 {
-                    sb.Append(TreeToString(item.Children, indentLevel + 1));
+                    sb.Append(TreeToString(item.Children, tr, db, indentLevel + 1));
                 }
             }
 
             return sb.ToString();
+        }
+
+        private static string FormatValue(IEnumerable<string> values)
+        {
+            return values != null ? string.Join(", ", values) : string.Empty;
         }
     }
 

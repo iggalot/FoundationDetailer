@@ -164,7 +164,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 ed.WriteMessage($"\n[DEBUG] Deleted {totalBeamsDeleted} grade beam edges.");
 
                 // --- Delete remaining beam edges and rebuild edges for all beams
-                //_gradeBeamService.GenerateEdgesForAllGradeBeams(context);
+                _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
                 ed.WriteMessage("\n[DEBUG] Regenerated all grade beam edges.");
 
                 // --- Refresh UI
@@ -719,7 +719,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 var treeData = NODScanner.ProcessDictionary(context, tr, rootDict, db);
 
                 // --- Convert the tree to a string for debug purposes ---
-                string treeString = NODTraversal.TreeToString(treeData);
+                string treeString = NODTraversal.TreeToString(treeData, tr, db);
 
                 // --- Show the debug string ---
                 ScrollableMessageBox.Show(treeString, "NOD Tree Structure");
