@@ -12,6 +12,8 @@ using FoundationDetailsLibraryAutoCAD.Managers;
 using FoundationDetailsLibraryAutoCAD.Services;
 using FoundationDetailsLibraryAutoCAD.UI.Controls.EqualSpacingGBControl;
 using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
@@ -601,83 +603,62 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 }
             }
         }
+        #endregion
 
+        #region --- NOD / TreeView ---
         private void TreeViewExtensionData_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
         {
-            if (!(e.NewValue is TreeViewItem tvi))
-                return;
+            if (!(e.NewValue is TreeViewItem tvi)) return;
+            if (!(tvi.Tag is TreeViewManager.TreeNodeInfo nodeInfo)) return;
 
-            // TreeNodeInfo holds the NODObjectWrapper
-            if (!(tvi.Tag is TreeViewManager.TreeNodeInfo nodeInfo))
-                return;
+            var doc = CurrentContext?.Document;
+            if (doc == null) return;
 
-            Entity ent = nodeInfo.NODObject?.Entity;
-            if (ent == null)
-                return;
+            // Collect all ObjectIds recursively
+            var ids = GetAllEntitiesFromTreeNode(tvi);
 
-            var context = CurrentContext;
-            var doc = context.Document;
-            var ed = doc.Editor;
+            if (ids.Length == 0) return;
 
             using (doc.LockDocument())
-            using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
+            using (var tr = doc.Database.TransactionManager.StartTransaction())
             {
                 try
                 {
-                    // Select the entity in the AutoCAD drawing
-                    ed.SetImpliedSelection(new ObjectId[] { ent.ObjectId });
-                    ed.UpdateScreen();
-
+                    doc.Editor.SetImpliedSelection(ids);
+                    doc.Editor.UpdateScreen();
                     tr.Commit();
                 }
                 catch (Autodesk.AutoCAD.Runtime.Exception ex)
                 {
-                    ed.WriteMessage($"\nError selecting entity: {ex.Message}");
+                    doc.Editor.WriteMessage($"\nError selecting object: {ex.Message}");
                 }
             }
+
+            UpdateTreeViewUI();
         }
-
-
-
-        #endregion
-
-        #region --- NOD / TreeView ---
-
 
         /// <summary>
-        /// Helper function to update the data in the TreeView for the HANDLES from the NOD.
+        /// Recursively collects ObjectIds from a TreeViewItem and all its children
         /// </summary>
-        internal void UpdateTreeViewUI()
+        private ObjectId[] GetAllEntitiesFromTreeNode(TreeViewItem node)
         {
-            var context = CurrentContext;
-            var doc = context?.Document;
-            if (doc == null) return;
+            var ids = new List<ObjectId>();
 
-            var db = doc.Database;
-
-            TreeViewExtensionData.Items.Clear();
-
-            using (var tr = db.TransactionManager.StartTransaction())
+            if (node.Tag is TreeViewManager.TreeNodeInfo info)
             {
-                var rootDict = NODCore.GetFoundationRoot(tr, db);
-                if (rootDict == null)
-                    return;
-
-                // --- Rebuild the ExtensionDataItem tree using the new handles-only ProcessDictionary ---
-                var treeData = NODScanner.ProcessDictionary(context, tr, rootDict, db);
-
-                // --- Pass the transaction into TreeViewManager ---
-                var treeMgr = new TreeViewManager(tr);
-
-                // --- Populate TreeView ---
-                treeMgr.PopulateFromData(TreeViewExtensionData, treeData);
-
-                tr.Commit();
+                // If we have a wrapped entity, use that
+                if (info.NODObject?.Entity != null)
+                    ids.Add(info.NODObject.Entity.ObjectId);
+                // Otherwise, fallback to ObjectId directly
+                else if (info.ObjectId != ObjectId.Null)
+                    ids.Add(info.ObjectId);
             }
+
+            foreach (TreeViewItem child in node.Items)
+                ids.AddRange(GetAllEntitiesFromTreeNode(child));
+
+            return ids.ToArray();
         }
-
-
-
 
 
 
@@ -910,5 +891,37 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         }
 
         #endregion
+
+        /// <summary>
+        /// Rebuilds the TreeView based on the NOD tree and allows entity selection.
+        /// </summary>
+        internal void UpdateTreeViewUI()
+        {
+            var context = CurrentContext;
+            var doc = context?.Document;
+            if (doc == null) return;
+
+            TreeViewExtensionData.Items.Clear();
+
+            var db = doc.Database;
+
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                // --- Get the foundation root dictionary
+                var rootDict = NODCore.GetFoundationRoot(tr, db);
+                if (rootDict == null) return;
+
+                // --- Build ExtensionDataItem tree including NODObjectWrapper for entities
+                var treeData = NODScanner.ProcessDictionary(context, tr, rootDict, db);
+
+                // --- Create TreeViewManager with current transaction
+                var treeMgr = new TreeViewManager(tr);
+
+                // --- Populate the TreeView
+                treeMgr.PopulateFromData(TreeViewExtensionData, treeData);
+
+                tr.Commit();
+            }
+        }
     }
 }

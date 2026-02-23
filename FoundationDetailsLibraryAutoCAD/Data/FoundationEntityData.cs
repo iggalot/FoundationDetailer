@@ -194,7 +194,8 @@ namespace FoundationDetailsLibraryAutoCAD.Data
                     {
                         Name = entry.Key,
                         Type = "Subdictionary",
-                        Children = ProcessDictionary(context, tr, subDict, db)
+                        Children = ProcessDictionary(context, tr, subDict, db),
+                        NODObject = new NODObjectWrapper(obj)
                     });
                 }
                 else if (obj is Xrecord xr)

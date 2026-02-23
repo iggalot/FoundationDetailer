@@ -39,23 +39,18 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
         // ==========================================================
         private TreeViewItem CreatePolylineNode(TreeNodeInfo info)
         {
-            NODObjectWrapper wrapper = null;
-
-            if (info.NODObject != null)
-            {
-                wrapper = info.NODObject;
-            }
-            else if (info.ObjectId != ObjectId.Null && _transaction != null)
+            // Wrap the Entity if not already wrapped
+            NODObjectWrapper wrapper = info.NODObject;
+            if (wrapper == null && info.ObjectId != ObjectId.Null && _transaction != null)
             {
                 try
                 {
                     var obj = _transaction.GetObject(info.ObjectId, OpenMode.ForRead, false);
-                    if (obj is Polyline pl)
-                        wrapper = new NODObjectWrapper(pl); // Wrap Polyline as NODObjectWrapper
+                    if (obj is Entity ent)
+                        wrapper = new NODObjectWrapper(ent);
                 }
                 catch
                 {
-                    // Leave wrapper null if failed
                     wrapper = null;
                 }
             }
@@ -66,10 +61,9 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
                 {
                     DataContext = new PolylineTreeItemViewModel(wrapper, _transaction)
                 },
-                Tag = info
+                Tag = new TreeNodeInfo(info.Key, info.IsDictionary, info.ObjectId, wrapper)
             };
         }
-
 
         // ==========================================================
         // Public Entry Point
@@ -90,25 +84,48 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
             }
         }
 
+        /// <summary>
+        /// Populate a TreeView from an ExtensionDataItem collection (from your NOD tree)
+        /// </summary>
+        public void PopulateTreeViewFromExtensionData(
+            TreeView treeView,
+            ObservableCollection<ExtensionDataItem> extensionData)
+        {
+            if (treeView == null)
+                throw new ArgumentNullException(nameof(treeView));
+
+            treeView.Items.Clear();
+
+            if (extensionData == null)
+                return;
+
+            foreach (var item in extensionData)
+            {
+                var node = CreateNode(item);
+                if (node != null)
+                    treeView.Items.Add(node);
+            }
+        }
+
         // ==========================================================
         // Core Node Builder
         // ==========================================================
+        // In TreeViewManager:
         private TreeViewItem CreateNode(ExtensionDataItem dataItem)
         {
-            if (dataItem == null)
-                return null;
+            if (dataItem == null) return null;
 
             // Create TreeNodeInfo including NODObject reference
             var info = new TreeNodeInfo(
                 dataItem.Name,
                 dataItem.Type == "Subdictionary" || dataItem.Type == "Dictionary",
-                dataItem.ObjectId ?? ObjectId.Null,   // <-- use Null if it's null
-                dataItem.NODObject  // <-- store NODObjectWrapper instead of Entity
+                dataItem.ObjectId ?? ObjectId.Null,
+                dataItem.NODObject // <-- NODObjectWrapper
             );
 
             TreeViewItem node;
 
-            // Use specialized control if registered
+            // Use specialized control if registered (polyline, gradebeam, etc.)
             if (_controlMap.TryGetValue(dataItem.Name, out var factory))
             {
                 node = factory(info);
@@ -136,7 +153,6 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
             return node;
         }
 
-
         // ==========================================================
         // Header Formatting
         // ==========================================================
@@ -148,32 +164,34 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
 
             if (dataItem.Children != null)
             {
+                // Loop over children to gather width, depth, and edge info
                 foreach (var child in dataItem.Children)
                 {
-                    // Width / Depth
+                    // --- Width / Depth
                     if (child.Name.Equals("Width", StringComparison.OrdinalIgnoreCase) && child.Value?.Count > 0)
                         extraInfo += $" Width={child.Value[0]}";
                     if (child.Name.Equals("Depth", StringComparison.OrdinalIgnoreCase) && child.Value?.Count > 0)
                         extraInfo += $" Depth={child.Value[0]}";
 
-                    // Edge counts
+                    // --- Edges (assumes L_ prefix or 'Left' in value)
                     if (child.Name.Equals(NODCore.KEY_EDGES_SUBDICT, StringComparison.OrdinalIgnoreCase) && child.Children != null)
                     {
                         int leftCount = 0, rightCount = 0;
                         foreach (var edgeChild in child.Children)
                         {
-                            // Assume left edges are stored with "L_" prefix or IsLeft stored in value
                             if (edgeChild.Name.StartsWith("L_", StringComparison.OrdinalIgnoreCase) ||
                                 (edgeChild.Value?.Count > 0 && edgeChild.Value[0].ToString().Contains("Left") == true))
                                 leftCount++;
                             else
                                 rightCount++;
                         }
+
                         extraInfo += $" [Edges: L={leftCount}, R={rightCount}]";
                     }
                 }
             }
 
+            // --- Display node's value if present (e.g., XRecord info)
             if (dataItem.Value != null && dataItem.Value.Count > 0)
                 return $"{dataItem.Name} ({dataItem.Type}): {FormatValue(dataItem.Value)}{extraInfo}";
 
