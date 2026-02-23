@@ -403,15 +403,13 @@ namespace FoundationDetailer.AutoCAD
                 return 0;
 
             using (var lockDoc = context.Document.LockDocument())
+            using (var tr = context.Document.Database.TransactionManager.StartTransaction())
             {
-                using (var tr = context.Document.Database.TransactionManager.StartTransaction())
-                {
-                    var edgesDeleted = 0;
-                    var beamsDeleted = 0;
-                    int deleted = DeleteGradeBeamFullInternal(context, tr, handle, out edgesDeleted, out beamsDeleted);
-                    tr.Commit();
-                    return deleted;
-                }
+                int edgesDeleted, beamsDeleted;
+                int deleted = DeleteGradeBeamFullInternal(context, tr, handle, out edgesDeleted, out beamsDeleted);
+
+                tr.Commit();
+                return deleted;
             }
         }
 
@@ -425,28 +423,24 @@ namespace FoundationDetailer.AutoCAD
             if (context?.Document == null)
                 return 0;
 
-            int total = 0;
+            int totalBeamsDeleted = 0;
 
             using (var lockDoc = context.Document.LockDocument())
+            using (var tr = context.Document.Database.TransactionManager.StartTransaction())
             {
-                var edgesDeleted = 0;
-                var beamsDeleted = 0;
-
-
-                using (var tr = context.Document.Database.TransactionManager.StartTransaction())
+                foreach (var (handle, _) in GradeBeamNOD.EnumerateGradeBeams(context, tr))
                 {
-                    foreach (var (handle, _) in GradeBeamNOD.EnumerateGradeBeams(context, tr))
-                    {
-                        DeleteGradeBeamFullInternal(context, tr, handle, out edgesDeleted, out beamsDeleted);
-                        total += beamsDeleted;
-                    }
-                    tr.Commit();
+                    int edgesDeleted, beamsDeleted;
+                    DeleteGradeBeamFullInternal(context, tr, handle, out edgesDeleted, out beamsDeleted);
+                    totalBeamsDeleted += beamsDeleted;
                 }
+
+                tr.Commit();
             }
 
-            return total;
+            return totalBeamsDeleted;
         }
-                
+
         /// <summary>
         /// Internal function to delete a gradebeam with a specified centerline handle.  Removes all edges and associated data.  Clears the NOD entry.
         /// </summary>
@@ -456,7 +450,12 @@ namespace FoundationDetailer.AutoCAD
         /// <param name="edgesDeleted"></param>
         /// <param name="beamsDeleted"></param>
         /// <returns></returns>
-        private int DeleteGradeBeamFullInternal(FoundationContext context, Transaction tr, string handle, out int edgesDeleted, out int beamsDeleted)
+        private int DeleteGradeBeamFullInternal(
+            FoundationContext context,
+            Transaction tr,
+            string handle,
+            out int edgesDeleted,
+            out int beamsDeleted)
         {
             edgesDeleted = 0;
             beamsDeleted = 0;
@@ -464,14 +463,29 @@ namespace FoundationDetailer.AutoCAD
             if (context?.Document == null || string.IsNullOrWhiteSpace(handle))
                 return 0;
 
-            // --- Look up the beam dictionary
-            var gbDict = GradeBeamNOD.GetGradeBeamDictionaryByHandle(context, tr, handle);
-            if (gbDict == null) return 0;
+            // --- Get the beam dictionary node
+            var beamNode = GradeBeamNOD.GetGradeBeamDictionaryByHandle(context, tr, handle);
+            if (beamNode == null)
+                return 0;
 
-            // --- Delete edges + centerline + metadata
+            // --- Delete all edge entities first
             edgesDeleted = DeleteGradeBeamEdgesOnlyInternal(context, tr, handle);
 
-            return GradeBeamNOD.DeleteBeamFull(context, tr, handle);
+            // --- Delete the centerline AutoCAD object if it exists
+            if (NODCore.TryGetObjectIdFromHandleString(context, context.Document.Database, handle, out ObjectId clId))
+            {
+                if (clId.IsValid && !clId.IsErased)
+                {
+                    var entity = tr.GetObject(clId, OpenMode.ForWrite) as Entity;
+                    entity?.Erase();
+                    beamsDeleted++; // count the centerline as a beam-related entity
+                }
+            }
+
+            // --- Delete the full beam node from NOD, including SECTION metadata and FD_METADATA
+            beamsDeleted += GradeBeamNOD.DeleteBeamFull(context, tr, handle);
+
+            return beamsDeleted;
         }
 
         /// <summary>

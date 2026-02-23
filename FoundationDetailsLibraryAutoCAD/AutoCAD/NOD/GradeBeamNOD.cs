@@ -489,47 +489,48 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         }
 
 
-        internal static int DeleteBeamFull(
-            FoundationContext context,
-            Transaction tr,
-            string handle)
+        internal static int DeleteBeamFull(FoundationContext context, Transaction tr, string handle)
         {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-            if (tr == null) throw new ArgumentNullException(nameof(tr));
-            if (string.IsNullOrWhiteSpace(handle)) return 0;
-
-            int deleted = 0;
-
-            var gbRoot = GetGradeBeamRoot(tr, context.Document.Database, true);
-            if (gbRoot == null || !gbRoot.Contains(handle))
+            if (context?.Document == null || string.IsNullOrWhiteSpace(handle))
                 return 0;
 
-            var gbDict = (DBDictionary)tr.GetObject(
-                gbRoot.GetAt(handle),
-                OpenMode.ForWrite);
+            // --- Get the beam node dictionary by handle
+            var beamNode = GetGradeBeamDictionaryByHandle(context, tr, handle);
+            if (beamNode == null)
+                return 0;
 
-            // 1️ Delete edges
-            deleted += DeleteBeamEdgesOnly(context, tr, gbDict);
+            int deletedCount = 0;
 
-            // 2️ Delete centerline
-            if (TryGetGradeBeamCenterline(context, tr, gbDict, out ObjectId clId))
+            // --- Delete SECTION metadata under FD_METADATA if it exists
+            if (NODCore.TryGetNestedSubDictionary(tr, beamNode, out var metadataDict, NODCore.KEY_METADATA_SUBDICT))
             {
-                var ent = tr.GetObject(clId, OpenMode.ForWrite) as Entity;
-                if (ent != null && !ent.IsErased)
+                if (NODCore.TryGetNestedSubDictionary(tr, metadataDict, out var sectionDict, NODCore.KEY_SECTION))
                 {
-                    ent.Erase();
-                    deleted++;
+                    sectionDict.UpgradeOpen();
+                    sectionDict.Erase();
+                    deletedCount++;
                 }
+
+                // Optional: erase FD_METADATA itself
+                metadataDict.UpgradeOpen();
+                metadataDict.Erase();
+                deletedCount++;
             }
 
-            // 3️ Remove beam node
-            gbRoot.Remove(handle);
-            gbDict.Erase();
+            // --- Remove the beam node from its parent dictionary
+            var parentDict = (DBDictionary)tr.GetObject(beamNode.OwnerId, OpenMode.ForWrite);
+            if (parentDict.Contains(handle))
+            {
+                parentDict.Remove(handle);
+            }
 
-            return deleted;
+            // --- Erase the beam node itself
+            beamNode.UpgradeOpen();
+            beamNode.Erase();
+            deletedCount++;
+
+            return deletedCount;
         }
-
-
         internal static int DeleteBeamEdgesOnly(
             FoundationContext context,
             Transaction tr,

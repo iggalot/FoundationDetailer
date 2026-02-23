@@ -164,8 +164,24 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 ed.WriteMessage($"\n[DEBUG] Deleted {totalBeamsDeleted} grade beam edges.");
 
                 // --- Delete remaining beam edges and rebuild edges for all beams
-                _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
-                ed.WriteMessage("\n[DEBUG] Regenerated all grade beam edges.");
+                try
+                {
+                    ed.WriteMessage("\n[DEBUG] Deleting all grade beam edges...");
+
+                    // --- Delete all edges
+                    int totalEdgesDeleted = _gradeBeamService.DeleteEdgesForAllBeams(context);
+                    ed.WriteMessage($"\n[DEBUG] Deleted {totalEdgesDeleted} grade beam edges.");
+
+                    // --- Rebuild edges for all beams
+                    _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
+                    ed.WriteMessage("\n[DEBUG] Regenerated all grade beam edges.");
+
+                    Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+                }
+                catch (Exception ex)
+                {
+                    ed.WriteMessage("\nError regenerating grade beam edges: " + ex.Message);
+                }
 
                 // --- Refresh UI
                 Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
