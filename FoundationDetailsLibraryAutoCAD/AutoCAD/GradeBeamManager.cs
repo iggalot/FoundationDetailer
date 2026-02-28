@@ -397,7 +397,7 @@ namespace FoundationDetailer.AutoCAD
         /// <param name="context"></param>
         /// <param name="handle"></param>
         /// <returns></returns>
-        public int DeleteSingleBeam(FoundationContext context, string handle)
+        public int DeleteSingleGradeBeam(FoundationContext context, string handle)
         {
             if (context?.Document == null || string.IsNullOrWhiteSpace(handle))
                 return 0;

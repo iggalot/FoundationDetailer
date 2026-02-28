@@ -89,6 +89,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
 
             BtnSelectBoundary.Click += (s, e) => BtnDefineFoundationBoundary_Click();
+            BtnDeleteBoundary.Click += (s, e) => BtnDeleteBoundary_Click();
             BtnSave.Click += (s, e) => BtnSaveModel_Click();
             BtnLoad.Click += (s, e) => BtnLoadModel_Click();
 
@@ -160,7 +161,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 // --- Delete selected beam
                 foreach (var handle in uniqueHandles)
                 {
-                    totalBeamsDeleted += _gradeBeamService.DeleteSingleBeam(context, handle);
+                    totalBeamsDeleted += _gradeBeamService.DeleteSingleGradeBeam(context, handle);
 
                 }
                 ed.WriteMessage($"\n[DEBUG] Deleted {totalBeamsDeleted} grade beam edges.");
@@ -532,6 +533,127 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             }
         }
 
+        private void BtnDefineFoundationBoundary_Click()
+        {
+            var context = CurrentContext;
+            if (context?.Document == null)
+            {
+                TxtStatus.Text = "No active document.";
+                return;
+            }
+
+            var doc = context.Document;
+            var ed = doc.Editor;
+            var db = doc.Database;
+
+            // Prompt for a closed polyline
+            PromptEntityOptions options = new PromptEntityOptions("\nSelect a closed polyline: ");
+            options.SetRejectMessage("\nMust be a closed polyline.");
+            options.AddAllowedClass(typeof(Polyline), false);
+
+            var result = ed.GetEntity(options);
+            if (result.Status != PromptStatus.OK)
+            {
+                TxtStatus.Text = "Boundary beam selection canceled.";
+                return;
+            }
+
+            if (_boundaryService.DefineBoundary(context, result, out string error))
+            {
+                PolylineBoundaryManager.RaiseBoundaryChanged();
+
+                // --- Delete all existing edges (clean slate)
+                int edgesDeleted = _gradeBeamService.DeleteEdgesForAllBeams(context);
+                ed.WriteMessage($"\n[DEBUG] Deleted {edgesDeleted} existing grade beam edges.");
+
+                // --- Rebuild edges for all grade beams
+                _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
+                ed.WriteMessage("\n[DEBUG] Rebuilt all grade beam edges.");
+
+                // --- Update UI
+                Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+
+                TxtStatus.Text = "Boundary beam defined.";
+
+                // turn on the UI for gradebeam definition.
+                PrelimGBControl.ViewModel.IsPreliminaryGenerated = true;
+                PrelimGBControl.Visibility = System.Windows.Visibility.Collapsed;
+
+            }
+            else if (!string.IsNullOrEmpty(error))
+            {
+                TxtStatus.Text = error;
+                return;
+            }
+        }
+
+        private void BtnDeleteBoundary_Click()
+        {
+            var context = CurrentContext;
+            if (context?.Document == null)
+                return;
+
+            var doc = context.Document;
+            var ed = doc.Editor;
+
+            try
+            {
+                // --- Prompt user to select ONE boundary object
+                var peo = new PromptEntityOptions("\nSelect boundary object to delete:");
+                peo.SetRejectMessage("\nObject is not a valid boundary element.");
+                peo.AddAllowedClass(typeof(Polyline), false);
+                peo.AllowNone = false;
+
+                var per = ed.GetEntity(peo);
+                if (per.Status != PromptStatus.OK)
+                {
+                    ed.WriteMessage("\nNo object selected.");
+                    return;
+                }
+
+                // --- Resolve owning beam handle
+                string handle = _boundaryService.ResolveBoundaryBeamHandle(context, per.ObjectId);
+                if (string.IsNullOrEmpty(handle))
+                {
+                    ed.WriteMessage("\nSelected object does not belong to a boundary beam.");
+                    return;
+                }
+
+                // --- Confirm deletion
+                var pko = new PromptKeywordOptions(
+                    "\nDelete selected boundary beam? This cannot be undone.")
+                {
+                    AllowNone = false
+                };
+                pko.Keywords.Add("Yes");
+                pko.Keywords.Add("No");
+
+                var confirm = ed.GetKeywords(pko);
+                if (confirm.Status != PromptStatus.OK || confirm.StringResult != "Yes")
+                {
+                    ed.WriteMessage("\nOperation canceled.");
+                    return;
+                }
+
+                // --- Delete beam
+                int deleted = _boundaryService.DeleteBoundaryBeam(context, handle);
+                ed.WriteMessage($"\nDeleted {deleted} boundary beam.");
+
+                // --- Rebuild edges
+                _gradeBeamService.DeleteEdgesForAllBeams(context);
+                _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
+
+                Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+            }
+            catch (Exception ex)
+            {
+                ed.WriteMessage("\nError deleting boundary beam: " + ex.Message);
+            }
+        }
+
+
+
+
 
         private void UpdateBoundaryDisplay()
         {
@@ -667,15 +789,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
 
         #region --- UI Button Click Handlers ---
-        private void BtnDefineFoundationBoundary_Click()
-        {
-            var context = CurrentContext;
-            if (_boundaryService.SelectBoundary(context, out string error))
-                PolylineBoundaryManager.RaiseBoundaryChanged();
-            else if (!string.IsNullOrEmpty(error))
-                TxtStatus.Text = error;
-        }
-
         private void BtnEraseNODFully_Click()
         {
             NODCleaner.ClearFoundationNOD(CurrentContext);

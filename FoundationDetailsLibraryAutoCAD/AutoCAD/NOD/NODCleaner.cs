@@ -8,9 +8,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 {
     internal static class NODCleaner
     {
-        /// <summary>
-        /// Completely deletes the EE_Foundation NOD structure (ROOT and all subdictionaries) after a warning prompt.
-        /// </summary>
         public static void ClearFoundationNOD(FoundationContext context)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
@@ -20,7 +17,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
             // Prompt user for confirmation
             PromptKeywordOptions pko = new PromptKeywordOptions(
-                "\nWARNING: This will completely delete the EE_Foundation NOD. Are you sure?");
+                "\nWARNING: This will completely clear the EE_Foundation NOD. Are you sure?");
             pko.Keywords.Add("Yes");
             pko.Keywords.Add("No");
             pko.AllowNone = false;
@@ -38,27 +35,30 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             {
                 try
                 {
-                    // Access Named Objects Dictionary
+                    // Access the Named Objects Dictionary
                     DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
 
+                    // If ROOT exists, erase it
                     if (nod.Contains(NODCore.ROOT))
                     {
-                        ObjectId rootId = nod.GetAt(NODCore.ROOT);
-                        DBObject rootObj = tr.GetObject(rootId, OpenMode.ForWrite);
-
-                        // Erase the ROOT dictionary (this removes all subdictionaries and entities under it)
+                        var rootId = nod.GetAt(NODCore.ROOT);
+                        var rootObj = tr.GetObject(rootId, OpenMode.ForWrite);
                         rootObj.Erase();
+                    }
 
-                        ed.WriteMessage("\nEE_Foundation NOD has been cleared.");
-                    }
-                    else
-                    {
-                        ed.WriteMessage("\nEE_Foundation NOD does not exist.");
-                    }
+                    // --- Immediately recreate an empty ROOT dictionary ---
+                    var newRoot = new DBDictionary();
+                    nod.SetAt(NODCore.ROOT, newRoot);
+                    tr.AddNewlyCreatedDBObject(newRoot, true);
+
+                    // Optional: recreate empty subdictionaries for boundary and grade beam
+                    NODCore.GetOrCreateNestedSubDictionary(tr, newRoot, NODCore.KEY_BOUNDARY_SUBDICT);
+                    NODCore.GetOrCreateNestedSubDictionary(tr, newRoot, NODCore.KEY_GRADEBEAM_SUBDICT);
 
                     tr.Commit();
+                    ed.WriteMessage("\nEE_Foundation NOD has been cleared and reset.");
                 }
-                catch (System.Exception ex)
+                catch (Exception ex)
                 {
                     ed.WriteMessage($"\nError clearing NOD: {ex.Message}");
                 }
