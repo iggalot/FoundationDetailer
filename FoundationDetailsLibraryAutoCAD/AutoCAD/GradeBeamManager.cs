@@ -655,19 +655,17 @@ namespace FoundationDetailer.AutoCAD
             if (context == null)
                 throw new ArgumentNullException(nameof(context));
 
+            var ids = new List<ObjectId>();
+
             var doc = context.Document;
             var db = doc.Database;
             var ed = doc.Editor;
 
-            var centerlineIds = new List<ObjectId>();
-
             using (doc.LockDocument())
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                // Enumerate all grade beams stored in the NOD
                 foreach (var (_, gbDict) in GradeBeamNOD.EnumerateGradeBeams(context, tr))
                 {
-                    // Get centerline only
                     if (GradeBeamNOD.TryGetGradeBeamObjects(
                             context,
                             tr,
@@ -676,36 +674,32 @@ namespace FoundationDetailer.AutoCAD
                             includeCenterline: true,
                             includeEdges: false))
                     {
-                        foreach (var pl in polys)
-                        {
-                            if (pl != null)
-                                centerlineIds.Add(pl.ObjectId);
-                        }
+                        ids.AddRange(polys.Select(p => p.ObjectId));
                     }
                 }
 
                 tr.Commit();
             }
 
-            if (centerlineIds.Count == 0)
+            if (ids.Count == 0)
             {
                 ed.WriteMessage("\nNo grade beams found.");
                 return;
             }
 
-            ed.WriteMessage($"\nHighlighting {centerlineIds.Count} grade beam centerlines...");
+            ed.WriteMessage($"\nHighlighting {ids.Count} grade beam centerlines...");
 
             // ----------------------------------------------------
             // STEP 2 - Use shared highlighting service -- wait for user input to exit
             // ----------------------------------------------------
-            HighlightService.HighlightPolylines(context, centerlineIds);
+            HighlightService.HighlightEntities(context, ids);
 
             // ----------------------------------------------------
             // STEP 3 – Select the real centerlines
             // ----------------------------------------------------
-            SelectionService.FocusAndHighlight(context, centerlineIds, "HighlightGradeBeams");
+            SelectionService.FocusAndHighlight(context, ids, "HighlightGradeBeams");
 
-            ed.WriteMessage($"\n{centerlineIds.Count} grade beam centerlines selected.");
+            ed.WriteMessage($"\n{ids.Count} grade beam centerlines selected.");
         }
 
         // Track which documents have already registered the RegApp

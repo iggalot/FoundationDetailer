@@ -8,13 +8,12 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 {
     public static class HighlightService
     {
-        const string tempHighlightLayer = "_TEMP_HIGHLIGHT";
+        private const string TempLayer = "_TEMP_HIGHLIGHT";
 
-        public static void HighlightPolylines(
+        public static void HighlightEntities(
             FoundationContext context,
             IEnumerable<ObjectId> ids,
-            double width = 12,
-            string layerName = tempHighlightLayer)
+            short colorIndex = 2) // yellow
         {
             if (context == null)
                 throw new ArgumentNullException(nameof(context));
@@ -23,27 +22,20 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             var db = doc.Database;
             var ed = doc.Editor;
 
+            var idList = ids?
+                .Where(id => !id.IsNull && id.IsValid)
+                .Distinct()
+                .ToList();
 
-            List<Polyline> polylines = new List<Polyline>();
-
-            // Read entities
-            using (doc.LockDocument())
-            using (var tr = db.TransactionManager.StartTransaction())
+            if (idList == null || idList.Count == 0)
             {
-                foreach (var id in ids)
-                {
-                    var pl = tr.GetObject(id, OpenMode.ForRead) as Polyline;
-                    if (pl != null)
-                        polylines.Add(pl);
-                }
-
-                tr.Commit();
+                ed.WriteMessage("\nNothing to highlight.");
+                return;
             }
 
-            if (polylines.Count == 0)
-                return;
-
-            // Draw temporary graphics
+            // -------------------------------
+            // Draw temporary highlight objects
+            // -------------------------------
             using (doc.LockDocument())
             using (var tr = db.TransactionManager.StartTransaction())
             {
@@ -54,15 +46,16 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 
                 ObjectId layerId;
 
-                if (!lt.Has(layerName))
+                if (!lt.Has(TempLayer))
                 {
                     lt.UpgradeOpen();
 
                     var ltr = new LayerTableRecord
                     {
-                        Name = layerName,
+                        Name = TempLayer,
                         Color = Autodesk.AutoCAD.Colors.Color.FromColorIndex(
-                            Autodesk.AutoCAD.Colors.ColorMethod.ByAci, 2)
+                            Autodesk.AutoCAD.Colors.ColorMethod.ByAci,
+                            colorIndex)
                     };
 
                     layerId = lt.Add(ltr);
@@ -70,19 +63,23 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 }
                 else
                 {
-                    layerId = lt[layerName];
+                    layerId = lt[TempLayer];
                 }
 
-                foreach (var pl in polylines)
+                foreach (var id in idList)
                 {
-                    var clone = (Polyline)pl.Clone();
-                    clone.LayerId = layerId;
+                    var ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+                    if (ent == null)
+                        continue;
 
-                    for (int i = 0; i < clone.NumberOfVertices; i++)
-                    {
-                        clone.SetStartWidthAt(i, width);
-                        clone.SetEndWidthAt(i, width);
-                    }
+                    var clone = ent.Clone() as Entity;
+                    if (clone == null)
+                        continue;
+
+                    clone.LayerId = layerId;
+                    clone.Color = Autodesk.AutoCAD.Colors.Color.FromColorIndex(
+                        Autodesk.AutoCAD.Colors.ColorMethod.ByAci,
+                        colorIndex);
 
                     ms.AppendEntity(clone);
                     tr.AddNewlyCreatedDBObject(clone, true);
@@ -94,12 +91,13 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             ed.WriteMessage("\nPress SPACE / ENTER / ESC to clear highlight...");
             ed.GetString("\n");
 
-            CleanupHighlightLayer(context);
+            Cleanup(context);
 
-            ed.SetImpliedSelection(ids.ToArray());
+            // Select original objects
+            ed.SetImpliedSelection(idList.ToArray());
         }
 
-        private static void CleanupHighlightLayer(FoundationContext context, string layerName = tempHighlightLayer)
+        private static void Cleanup(FoundationContext context)
         {
             var doc = context.Document;
             var db = doc.Database;
@@ -109,10 +107,10 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             {
                 var lt = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
 
-                if (!lt.Has(layerName))
+                if (!lt.Has(TempLayer))
                     return;
 
-                var layerId = lt[layerName];
+                var layerId = lt[TempLayer];
 
                 var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
                 var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
