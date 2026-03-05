@@ -656,49 +656,56 @@ namespace FoundationDetailer.AutoCAD
                 throw new ArgumentNullException(nameof(context));
 
             var doc = context.Document;
-            var ed = doc.Editor;
             var db = doc.Database;
+            var ed = doc.Editor;
 
-            // STEP 1 Collect grade beams
-            var allPolylines = new List<Polyline>();
+            var centerlineIds = new List<ObjectId>();
 
             using (doc.LockDocument())
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                // Enumerate all grade beams
+                // Enumerate all grade beams stored in the NOD
                 foreach (var (_, gbDict) in GradeBeamNOD.EnumerateGradeBeams(context, tr))
                 {
-                    // Grab all polylines (centerline + edges) for this beam
+                    // Get centerline only
                     if (GradeBeamNOD.TryGetGradeBeamObjects(
-                            context, tr, gbDict, out var polys,
-                            includeCenterline: true, includeEdges: true))
+                            context,
+                            tr,
+                            gbDict,
+                            out var polys,
+                            includeCenterline: true,
+                            includeEdges: false))
                     {
-                        allPolylines.AddRange(polys);
+                        foreach (var pl in polys)
+                        {
+                            if (pl != null)
+                                centerlineIds.Add(pl.ObjectId);
+                        }
                     }
                 }
 
-                // allPolylines now contains every centerline + edge in the drawing
+                tr.Commit();
             }
 
-            // STEP 2 Extract ObjectIds
-            var ids = allPolylines
-                .Where(b => b != null)
-                .Select(b => b.ObjectId);
-
-            // STEP 3 Use SelectionService to filter valid IDs and get invalid ones for logging
-            var validIds = SelectionService.FilterValidIds(context, ids, out List<ObjectId> invalidIds);
-
-            // STEP 4 Log diagnostics
-            ed.WriteMessage($"\n[GradeBeam] Found={allPolylines.Count}, Valid={validIds.Count}, Invalid={invalidIds.Count}");
-            foreach (var id in invalidIds)
+            if (centerlineIds.Count == 0)
             {
-                string handle = id.IsNull ? "<null>" : id.Handle.ToString();
-                ed.WriteMessage($"\n  {handle} (invalid/erased)");
+                ed.WriteMessage("\nNo grade beams found.");
+                return;
             }
 
-            // Bring AutoCAD to front and highlight selected objects
-            SelectionService.FocusAndHighlight(context, ids, "HighlightGradeBeam");
+            ed.WriteMessage($"\nHighlighting {centerlineIds.Count} grade beam centerlines...");
 
+            // ----------------------------------------------------
+            // STEP 2 - Use shared highlighting service -- wait for user input to exit
+            // ----------------------------------------------------
+            HighlightService.HighlightPolylines(context, centerlineIds);
+
+            // ----------------------------------------------------
+            // STEP 3 – Select the real centerlines
+            // ----------------------------------------------------
+            SelectionService.FocusAndHighlight(context, centerlineIds, "HighlightGradeBeams");
+
+            ed.WriteMessage($"\n{centerlineIds.Count} grade beam centerlines selected.");
         }
 
         // Track which documents have already registered the RegApp

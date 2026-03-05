@@ -64,6 +64,7 @@
     <Compile Include="AutoCAD\AutoCADAdapter.cs" />
     <Compile Include="AutoCAD\GradeBeamBuilder.cs" />
     <Compile Include="AutoCAD\GradeBeamPolylineJig.cs" />
+    <Compile Include="AutoCAD\HighlightService.cs" />
     <Compile Include="AutoCAD\NOD\BoundaryNOD.cs" />
     <Compile Include="AutoCAD\NOD\HandleHandler.cs" />
     <Compile Include="AutoCAD\NOD\NODCleaner.cs" />
