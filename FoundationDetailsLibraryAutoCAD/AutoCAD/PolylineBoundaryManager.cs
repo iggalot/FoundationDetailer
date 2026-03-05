@@ -1563,8 +1563,9 @@ namespace FoundationDetailer.Managers
 
                     if (!boundary.Closed)
                     {
-                        status = "Polyline is not closed.";
-                        return false;
+                        boundary.UpgradeOpen();
+                        status = "Polyline is not closed.  Creating closed polyline.";
+                        boundary.Closed = true;
                     }
 
                     // ✅ You now have a real AutoCAD Polyline object

@@ -665,7 +665,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             {
                 isValid = true;
                 TxtBoundaryStatus.Text = "Boundary valid - " + pl.ObjectId.Handle.ToString();
-                TxtBoundaryVertices.Text = pl.NumberOfVertices.ToString();
+                TxtBoundaryVertices.Text = (pl.NumberOfVertices-1).ToString();
 
                 double perimeter = 0;
                 for (int i = 0; i < pl.NumberOfVertices; i++)
