@@ -8,7 +8,7 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
 {
     public class MathHelperManager
     {
-        public static double ComputePolylineArea(Polyline pl)
+        public static double ComputePolylineEnclosedArea(Polyline pl)
         {
             if (pl == null || pl.NumberOfVertices < 3)
                 return 0.0;
@@ -25,7 +25,7 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
             return Math.Abs(area / 2.0);
         }
 
-        public static double ComputePolylineLength(Polyline pl)
+        public static double ComputePolylineLengthInFeet(Polyline pl)
         {
             double length = 0.0;
             int vertexCount = pl.NumberOfVertices;

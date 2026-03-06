@@ -2,7 +2,6 @@
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
-using FoundationDetailer.Managers;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using FoundationDetailsLibraryAutoCAD.AutoCAD.NOD;
 using FoundationDetailsLibraryAutoCAD.Data;
@@ -19,10 +18,11 @@ namespace FoundationDetailer.AutoCAD
     {
 
         public const double INCHES_TO_DRAWING_UNITS = 1.0 / 12.0;
-        public const int DEFAULT_VERTEX_QTY = 3; 
+        public const int DEFAULT_VERTEX_QTY = 3;
+        public static readonly Point3d DEFAULT_GRADEBEAMLENGTHTABLE_INSERT_PT = new Point3d(0, 0, 0);
 
 
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "Placeholder for future use")]       
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "Placeholder for future use")]
         public void Initialize(FoundationContext context)
         {
 
@@ -177,7 +177,7 @@ namespace FoundationDetailer.AutoCAD
 
             return pl;
         }
-                
+
         /// <summary>
         /// Creates a grade beam entity between two points with equally spaced vertices.
         /// </summary>
@@ -188,7 +188,7 @@ namespace FoundationDetailer.AutoCAD
         /// <returns></returns>
         /// <exception cref="ArgumentNullException"></exception>
         /// <exception cref="ArgumentException"></exception>
-        internal Polyline AddInterpolatedGradeBeam(FoundationContext context, Point3d start, Point3d end, int vertexCount=DEFAULT_VERTEX_QTY)
+        internal Polyline AddInterpolatedGradeBeam(FoundationContext context, Point3d start, Point3d end, int vertexCount = DEFAULT_VERTEX_QTY)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
             if (vertexCount < 2) throw new ArgumentException("Vertex count must be >= 2", nameof(vertexCount));
@@ -596,50 +596,56 @@ namespace FoundationDetailer.AutoCAD
 
         public (int Quantity, double TotalLength) GetGradeBeamSummary(FoundationContext context)
         {
+            if (context == null)
+                throw new ArgumentNullException(nameof(context));
+
             int quantity = 0;
-            double totalLength = 0;
+            double totalLength = 0.0;
 
-            var db = context.Document.Database;
+            var doc = context.Document;
+            var db = doc.Database;
 
-            using (context.Document.LockDocument())
+            using (doc.LockDocument())
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                // Get the ROOT dictionary
-                var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-                var root = NODCore.GetOrCreateNestedSubDictionary(tr, nod, NODCore.ROOT);
-
-                // Get the top-level GradeBeam dictionary (contains all grade beam handles)
-                var gradebeamDict = NODCore.GetOrCreateNestedSubDictionary(tr, root, NODCore.KEY_GRADEBEAM_SUBDICT);
-
-                if (gradebeamDict == null)
-                    return (0, 0);
-
-                // Loop over all individual grade beams (sub-dictionaries keyed by handle)
-                foreach (DBDictionaryEntry entry in gradebeamDict)
+                // Enumerate all grade beams from GradeBeamNOD
+                foreach (var (_, gbDict) in GradeBeamNOD.EnumerateGradeBeams(context, tr))
                 {
-                    if (!(tr.GetObject(entry.Value, OpenMode.ForRead) is DBDictionary handleDict))
-                        continue;
-
-                    // Collect all ObjectIds in this handleDict
-                    foreach (DBDictionaryEntry subEntry in handleDict)
+                    // Retrieve only centerline entities for length calculation
+                    if (GradeBeamNOD.TryGetGradeBeamObjects(
+                            context,
+                            tr,
+                            gbDict,
+                            out var polys,
+                            includeCenterline: true,
+                            includeEdges: false))
                     {
-                        if (tr.GetObject(subEntry.Value, OpenMode.ForRead) is Entity ent)
+                        foreach (var obj in polys)
                         {
+                            if (obj == null)
+                                continue;
+
+                            // Cast to Entity explicitly
+                            var ent = obj as Entity;
+                            if (ent == null)
+                                continue;
+
                             quantity++;
 
-                            if (ent is Line line)
+                            // Handle each supported type explicitly
+                            var type = ent.GetType();
+
+                            if (type == typeof(Line))
                             {
+                                var line = (Line)ent;
                                 totalLength += line.Length;
                             }
-                            else if (ent is Polyline pl)
+                            else if (type == typeof(Polyline))
                             {
-                                totalLength += MathHelperManager.ComputePolylineLength(pl);
+                                var pl = (Polyline)ent;
+                                totalLength += MathHelperManager.ComputePolylineLengthInFeet(pl);
                             }
-                            // Extend for other entity types if needed
-                        }
-                        else if (tr.GetObject(subEntry.Value, OpenMode.ForRead) is Xrecord xr)
-                        {
-                            // Optionally handle Xrecords if they store length info
+                            // Extend here for other entity types if needed
                         }
                     }
                 }
@@ -649,7 +655,6 @@ namespace FoundationDetailer.AutoCAD
 
             return (quantity, totalLength);
         }
-
         public void HighlightGradeBeams(FoundationContext context)
         {
             if (context == null)
@@ -932,12 +937,265 @@ namespace FoundationDetailer.AutoCAD
         }
 
         #endregion
+        public void DrawGradeBeamLengthTable(FoundationContext context, Point3d? insertPoint = null)
+        {
+            if (context == null) return;
 
+            var doc = context.Document;
+            var db = doc.Database;
+            var ed = doc.Editor;
 
+            // Use default insert point if none provided
+            Point3d pt = insertPoint ?? GradeBeamManager.DEFAULT_GRADEBEAMLENGTHTABLE_INSERT_PT;
 
+            using (doc.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                // Open BlockTable for write
+                var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForWrite);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
+                // --- Delete any existing block named GRADEBEAMLENGTHTABLE
+                if (bt.Has("GRADEBEAMLENGTHTABLE"))
+                {
+                    var blockId = bt["GRADEBEAMLENGTHTABLE"];
+                    var blockRefIds = new List<ObjectId>();
 
+                    // find all references in model space
+                    foreach (ObjectId id in ms)
+                    {
+                        var ent = tr.GetObject(id, OpenMode.ForRead) as BlockReference;
+                        if (ent != null && ent.Name == "GRADEBEAMLENGTHTABLE")
+                            blockRefIds.Add(id);
+                    }
 
+                    // Erase references
+                    foreach (var id in blockRefIds)
+                    {
+                        var ent = tr.GetObject(id, OpenMode.ForWrite) as Entity;
+                        ent?.Erase();
+                    }
+
+                    // Erase existing block definition
+                    var blockDef = tr.GetObject(blockId, OpenMode.ForWrite) as BlockTableRecord;
+                    if (blockDef != null && !blockDef.IsErased)
+                        blockDef.Erase();
+                }
+
+                // --- Get grade beam centerlines
+                List<Polyline> gradeBeamCenterlines = GetAllGradeBeamCenterlines(context);
+                if (gradeBeamCenterlines.Count == 0)
+                {
+                    ed.WriteMessage("\nNo grade beams currently defined. Skipping table generation.");
+                    return;
+                }
+
+                int rowCount = gradeBeamCenterlines.Count + 2; // title + data + TOTAL row
+                int colCount = 3; // Index, Label, Length
+
+                // --- Prepare column header and data text
+                string[] colHeaders = { "Index", "Label", "Length (ft)" };
+                List<string>[] columnText = new List<string>[colCount];
+                for (int c = 0; c < colCount; c++)
+                    columnText[c] = new List<string>();
+
+                columnText[0].AddRange(Enumerable.Range(1, gradeBeamCenterlines.Count).Select(i => i.ToString()));
+                columnText[1].AddRange(Enumerable.Repeat("", gradeBeamCenterlines.Count)); // placeholder labels
+                columnText[2].AddRange(gradeBeamCenterlines.Select(pl =>
+                    Math.Ceiling(MathHelperManager.ComputePolylineLengthInFeet(pl)).ToString()));
+
+                // --- Compute column widths
+                double padding = 0.2; // inches
+                double[] colWidths = new double[colCount];
+                for (int c = 0; c < colCount; c++)
+                {
+                    double maxWidth = Math.Max(
+                        MeasureTextWidth(colHeaders[c]),
+                        columnText[c].Select(text => MeasureTextWidth(text)).DefaultIfEmpty(0).Max()
+                    );
+                    colWidths[c] = maxWidth + padding;
+                }
+
+                // --- Row height and table size
+                double rowHeight = 0.4;
+                double tableWidth = colWidths.Sum();
+                double tableHeight = rowCount * rowHeight;
+
+                // --- Create a new block
+                BlockTableRecord newBlock = new BlockTableRecord { Name = "GRADEBEAMLENGTHTABLE" };
+                ObjectId blockIdNew = bt.Add(newBlock);
+                tr.AddNewlyCreatedDBObject(newBlock, true);
+
+                // --- Draw outer border rectangle
+                Polyline outer = new Polyline(5);
+                outer.AddVertexAt(0, new Point2d(0, 0), 0, 0, 0);
+                outer.AddVertexAt(1, new Point2d(tableWidth, 0), 0, 0, 0);
+                outer.AddVertexAt(2, new Point2d(tableWidth, -tableHeight), 0, 0, 0);
+                outer.AddVertexAt(3, new Point2d(0, -tableHeight), 0, 0, 0);
+                outer.Closed = true;
+                outer.LineWeight = LineWeight.LineWeight050;
+                newBlock.AppendEntity(outer);
+                tr.AddNewlyCreatedDBObject(outer, true);
+
+                // --- Draw vertical lines starting below the title row
+                double headerTopY = -rowHeight; // top of column headers (after title)
+                double x = 0;
+                for (int c = 0; c <= colCount; c++)
+                {
+                    Polyline vLine = new Polyline(2);
+                    vLine.AddVertexAt(0, new Point2d(x, headerTopY), 0, 0, 0);
+                    vLine.AddVertexAt(1, new Point2d(x, -tableHeight), 0, 0, 0);
+                    vLine.LineWeight = (c == 0 || c == colCount) ? LineWeight.LineWeight050 : LineWeight.LineWeight015;
+                    newBlock.AppendEntity(vLine);
+                    tr.AddNewlyCreatedDBObject(vLine, true);
+
+                    if (c < colCount)
+                        x += colWidths[c];
+                }
+
+                // --- Draw horizontal lines
+                double y = 0;
+                for (int r = 0; r <= rowCount; r++)
+                {
+                    Polyline hLine = new Polyline(2);
+                    hLine.AddVertexAt(0, new Point2d(0, y), 0, 0, 0);
+                    hLine.AddVertexAt(1, new Point2d(tableWidth, y), 0, 0, 0);
+                    hLine.LineWeight = (r == 0 || r == 1 || r == rowCount || r == rowCount - 1) ? LineWeight.LineWeight050 : LineWeight.LineWeight015;
+                    newBlock.AppendEntity(hLine);
+                    tr.AddNewlyCreatedDBObject(hLine, true);
+                    y -= rowHeight;
+                }
+
+                // --- Insert title
+                InsertMText(newBlock, tr,
+                    new Point3d(tableWidth / 2, -rowHeight / 2, 0),
+                    "GRADE BEAM LENGTHS", tableWidth, rowHeight, CellAlignment.MiddleCenter);
+
+                // --- Insert column headers
+                x = 0;
+                y = -rowHeight * 1.5;
+                for (int c = 0; c < colCount; c++)
+                {
+                    InsertMText(newBlock, tr,
+                        new Point3d(x + colWidths[c] / 2, y, 0),
+                        colHeaders[c], colWidths[c], rowHeight, CellAlignment.MiddleCenter);
+                    x += colWidths[c];
+                }
+
+                // --- Insert data rows
+                for (int r = 0; r < gradeBeamCenterlines.Count; r++)
+                {
+                    x = 0;
+                    for (int c = 0; c < colCount; c++)
+                    {
+                        double yCenter = -rowHeight * (r + 2) - rowHeight / 2;
+                        CellAlignment align = c == 0 ? CellAlignment.MiddleCenter :
+                                              c == 1 ? CellAlignment.MiddleLeft :
+                                                       CellAlignment.MiddleRight;
+                        InsertMText(newBlock, tr,
+                            new Point3d(x + colWidths[c] / 2, yCenter, 0),
+                            columnText[c][r], colWidths[c], rowHeight, align);
+                        x += colWidths[c];
+                    }
+                }
+
+                // --- Insert TOTAL row (drop one row below last data row)
+                double totalLengthFeet = Math.Ceiling(gradeBeamCenterlines.Sum(pl => MathHelperManager.ComputePolylineLengthInFeet(pl)));
+                double totalRowY = -rowHeight * (gradeBeamCenterlines.Count + 2.5);
+
+                // Merge first two columns for TOTAL label
+                InsertMText(newBlock, tr,
+                    new Point3d((colWidths[0] + colWidths[1]) / 2, totalRowY, 0),
+                    "TOTAL", colWidths[0] + colWidths[1], rowHeight, CellAlignment.MiddleCenter);
+
+                // Last column for total length
+                InsertMText(newBlock, tr,
+                    new Point3d(colWidths[0] + colWidths[1] + colWidths[2] / 2, totalRowY, 0),
+                    totalLengthFeet.ToString(), colWidths[2], rowHeight, CellAlignment.MiddleRight);
+
+                // --- Insert block reference into model space
+                BlockReference blockRef = new BlockReference(pt, blockIdNew);
+                ms.AppendEntity(blockRef);
+                tr.AddNewlyCreatedDBObject(blockRef, true);
+
+                tr.Commit();
+            }
+        }
+
+        // --- Helper to insert MText centered in a rectangle
+        private void InsertMText(BlockTableRecord ms, Transaction tr, Point3d position, string text, double width, double height, CellAlignment alignment)
+        {
+            MText mtext = new MText
+            {
+                Location = position,
+                Width = width,
+                TextHeight = 0.25,
+                Contents = text,
+                Attachment = AttachmentPoint.MiddleCenter
+            };
+
+            switch (alignment)
+            {
+                case CellAlignment.MiddleLeft: mtext.Attachment = AttachmentPoint.MiddleLeft; break;
+                case CellAlignment.MiddleRight: mtext.Attachment = AttachmentPoint.MiddleRight; break;
+                case CellAlignment.MiddleCenter: mtext.Attachment = AttachmentPoint.MiddleCenter; break;
+            }
+
+            ms.AppendEntity(mtext);
+            tr.AddNewlyCreatedDBObject(mtext, true);
+        }
+
+        // --- Dummy function for text width measurement in inches (replace with actual AutoCAD text metrics)
+        private double MeasureTextWidth(string text)
+        {
+            return 0.3 * text.Length; // approx 0.3 inches per character
+        }
+
+        // --- Simple enum for alignment
+        private enum CellAlignment
+        {
+            MiddleLeft,
+            MiddleRight,
+            MiddleCenter
+        }
+
+        
+        public List<Polyline> GetAllGradeBeamCenterlines(FoundationContext context)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            var result = new List<Polyline>();
+            var doc = context.Document;
+            var db = doc.Database;
+
+            using (doc.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                // --- Enumerate all grade beams using the existing GradeBeamNOD helper
+                foreach (var (_, gbDict) in GradeBeamNOD.EnumerateGradeBeams(context, tr))
+                {
+                    // TryGetGradeBeamObjects returns all entities; we only want centerlines
+                    if (GradeBeamNOD.TryGetGradeBeamObjects(
+                            context,
+                            tr,
+                            gbDict,
+                            out var polys,
+                            includeCenterline: true,
+                            includeEdges: false))
+                    {
+                        foreach (var ent in polys)
+                        {
+                            if (ent is Polyline pl)
+                                result.Add(pl);
+                        }
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            return result;
+        }
     }
 }
 

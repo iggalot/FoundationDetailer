@@ -85,11 +85,10 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             BtnRegenerateAll.Click += (s, e) => BtnRegenerateAll_Click(s, e);
             BtnClearAllEdges.Click += (s, e) => BtnEraseAllGradeBeamEdges(s, e);
 
-
-
-
             BtnSelectBoundary.Click += (s, e) => BtnDefineFoundationBoundary_Click();
             BtnDeleteBoundary.Click += (s, e) => BtnDeleteBoundary_Click();
+
+            BtnDrawGradeBeamTable.Click += (s, e) => BtnDrawGradeBeamTable_Click();
             BtnSave.Click += (s, e) => BtnSaveModel_Click();
             BtnLoad.Click += (s, e) => BtnLoadModel_Click();
 
@@ -104,6 +103,20 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             BtnNEqualSpaces.Click += BtnNEqualSpaces_Click;
             BtnConvertExisting.Click += BtnConvertToPolyline_Click;
 
+        }
+
+        private void BtnDrawGradeBeamTable_Click()
+        {
+            Point3d? insert = _boundaryService.GetBoundaryUpperRight(CurrentContext);
+
+            if (insert.HasValue)
+            {
+                // Move 50 units to the right (positive X)
+                Point3d tableInsert = new Point3d(insert.Value.X + 50, insert.Value.Y, insert.Value.Z);
+
+                // Use tableInsert as the insertion point for your table
+                _gradeBeamService.DrawGradeBeamLengthTable(CurrentContext, tableInsert);
+            }
         }
 
         private void BtnDeleteMultipleGradeBeamsFromSelect_Click(object s, RoutedEventArgs e)
@@ -672,7 +685,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                     perimeter += pl.GetPoint2dAt(i).GetDistanceTo(pl.GetPoint2dAt((i + 1) % pl.NumberOfVertices));
                 TxtBoundaryPerimeter.Text = perimeter.ToString("F2");
 
-                TxtBoundaryArea.Text = MathHelperManager.ComputePolylineArea(pl).ToString("F2");
+                TxtBoundaryArea.Text = MathHelperManager.ComputePolylineEnclosedArea(pl).ToString("F2");
 
                 BtnZoomBoundary.IsEnabled = true;
                 BtnShowBoundary.IsEnabled = true;
@@ -998,6 +1011,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
             int quantity;
             double total_length;
+
             (quantity, total_length) = _gradeBeamService.GetGradeBeamSummary(context);
 
             GradeBeamSummary.UpdateSummary(quantity, total_length);

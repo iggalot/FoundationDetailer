@@ -42,7 +42,7 @@ internal sealed class PolylineTreeItemViewModel
         if (pl != null)
         {
             Handle = pl.Handle.ToString();
-            TotalLength = MathHelperManager.ComputePolylineLength(pl);
+            TotalLength = MathHelperManager.ComputePolylineLengthInFeet(pl);
         }
         else
         {

@@ -464,6 +464,27 @@ namespace FoundationDetailer.Managers
             }
         }
 
+        public Point3d? GetBoundaryUpperRight(FoundationContext context)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            if (!TryGetBoundary(context, out Polyline pl) || pl == null)
+                return null;
+
+            // Use GeometricExtents to get bounding box
+            try
+            {
+                Extents3d extents = pl.GeometricExtents;
+                // Upper-right = Max point of the bounding box
+                return extents.MaxPoint;
+            }
+            catch
+            {
+                // In case the polyline has zero area or is invalid
+                return null;
+            }
+        }
+
         public void ZoomToBoundary(FoundationContext context)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
