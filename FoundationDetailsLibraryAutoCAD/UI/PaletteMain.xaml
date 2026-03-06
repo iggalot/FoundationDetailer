@@ -63,6 +63,7 @@
                 <StackPanel x:Name="ActionButtonsPanel" Orientation="Vertical" Margin="0,10,0,0">
                     <!-- Replace the old prelim grade beam section with: -->
                     <gb_ctrl:PrelimGradeBeamControl x:Name="PrelimGBControl" Margin="0,5"/>
+                    
                     <StackPanel Orientation="Horizontal">
                         <Button x:Name="BtnNEqualSpaces" Content="N Equal Spa" Width="90" Height="26" Margin="0,0,0,6"/>
                         <Button x:Name="BtnConvertExisting" Content="Convert Line" Width="90" Height="26" Margin="0,0,0,6"/>

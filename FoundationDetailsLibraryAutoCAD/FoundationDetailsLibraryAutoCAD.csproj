@@ -64,7 +64,7 @@
     <Compile Include="AutoCAD\AutoCADAdapter.cs" />
     <Compile Include="AutoCAD\GradeBeamBuilder.cs" />
     <Compile Include="AutoCAD\GradeBeamPolylineJig.cs" />
-    <Compile Include="AutoCAD\HighlightService.cs" />
+    <Compile Include="Services\HighlightService.cs" />
     <Compile Include="AutoCAD\NOD\BoundaryNOD.cs" />
     <Compile Include="AutoCAD\NOD\HandleHandler.cs" />
     <Compile Include="AutoCAD\NOD\NODCleaner.cs" />
@@ -76,7 +76,7 @@
     <Compile Include="AutoCAD\NOD\NODScanner.cs" />
     <Compile Include="AutoCAD\NOD\NODTraversal.cs" />
     <Compile Include="AutoCAD\NOD\NODViewer.cs" />
-    <Compile Include="AutoCAD\SelectionService.cs" />
+    <Compile Include="Services\SelectionService.cs" />
     <Compile Include="AutoCAD\Testing\FoundationTestTools.cs" />
     <Compile Include="Data\FoundationContext.cs" />
     <Compile Include="AutoCAD\FoundationPersistenceManager.cs" />

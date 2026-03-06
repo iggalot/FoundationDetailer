@@ -1,5 +1,4 @@
 ﻿using Autodesk.AutoCAD.DatabaseServices;
-using Autodesk.AutoCAD.EditorInput;
 using FoundationDetailer.AutoCAD;
 using FoundationDetailsLibraryAutoCAD.Data;
 using System;
@@ -7,7 +6,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Windows.Threading;
 
-namespace FoundationDetailsLibraryAutoCAD.AutoCAD
+namespace FoundationDetailsLibraryAutoCAD.Services
 {
     internal static class SelectionService
     {

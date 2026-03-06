@@ -1,6 +1,5 @@
 ﻿using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
-using FoundationDetailsLibraryAutoCAD.Managers;
 using System;
 using System.Collections.Generic;
 

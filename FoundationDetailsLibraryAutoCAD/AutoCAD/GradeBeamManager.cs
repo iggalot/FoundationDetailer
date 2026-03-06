@@ -698,8 +698,6 @@ namespace FoundationDetailer.AutoCAD
             // STEP 3 – Select the real centerlines
             // ----------------------------------------------------
             SelectionService.FocusAndHighlight(context, ids, "HighlightGradeBeams");
-
-            ed.WriteMessage($"\n{ids.Count} grade beam centerlines selected.");
         }
 
         // Track which documents have already registered the RegApp

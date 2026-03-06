@@ -4,10 +4,6 @@ using Autodesk.AutoCAD.Runtime;
 using FoundationDetailsLibraryAutoCAD.AutoCAD.NOD;
 using FoundationDetailsLibraryAutoCAD.Data;
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace FoundationDetailsLibraryAutoCAD.Services
 {

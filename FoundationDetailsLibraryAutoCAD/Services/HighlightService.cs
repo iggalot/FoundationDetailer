@@ -9,11 +9,26 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
     public static class HighlightService
     {
         private const string TempLayer = "_TEMP_HIGHLIGHT";
+        private const double DefaultWidth = 15;
+
+
+        /*
+        Common AutoCAD ACI (Color Index) colors:
+        0 = BYBLOCK
+        1 = red
+        2 = yellow
+        3 = green
+        4 = cyan
+        5 = blue
+        6 = magenta
+        7 = white / black (depends on background)
+        */
 
         public static void HighlightEntities(
             FoundationContext context,
             IEnumerable<ObjectId> ids,
-            short colorIndex = 2) // yellow
+            short colorIndex = 2,    // yellow
+            double width = DefaultWidth)
         {
             if (context == null)
                 throw new ArgumentNullException(nameof(context));
@@ -43,7 +58,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
                 var lt = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
-
                 ObjectId layerId;
 
                 if (!lt.Has(TempLayer))
@@ -81,6 +95,36 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                         Autodesk.AutoCAD.Colors.ColorMethod.ByAci,
                         colorIndex);
 
+                    // --- Set width for variable-width entities ---
+                    if (width > 0)
+                    {
+                        switch (clone)
+                        {
+                            case Polyline pl:
+                                for (int i = 0; i < pl.NumberOfVertices; i++)
+                                {
+                                    pl.SetStartWidthAt(i, width);
+                                    pl.SetEndWidthAt(i, width);
+                                }
+                                break;
+
+                            case Line ln:
+                                ln.LineWeight = LineWeight.LineWeight050; // 50 = ~0.5mm
+                                break;
+
+                            case Polyline2d pl2d:
+                                // Polyline2d does not support width per vertex, skip or handle differently
+                                break;
+
+                            case Circle circ:
+                                // Circles don't have line width per se; could set LineWeight
+                                circ.LineWeight = LineWeight.LineWeight050;
+                                break;
+
+                                // Add other types as needed
+                        }
+                    }
+
                     ms.AppendEntity(clone);
                     tr.AddNewlyCreatedDBObject(clone, true);
                 }
@@ -96,7 +140,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             // Select original objects
             ed.SetImpliedSelection(idList.ToArray());
         }
-
         private static void Cleanup(FoundationContext context)
         {
             var doc = context.Document;
