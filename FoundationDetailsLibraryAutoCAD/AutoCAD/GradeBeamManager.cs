@@ -937,7 +937,7 @@ namespace FoundationDetailer.AutoCAD
         }
 
         #endregion
-        public void DrawGradeBeamLengthTable(FoundationContext context, Point3d? insertPoint = null)
+        public void DrawGradeBeamLengthTable(FoundationContext context, Point3d? insertPoint = null, double scale=1.0)
         {
             if (context == null) return;
 
@@ -994,7 +994,7 @@ namespace FoundationDetailer.AutoCAD
                 int colCount = 3; // Index, Label, Length
 
                 // --- Prepare column header and data text
-                string[] colHeaders = { "Index", "Label", "Length (ft)" };
+                string[] colHeaders = { "ID", "Label", "Length (ft)" };
                 List<string>[] columnText = new List<string>[colCount];
                 for (int c = 0; c < colCount; c++)
                     columnText[c] = new List<string>();
@@ -1005,11 +1005,11 @@ namespace FoundationDetailer.AutoCAD
                     Math.Ceiling(MathHelperManager.ComputePolylineLengthInFeet(pl)).ToString()));
 
                 // --- Compute column widths
-                double padding = 0.2; // inches
+                double padding = 0.2 * scale; // inches
                 double[] colWidths = new double[colCount];
                 for (int c = 0; c < colCount; c++)
                 {
-                    double maxWidth = Math.Max(
+                    double maxWidth = scale * Math.Max(
                         MeasureTextWidth(colHeaders[c]),
                         columnText[c].Select(text => MeasureTextWidth(text)).DefaultIfEmpty(0).Max()
                     );
@@ -1017,7 +1017,7 @@ namespace FoundationDetailer.AutoCAD
                 }
 
                 // --- Row height and table size
-                double rowHeight = 0.4;
+                double rowHeight = 0.4 * scale;
                 double tableWidth = colWidths.Sum();
                 double tableHeight = rowCount * rowHeight;
 
@@ -1069,7 +1069,7 @@ namespace FoundationDetailer.AutoCAD
                 // --- Insert title
                 InsertMText(newBlock, tr,
                     new Point3d(tableWidth / 2, -rowHeight / 2, 0),
-                    "GRADE BEAM LENGTHS", tableWidth, rowHeight, CellAlignment.MiddleCenter);
+                    "GRADE BEAM LENGTHS", tableWidth, rowHeight, CellAlignment.MiddleCenter, scale);
 
                 // --- Insert column headers
                 x = 0;
@@ -1078,7 +1078,7 @@ namespace FoundationDetailer.AutoCAD
                 {
                     InsertMText(newBlock, tr,
                         new Point3d(x + colWidths[c] / 2, y, 0),
-                        colHeaders[c], colWidths[c], rowHeight, CellAlignment.MiddleCenter);
+                        colHeaders[c], colWidths[c], rowHeight, CellAlignment.MiddleCenter, scale);
                     x += colWidths[c];
                 }
 
@@ -1094,7 +1094,7 @@ namespace FoundationDetailer.AutoCAD
                                                        CellAlignment.MiddleRight;
                         InsertMText(newBlock, tr,
                             new Point3d(x + colWidths[c] / 2, yCenter, 0),
-                            columnText[c][r], colWidths[c], rowHeight, align);
+                            columnText[c][r], colWidths[c], rowHeight, align, scale);
                         x += colWidths[c];
                     }
                 }
@@ -1106,12 +1106,12 @@ namespace FoundationDetailer.AutoCAD
                 // Merge first two columns for TOTAL label
                 InsertMText(newBlock, tr,
                     new Point3d((colWidths[0] + colWidths[1]) / 2, totalRowY, 0),
-                    "TOTAL", colWidths[0] + colWidths[1], rowHeight, CellAlignment.MiddleCenter);
+                    "TOTAL", colWidths[0] + colWidths[1], rowHeight, CellAlignment.MiddleCenter, scale);
 
                 // Last column for total length
                 InsertMText(newBlock, tr,
                     new Point3d(colWidths[0] + colWidths[1] + colWidths[2] / 2, totalRowY, 0),
-                    totalLengthFeet.ToString(), colWidths[2], rowHeight, CellAlignment.MiddleRight);
+                    totalLengthFeet.ToString() + " ft.", colWidths[2], rowHeight, CellAlignment.MiddleRight, scale);
 
                 // --- Insert block reference into model space
                 BlockReference blockRef = new BlockReference(pt, blockIdNew);
@@ -1123,13 +1123,13 @@ namespace FoundationDetailer.AutoCAD
         }
 
         // --- Helper to insert MText centered in a rectangle
-        private void InsertMText(BlockTableRecord ms, Transaction tr, Point3d position, string text, double width, double height, CellAlignment alignment)
+        private void InsertMText(BlockTableRecord ms, Transaction tr, Point3d position, string text, double width, double height, CellAlignment alignment, double scale = 1.0)
         {
             MText mtext = new MText
             {
                 Location = position,
                 Width = width,
-                TextHeight = 0.25,
+                TextHeight = 0.25 * scale,
                 Contents = text,
                 Attachment = AttachmentPoint.MiddleCenter
             };

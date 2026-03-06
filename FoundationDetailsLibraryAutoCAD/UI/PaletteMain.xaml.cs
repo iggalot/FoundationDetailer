@@ -13,7 +13,6 @@ using FoundationDetailsLibraryAutoCAD.Services;
 using FoundationDetailsLibraryAutoCAD.UI.Controls.EqualSpacingGBControl;
 using System;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
@@ -62,8 +61,8 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             // Load saved NOD
             _persistenceService.Load(context);
 
-            // Initial UI update
-            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+            UpdateAll();
+            //Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
 
             UpdateTreeViewUI();
 
@@ -107,16 +106,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
         private void BtnDrawGradeBeamTable_Click()
         {
-            Point3d? insert = _boundaryService.GetBoundaryUpperRight(CurrentContext);
-
-            if (insert.HasValue)
-            {
-                // Move 50 units to the right (positive X)
-                Point3d tableInsert = new Point3d(insert.Value.X + 50, insert.Value.Y, insert.Value.Z);
-
-                // Use tableInsert as the insertion point for your table
-                _gradeBeamService.DrawGradeBeamLengthTable(CurrentContext, tableInsert);
-            }
+            UpdateTables();
         }
 
         private void BtnDeleteMultipleGradeBeamsFromSelect_Click(object s, RoutedEventArgs e)
@@ -199,8 +189,8 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                     ed.WriteMessage("\nError regenerating grade beam edges: " + ex.Message);
                 }
 
-                // --- Refresh UI
-                Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+                UpdateAll();
+                //Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
             }
             catch (Exception ex)
             {
@@ -238,7 +228,8 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 int totalErased = _gradeBeamService.DeleteEdgesForAllBeams(context);
 
                 ed.WriteMessage($"\nErased {totalErased} edge entities across all grade beams.");
-                Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+                UpdateAll();
+                //Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
             }
             catch (Exception ex)
             {
@@ -266,7 +257,8 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
                 ed.WriteMessage("\n[DEBUG] Regenerated all grade beam edges.");
 
-                Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+                UpdateAll();
+                //Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
             }
             catch (Exception ex)
             {
@@ -275,7 +267,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         }
 
 
-        private void OnDrawNewRequested(FoundationContext context, SpacingRequest request)
+        private void DrawNEqualSpaces(FoundationContext context, SpacingRequest request)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
             if (request == null) throw new ArgumentNullException(nameof(request));
@@ -352,7 +344,8 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             }
 
             // Refresh the UI asynchronously
-            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+            UpdateAll();
+            //Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
 
         #region --- UI Updates ---
@@ -386,7 +379,8 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 PrelimGBControl.ViewModel.IsPreliminaryGenerated = true;
                 PrelimGBControl.Visibility = System.Windows.Visibility.Collapsed;
 
-                Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+                UpdateAll();
+                //Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
             }
             catch (System.Exception ex)
             {
@@ -442,7 +436,9 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             }
 
             PrelimGBControl.ViewModel.IsPreliminaryGenerated = false;
-            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+
+            UpdateAll();
+            //Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
 
 
@@ -533,8 +529,8 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
                 ed.WriteMessage("\n[DEBUG] Rebuilt all grade beam edges.");
 
-                // --- Update UI
-                Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+                UpdateAll();
+                //Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
 
                 TxtStatus.Text = "Custom grade beam added.";
                 PrelimGBControl.ViewModel.IsPreliminaryGenerated = true;
@@ -583,8 +579,8 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
                 ed.WriteMessage("\n[DEBUG] Rebuilt all grade beam edges.");
 
-                // --- Update UI
-                Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+                UpdateAll();
+                //Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
 
                 TxtStatus.Text = "Boundary beam defined.";
 
@@ -656,7 +652,8 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 _gradeBeamService.DeleteEdgesForAllBeams(context);
                 _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
 
-                Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+                UpdateAll();
+                //Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
             }
             catch (Exception ex)
             {
@@ -711,9 +708,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             // Optionally, change background color of action buttons
             SetActionButtonBackgrounds(ActionButtonsPanel, isValid ? Brushes.LightGreen : Brushes.LightCoral);
 
-            // Update the tree Viewer
-            UpdateTreeViewUI();
-
             // Update the gradebeam summary
             RefreshGradeBeamSummary();
 
@@ -737,6 +731,36 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                     SetActionButtonBackgrounds(panel, background);
                 }
             }
+        }
+
+        private void UpdateTables()
+        {
+            /// GRADEBEAM LENGTH TABLES
+            Point3d? insert = _boundaryService.GetBoundaryUpperRight(CurrentContext);
+
+            if (insert.HasValue)
+            {
+                // Move 50 units to the right (positive X)
+                Point3d tableInsert = new Point3d(insert.Value.X + 75, insert.Value.Y, insert.Value.Z);
+
+                // Use tableInsert as the insertion point for your table
+                _gradeBeamService.DrawGradeBeamLengthTable(CurrentContext, tableInsert, 50);
+            }
+        }
+
+        /// <summary>
+        /// Helper function to update calculations, tables, measurements, and UI based on calcs
+        /// </summary>
+        private void UpdateAll()
+        {
+            Dispatcher.BeginInvoke(new Action(UpdateTreeViewUI));  // updates the tree view in UI
+
+            //UpdateAll();
+            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
+            //UpdateBoundaryDisplay();  // update the boundary disoplay in UI
+
+            Dispatcher.BeginInvoke(new Action(UpdateTables));   // updates the drawing calculation tables
+
         }
         #endregion
 
@@ -915,9 +939,10 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                     _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
                     ed.WriteMessage("\n[DEBUG] Rebuilt grade beam edges.");
 
-                    // --- Refresh the UI
-                    Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
                     TxtStatus.Text = "Grade beams updated and edges regenerated.";
+
+                    UpdateAll();
+                    //Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
                 }
                 else
                 {
@@ -961,7 +986,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             var length = vec.Length;
 
 
-            OnDrawNewRequested(CurrentContext, new SpacingRequest()
+            DrawNEqualSpaces(CurrentContext, new SpacingRequest()
             {
                 Count = spaces.Value,
                 Direction = dir.Value,
