@@ -13,6 +13,8 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             if (context == null) throw new ArgumentNullException(nameof(context));
 
             Document doc = context.Document;
+            if (doc == null) return;
+
             Database db = doc.Database;
             Editor ed = doc.Editor;
 
@@ -38,7 +40,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             {
                 try
                 {
-                    // --- Get the EE_Foundation root dictionary ---
+                    // --- Get the EE_Foundation root dictionary
                     DBDictionary root = NODCore.GetFoundationRootDictionary(tr, db);
 
                     if (root != null)
@@ -46,20 +48,27 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                         int edgesDeleted = 0;
                         int beamsDeleted = 0;
 
-                        // --- Recursively erase all known subdictionaries ---
                         foreach (string subKey in NODCore.KNOWN_ROOT_SUBDIRS)
                         {
                             DBDictionary subDict;
                             if (NODCore.TryGetNestedSubDictionary(tr, root, out subDict, subKey))
                             {
-                                // Use existing NODCore recursive eraser
+                                // Recursively erase contents
                                 NODCore.EraseDictionaryRecursive(tr, db, subDict, ref edgesDeleted, ref beamsDeleted, eraseEntities: true);
 
-                                // Erase the empty subdictionary itself
+                                // Upgrade subDict before erasing
                                 if (!subDict.IsErased)
-                                    subDict.Erase();
+                                {
+                                    if (!subDict.IsWriteEnabled)
+                                        subDict.UpgradeOpen();
 
-                                // Remove key from parent
+                                    subDict.Erase();
+                                }
+
+                                // Upgrade root before removing key
+                                if (!root.IsWriteEnabled)
+                                    root.UpgradeOpen();
+
                                 if (root.Contains(subKey))
                                     root.Remove(subKey);
                             }
@@ -68,8 +77,8 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                         ed.WriteMessage($"\nCleared {edgesDeleted} edge entities and {beamsDeleted} beam nodes.");
                     }
 
-                    // --- Recreate empty ROOT structure ---
-                    var newRoot = NODCore.InitFoundationNOD(context, tr);
+                    // --- Recreate empty ROOT structure and known subdicts ---
+                    NODCore.InitFoundationNOD(context, tr);
 
                     tr.Commit();
                     ed.WriteMessage("\nEE_Foundation NOD has been cleared and reset.");
