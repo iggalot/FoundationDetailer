@@ -11,12 +11,11 @@ namespace FoundationDetailsLibraryAutoCAD.UI.Controls.GradeBeamSummaryControl
         public event EventHandler AddSingleGradeBeamClicked;
 
 
-        public GradeBeamSummaryViewModel ViewModel { get; }
+        public GradeBeamSummaryViewModel ViewModel { get; } = new GradeBeamSummaryViewModel();
 
         public GradeBeamSummaryControl()
         {
             InitializeComponent();
-            ViewModel = new GradeBeamSummaryViewModel();
             this.DataContext = ViewModel;
         }
 

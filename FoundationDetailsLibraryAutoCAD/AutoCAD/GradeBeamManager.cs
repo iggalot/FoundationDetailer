@@ -167,16 +167,18 @@ namespace FoundationDetailer.AutoCAD
             if (tr == null) throw new ArgumentNullException(nameof(tr));
 
             var db = context.Document.Database;
-            string handle = pl.Handle.ToString();
 
-            // --- Append to ModelSpace if requested
+            // --- Ensure polyline is in ModelSpace first
             if (appendToModelSpace && pl.ObjectId.IsNull)
                 ModelSpaceWriterService.AppendToModelSpace(tr, db, pl);
 
-            // --- Create a new gradebeam node under FD_GRADEBEAMS
+            // --- Use polyline handle as the NOD key
+            string handle = pl.Handle.ToString();
+
+            // --- This will safely create the grade beam node under FD_GRADEBEAMS
             var gbNode = NODCore.GetOrCreateGradeBeamNode(tr, db, handle);
 
-            // --- Optional: delete existing edges if desired
+            // --- Optional: delete existing edges if needed
             DeleteGradeBeamEdgesOnlyInternal(context, tr, handle);
 
             return pl;
@@ -330,18 +332,24 @@ namespace FoundationDetailer.AutoCAD
             int deleted = 0;
             var db = context.Document.Database;
 
-            // --- Get the beam's edges dictionary using TryGet
+            // --- Get the beam's edges dictionary (read-only)
             if (!NODCore.TryGetGradeBeamNode(tr, db, gradeBeamHandle, out DBDictionary beamNode) ||
                 !NODCore.TryGetBeamEdges(tr, beamNode, out DBDictionary edgesDict))
+            {
                 return 0;
+            }
 
-            // --- Copy keys to safely iterate
+            // --- Upgrade edges dictionary to write before modifying
+            edgesDict.UpgradeOpen();
+
+            // --- Copy keys to safely iterate while deleting
             var keys = new List<string>();
             foreach (DictionaryEntry entry in edgesDict)
                 keys.Add((string)entry.Key);
 
             foreach (var edgeKey in keys)
             {
+                // Get Xrecord (upgrade to write to delete)
                 var xrecId = edgesDict.GetAt(edgeKey);
                 var xrec = tr.GetObject(xrecId, OpenMode.ForWrite) as Xrecord;
 
@@ -350,27 +358,35 @@ namespace FoundationDetailer.AutoCAD
                     foreach (TypedValue tv in xrec.Data)
                     {
                         if (tv.TypeCode != (int)DxfCode.Text) continue;
+
                         string handleStr = tv.Value as string;
                         if (string.IsNullOrWhiteSpace(handleStr)) continue;
 
+                        // Get the AutoCAD entity by handle
                         if (!NODCore.TryGetObjectIdFromHandleString(tr, db, handleStr, out ObjectId oid))
                             continue;
 
                         if (oid.IsValid && !oid.IsErased)
                         {
-                            (tr.GetObject(oid, OpenMode.ForWrite) as Entity)?.Erase();
+                            // Upgrade the entity to write before erasing
+                            var ent = tr.GetObject(oid, OpenMode.ForWrite) as Entity;
+                            ent?.Erase();
                             deleted++;
                         }
                     }
                 }
 
-                edgesDict.Remove(edgeKey);
-                xrec?.Erase();
+                // Remove the Xrecord from the edges dictionary
+                if (edgesDict.Contains(edgeKey))
+                    edgesDict.Remove(edgeKey);
+
+                // Erase the Xrecord itself
+                if (xrec != null && !xrec.IsErased)
+                    xrec.Erase();
             }
 
             return deleted;
         }
-
         /// <summary>
         /// Function to fully delete a single grade beam from the NOD and AutoCAD drawing
         /// </summary>
@@ -396,8 +412,6 @@ namespace FoundationDetailer.AutoCAD
         /// <summary>
         /// Delete all grade beams in the NOD and their associated edges from AutoCAD drawing and the NOD tree.
         /// </summary>
-        /// <param name="context"></param>
-        /// <returns></returns>
         public int DeleteAllGradeBeams(FoundationContext context)
         {
             if (context?.Document == null)
@@ -408,6 +422,7 @@ namespace FoundationDetailer.AutoCAD
             using (var lockDoc = context.Document.LockDocument())
             using (var tr = context.Document.Database.TransactionManager.StartTransaction())
             {
+                // Enumerate all grade beams from FD_GRADEBEAMS (read-only)
                 foreach (var (handle, _) in GradeBeamNOD.EnumerateGradeBeams(context, tr))
                 {
                     int edgesDeleted, beamsDeleted;
@@ -422,7 +437,8 @@ namespace FoundationDetailer.AutoCAD
         }
 
         /// <summary>
-        /// Fully deletes a grade beam: edges + centerline + NOD node
+        /// Fully deletes a grade beam: edges + centerline + NOD node.
+        /// Upgrades objects to write only when required.
         /// </summary>
         private int DeleteGradeBeamFullInternal(
             FoundationContext context,
@@ -442,7 +458,7 @@ namespace FoundationDetailer.AutoCAD
             // --- Delete edges first
             edgesDeleted = DeleteGradeBeamEdgesOnlyInternal(context, tr, handle);
 
-            // --- Delete centerline
+            // --- Delete centerline (upgrade to write as needed)
             if (NODCore.TryGetObjectIdFromHandleString(tr, db, handle, out ObjectId clId) &&
                 clId.IsValid && !clId.IsErased)
             {
@@ -454,14 +470,21 @@ namespace FoundationDetailer.AutoCAD
             // --- Delete the NOD node (dictionary) recursively
             if (NODCore.TryGetGradeBeamNode(tr, db, handle, out DBDictionary beamNode))
             {
-                NODCore.EraseDictionaryRecursive(tr, db, beamNode, ref edgesDeleted, ref beamsDeleted);
+                // Upgrade to write before erasing
+                beamNode.UpgradeOpen();
 
+                NODCore.EraseDictionaryRecursive(tr, db, beamNode, ref edgesDeleted, ref beamsDeleted, eraseEntities: true);
+
+                // Remove from root dictionary
                 if (NODCore.TryGetGradeBeamsRoot(tr, db, out DBDictionary rootDict))
                 {
-                    rootDict.Remove(handle);
+                    rootDict.UpgradeOpen();
+                    if (rootDict.Contains(handle))
+                        rootDict.Remove(handle);
                 }
 
-                beamNode.Erase();
+                if (!beamNode.IsErased)
+                    beamNode.Erase();
             }
 
             return edgesDeleted + beamsDeleted;
@@ -1035,6 +1058,67 @@ namespace FoundationDetailer.AutoCAD
             }
 
             return result;
+        }
+
+        public int GetGradeBeamCount(FoundationContext context)
+        {
+            if (context == null || context.Document == null)
+                return 0;
+
+            var doc = context.Document;
+            int count = 0;
+
+            using (doc.LockDocument())
+            using (var tr = doc.Database.TransactionManager.StartTransaction())
+            {
+                count = NODCore.CountGradeBeams(tr, doc.Database);
+                tr.Commit();
+            }
+
+            return count;
+        }
+
+        /// <summary>
+        /// Returns the total length of all grade beam polylines stored in FD_GRADEBEAM.
+        /// </summary>
+        /// <param name="context">The current foundation context</param>
+        /// <returns>Total length of all polylines (0 if none)</returns>
+        public double GetTotalGradeBeamLength(FoundationContext context)
+        {
+            if (context == null || context.Document == null)
+                return 0.0;
+
+            var doc = context.Document;
+            double totalLength = 0.0;
+
+            using (doc.LockDocument())
+            using (var tr = doc.Database.TransactionManager.StartTransaction())
+            {
+                var db = doc.Database;
+                var gradeBeamRoot = NODCore.GetOrCreateGradeBeamRootDictionary(tr, db, forWrite: false);
+                if (gradeBeamRoot == null || gradeBeamRoot.Count == 0)
+                {
+                    tr.Commit();
+                    return 0.0;
+                }
+
+                foreach (DictionaryEntry entry in gradeBeamRoot)
+                {
+                    if (!(entry.Key is string handleStr) || string.IsNullOrWhiteSpace(handleStr))
+                        continue;
+
+                    if (!NODCore.TryGetObjectIdFromHandleString(tr, db, handleStr, out ObjectId plId))
+                        continue;
+
+                    var pl = tr.GetObject(plId, OpenMode.ForRead) as Polyline;
+                    if (pl != null && !pl.IsErased)
+                        totalLength += pl.Length;
+                }
+
+                tr.Commit();
+            }
+
+            return totalLength;
         }
     }
 }

@@ -2,6 +2,7 @@ using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
+using Autodesk.AutoCAD.GraphicsSystem;
 using FoundationDetailer.AutoCAD;
 using FoundationDetailer.Managers;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
@@ -10,6 +11,7 @@ using FoundationDetailsLibraryAutoCAD.Data;
 using FoundationDetailsLibraryAutoCAD.Managers;
 using FoundationDetailsLibraryAutoCAD.Services;
 using FoundationDetailsLibraryAutoCAD.UI.Controls.EqualSpacingGBControl;
+using FoundationDetailsLibraryAutoCAD.UI.Controls.GradeBeamSummaryControl;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -261,6 +263,70 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 TxtStatus.Text = $"Error creating grade beams: {ex.Message}";
             }
         }
+
+        private void GradeBeam_DeleteAllClicked(object sender, EventArgs e)
+        {
+            var context = CurrentContext;
+            if (context?.Document == null)
+                return;
+
+            var doc = context.Document;
+            var ed = doc.Editor;
+
+            try
+            {
+                // --- Confirm deletion
+                var pko = new PromptKeywordOptions(
+                    $"\nDelete ALL grade beam(s)? This cannot be undone.")
+                {
+                    AllowNone = false
+                };
+                pko.Keywords.Add("Yes");
+                pko.Keywords.Add("No");
+
+                var confirm = ed.GetKeywords(pko);
+                if (confirm.Status != PromptStatus.OK || confirm.StringResult != "Yes")
+                {
+                    ed.WriteMessage("\nOperation canceled.");
+                    return;
+                }
+
+                int totalBeamsDeleted = 0;
+
+                ed.WriteMessage("\n[DEBUG] Deleting all grade beams...");
+
+                totalBeamsDeleted += _gradeBeamService.DeleteAllGradeBeams(context);
+
+                ed.WriteMessage($"\n[DEBUG] Deleted {totalBeamsDeleted} grade beam edges.");
+
+                // --- Rebuild edges
+                _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
+                ed.WriteMessage("\n[DEBUG] Regenerated all grade beam edges.");
+
+                TxtStatus.Text = "Deleted {totalBeamsDeleted} grade beam edges.";
+            }
+            catch (Exception ex)
+            {
+                ed.WriteMessage("\nError deleting all grade beams: " + ex.Message);
+            }
+
+            PrelimGBControl.ViewModel.IsPreliminaryGenerated = false;
+
+            // --- Refresh UI
+            UpdateAll();
+        }
+
+
+        private void GradeBeam_HighlightGradeBeamsClicked(object sender, EventArgs e)
+        {
+            var context = CurrentContext;
+            _gradeBeamService.HighlightGradeBeams(context);
+        }
+
+
+
+
+
 
 
 
@@ -529,65 +595,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
 
 
-        private void GradeBeam_DeleteAllClicked(object sender, EventArgs e)
-        {
-            var context = CurrentContext;
-            if (context?.Document == null)
-                return;
 
-            var doc = context.Document;
-            var ed = doc.Editor;
-
-            try
-            {
-                // --- Confirm deletion
-                var pko = new PromptKeywordOptions(
-                    $"\nDelete ALL grade beam(s)? This cannot be undone.")
-                {
-                    AllowNone = false
-                };
-                pko.Keywords.Add("Yes");
-                pko.Keywords.Add("No");
-
-                var confirm = ed.GetKeywords(pko);
-                if (confirm.Status != PromptStatus.OK || confirm.StringResult != "Yes")
-                {
-                    ed.WriteMessage("\nOperation canceled.");
-                    return;
-                }
-
-                int totalBeamsDeleted = 0;
-
-                ed.WriteMessage("\n[DEBUG] Deleting all grade beams...");
-
-                totalBeamsDeleted += _gradeBeamService.DeleteAllGradeBeams(context);
-
-                ed.WriteMessage($"\n[DEBUG] Deleted {totalBeamsDeleted} grade beam edges.");
-
-                // --- Rebuild edges
-                _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
-                ed.WriteMessage("\n[DEBUG] Regenerated all grade beam edges.");
-
-                // --- Refresh UI
-                Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
-            }
-            catch (Exception ex)
-            {
-                ed.WriteMessage("\nError deleting all grade beams: " + ex.Message);
-            }
-
-            PrelimGBControl.ViewModel.IsPreliminaryGenerated = false;
-
-            UpdateAll();
-            //Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
-        }
-
-
-        private void GradeBeam_HighlightGradeBeamsClicked(object sender, EventArgs e)
-        {
-            var context = CurrentContext;
-            _gradeBeamService.HighlightGradeBeams(context);
-        }
         private void GradeBeamSummary_AddSingleGradeBeamClicked(object sender, EventArgs e)
         {
             var context = CurrentContext;
@@ -808,11 +816,21 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             }
         }
 
+        private void UpdateGradeBeamSummary()
+        {
+            var quantity = _gradeBeamService.GetGradeBeamCount(CurrentContext);
+            var totalLength = _gradeBeamService.GetTotalGradeBeamLength(CurrentContext);
+
+            GradeBeamSummary?.UpdateSummary(quantity, totalLength); // UI updates automatically
+        }
+
         /// <summary>
         /// Helper function to update calculations, tables, measurements, and UI based on calcs
         /// </summary>
         private void UpdateAll()
         {
+            Dispatcher.BeginInvoke(new Action(UpdateGradeBeamSummary));  // update the grade beam summary control data (length, qty)
+
             Dispatcher.BeginInvoke(new Action(UpdateTreeViewUI));  // updates the tree view in UI
 
             //UpdateAll();

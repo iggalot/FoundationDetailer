@@ -688,5 +688,36 @@ double value)
                 .FirstOrDefault(tv => tv.TypeCode == (int)DxfCode.Real)
                 .Value as double?;
         }
+
+        /// <summary>
+        /// Counts the number of grade beam nodes under FD_GRADEBEAM in the current document.
+        /// </summary>
+        /// <param name="tr">Open transaction</param>
+        /// <param name="db">Database</param>
+        /// <returns>Number of grade beam subdictionaries</returns>
+        public static int CountGradeBeams(Transaction tr, Database db)
+        {
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+            if (db == null) throw new ArgumentNullException(nameof(db));
+
+            // Try to get the FD_GRADEBEAM root dictionary
+            DBDictionary gradeBeamRoot = GetOrCreateGradeBeamRootDictionary(tr, db, forWrite: false);
+            if (gradeBeamRoot == null || gradeBeamRoot.Count == 0)
+                return 0;
+
+            int count = 0;
+
+            foreach (DictionaryEntry entry in gradeBeamRoot)
+            {
+                if (entry.Value is ObjectId id && id.IsValid && !id.IsErased)
+                {
+                    var subDict = tr.GetObject(id, OpenMode.ForRead) as DBDictionary;
+                    if (subDict != null)
+                        count++;
+                }
+            }
+
+            return count;
+        }
     }
 }
