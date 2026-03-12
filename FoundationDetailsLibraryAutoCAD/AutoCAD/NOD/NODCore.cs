@@ -594,18 +594,16 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             Database db,
             DBDictionary dict,
             ref int edgesDeleted,
-            ref int beamsDeleted)
+            ref int beamsDeleted,
+            bool eraseEntities = true)
         {
             if (tr == null || db == null || dict == null)
                 return;
 
-            // Collect ObjectIds first to avoid modifying dictionary while iterating
             var ids = new List<ObjectId>();
             foreach (DictionaryEntry entry in dict)
-            {
                 if (entry.Value is ObjectId id && id.IsValid && !id.IsNull)
                     ids.Add(id);
-            }
 
             foreach (var id in ids)
             {
@@ -616,7 +614,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
                 if (obj is DBDictionary subDict)
                 {
-                    EraseDictionaryRecursive(tr, db, subDict, ref edgesDeleted, ref beamsDeleted);
+                    EraseDictionaryRecursive(tr, db, subDict, ref edgesDeleted, ref beamsDeleted, eraseEntities);
                     subDict.Erase();
                 }
                 else if (obj is Xrecord xrec)
@@ -625,6 +623,8 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                     {
                         foreach (TypedValue tv in xrec.Data)
                         {
+                            if (!eraseEntities) continue; // <-- skip entities if false
+
                             if (tv.TypeCode == (int)DxfCode.Text && tv.Value is string handleStr)
                             {
                                 try
@@ -634,28 +634,16 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
                                     if (entId.IsValid && !entId.IsErased)
                                     {
-                                        var ent = tr.GetObject(entId, OpenMode.ForWrite) as Entity;
-                                        if (ent != null)
-                                        {
-                                            ent.Erase();
-                                            edgesDeleted++;
-                                        }
+                                        (tr.GetObject(entId, OpenMode.ForWrite) as Entity)?.Erase();
+                                        edgesDeleted++;
                                     }
                                 }
-                                catch
-                                {
-                                    // Ignore invalid handle strings
-                                }
+                                catch { }
                             }
                         }
                     }
 
                     xrec.Erase();
-                }
-                else if (obj is Entity ent)
-                {
-                    ent.Erase();
-                    beamsDeleted++;
                 }
             }
         }

@@ -269,6 +269,12 @@ namespace FoundationDetailer.Managers
             var rootDict = NODCore.GetOrCreateBoundaryBeamRootDictionary(tr, db, forWrite: true);
             if (rootDict != null)
             {
+                if (!rootDict.IsWriteEnabled)
+                    rootDict.UpgradeOpen();
+
+                if (!beamNode.IsWriteEnabled)
+                    beamNode.UpgradeOpen();
+
                 rootDict.Remove(handle);
                 beamNode.Erase();
             }
@@ -286,9 +292,6 @@ namespace FoundationDetailer.Managers
             using (var lockDoc = context.Document.LockDocument())
             using (var tr = context.Document.Database.TransactionManager.StartTransaction())
             {
-                int edgesDeleted = 0;
-                int beamsDeleted = 0;
-
                 var db = context.Document.Database;
                 var rootDict = NODCore.GetOrCreateBoundaryBeamRootDictionary(tr, db, forWrite: true);
                 if (rootDict == null || rootDict.Count == 0)
@@ -304,12 +307,53 @@ namespace FoundationDetailer.Managers
                 }
 
                 if (!string.IsNullOrWhiteSpace(handle))
-                    DeleteBoundaryBeamFullInternal(context, tr, handle, ref edgesDeleted, ref beamsDeleted);
+                    DeleteBoundaryBeamNodeOnly(context, tr, handle);
 
                 tr.Commit();
-                return edgesDeleted + beamsDeleted;
+                return 1; // node removed
             }
         }
+
+        /// <summary>
+        /// Deletes the FD_BOUNDARY node for the given handle, but keeps the AutoCAD centerline entity.
+        /// </summary>
+        /// <summary>
+        /// Deletes the FD_BOUNDARY node for the given handle, but keeps the AutoCAD centerline entity.
+        /// </summary>
+        private void DeleteBoundaryBeamNodeOnly(
+            FoundationContext context,
+            Transaction tr,
+            string handle)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+            if (string.IsNullOrWhiteSpace(handle)) throw new ArgumentNullException(nameof(handle));
+
+            // --- Get FD_BOUNDARY root dictionary
+            var db = context.Document.Database;
+            var rootDict = NODCore.GetOrCreateBoundaryBeamRootDictionary(tr, db, forWrite: true);
+            if (rootDict == null || !rootDict.Contains(handle))
+                return;
+
+            // --- Get the beam node dictionary
+            DBDictionary beamNode;
+            if (!NODCore.TryGetBoundaryBeamNode(tr, db, out beamNode))
+                return;
+
+            // --- Recursively erase subdictionaries, but do NOT delete AutoCAD entities
+            int edgesDeleted = 0;
+            int beamsDeleted = 0;
+            NODCore.EraseDictionaryRecursive(tr, db, beamNode, ref edgesDeleted, ref beamsDeleted, eraseEntities: false);
+
+            // --- Remove the node itself from FD_BOUNDARY
+            if (!rootDict.IsWriteEnabled)
+                rootDict.UpgradeOpen();
+            rootDict.Remove(handle);
+
+            if (!beamNode.IsErased)
+                beamNode.Erase();
+        }
+
 
         /// <summary>
         /// Highlight the centerline of the first (or only) boundary beam in the current document.
