@@ -58,9 +58,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             _boundaryService.Initialize(context);
             _gradeBeamService.Initialize(context);
 
-            // Load saved NOD
-            _persistenceService.Load(context);
-
             UpdateAll();
             //Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
 
@@ -78,7 +75,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             var context = CurrentContext;
 
             BtnQuery.Click += BtnQueryNOD_Click;
-            BtnTest.Click += (s, e) => BtnTest_Click();
             BtnEraseNODFully.Click += (s, e) => BtnEraseNODFully_Click();
             BtnDeleteMultipleGradeBeamFromSelect.Click += (s, e) => BtnDeleteMultipleGradeBeamsFromSelect_Click(s, e);
             BtnRegenerateAll.Click += (s, e) => BtnRegenerateAll_Click(s, e);
@@ -88,8 +84,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             BtnDeleteBoundary.Click += (s, e) => BtnDeleteBoundary_Click();
 
             BtnDrawGradeBeamTable.Click += (s, e) => BtnDrawGradeBeamTable_Click();
-            BtnSave.Click += (s, e) => BtnSaveModel_Click();
-            BtnLoad.Click += (s, e) => BtnLoadModel_Click();
 
             BtnShowBoundary.Click += (s, e) => _boundaryService.HighlightBoundary(context);
             BtnZoomBoundary.Click += (s, e) => _boundaryService.ZoomToBoundary(context);
@@ -103,6 +97,65 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             BtnConvertExisting.Click += BtnConvertToPolyline_Click;
 
         }
+
+        private void BtnDefineFoundationBoundary_Click()
+        {
+            var context = CurrentContext;
+            if (context?.Document == null)
+            {
+                TxtStatus.Text = "No active document.";
+                return;
+            }
+
+            var doc = context.Document;
+            var ed = doc.Editor;
+            var db = doc.Database;
+
+            // Prompt for a closed polyline
+            PromptEntityOptions options = new PromptEntityOptions("\nSelect a closed polyline: ");
+            options.SetRejectMessage("\nMust be a closed polyline.");
+            options.AddAllowedClass(typeof(Polyline), false);
+
+            var result = ed.GetEntity(options);
+            if (result.Status != PromptStatus.OK)
+            {
+                TxtStatus.Text = "Boundary beam selection canceled.";
+                return;
+            }
+
+            // Delete the existing boundary
+            _boundaryService.DeleteBoundaryBeam(context);
+
+            if (_boundaryService.DefineBoundary(context, result, out string error))
+            {
+
+
+                // --- Delete all existing edges (clean slate)
+                int edgesDeleted = _gradeBeamService.DeleteEdgesForAllGradeBeams(context);
+                ed.WriteMessage($"\n[DEBUG] Deleted {edgesDeleted} existing grade beam edges.");
+
+                // --- Rebuild edges for all grade beams
+                _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
+                ed.WriteMessage("\n[DEBUG] Rebuilt all grade beam edges.");
+
+                UpdateAll();
+
+                TxtStatus.Text = "Boundary beam defined.";
+
+                // turn on the UI for gradebeam definition.
+                PrelimGBControl.ViewModel.IsPreliminaryGenerated = true;
+                PrelimGBControl.Visibility = System.Windows.Visibility.Collapsed;
+
+                // signal that something may have changed
+                PolylineBoundaryManager.RaiseBoundaryChanged();
+            }
+            else
+            {
+                TxtStatus.Text = error;
+                return;
+            }
+        }
+
 
         private void BtnDrawGradeBeamTable_Click()
         {
@@ -175,7 +228,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                     ed.WriteMessage("\n[DEBUG] Deleting all grade beam edges...");
 
                     // --- Delete all edges
-                    int totalEdgesDeleted = _gradeBeamService.DeleteEdgesForAllBeams(context);
+                    int totalEdgesDeleted = _gradeBeamService.DeleteEdgesForAllGradeBeams(context);
                     ed.WriteMessage($"\n[DEBUG] Deleted {totalEdgesDeleted} grade beam edges.");
 
                     // --- Rebuild edges for all beams
@@ -225,7 +278,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 }
 
                 // --- Call manager to delete all edges
-                int totalErased = _gradeBeamService.DeleteEdgesForAllBeams(context);
+                int totalErased = _gradeBeamService.DeleteEdgesForAllGradeBeams(context);
 
                 ed.WriteMessage($"\nErased {totalErased} edge entities across all grade beams.");
                 UpdateAll();
@@ -250,7 +303,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 ed.WriteMessage("\n[DEBUG] Deleting all grade beam edges...");
 
                 // --- Delete all edges
-                int totalEdgesDeleted = _gradeBeamService.DeleteEdgesForAllBeams(context);
+                int totalEdgesDeleted = _gradeBeamService.DeleteEdgesForAllGradeBeams(context);
                 ed.WriteMessage($"\n[DEBUG] Deleted {totalEdgesDeleted} grade beam edges.");
 
                 // --- Rebuild edges for all beams
@@ -347,6 +400,12 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             UpdateAll();
             //Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
+
+        //// Clip the line to the bounding box
+        //if (!MathHelperManager.TryClipLineToBoundingBoxExtents(basePt, dir, ext, out Point3d s, out Point3d e))
+        //    continue;
+        //var start = s;
+        //var end = e;
 
         #region --- UI Updates ---
 
@@ -522,7 +581,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 }
 
                 // --- Delete all existing edges (clean slate)
-                int edgesDeleted = _gradeBeamService.DeleteEdgesForAllBeams(context);
+                int edgesDeleted = _gradeBeamService.DeleteEdgesForAllGradeBeams(context);
                 ed.WriteMessage($"\n[DEBUG] Deleted {edgesDeleted} existing grade beam edges.");
 
                 // --- Rebuild edges for all grade beams
@@ -542,59 +601,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             }
         }
 
-        private void BtnDefineFoundationBoundary_Click()
-        {
-            var context = CurrentContext;
-            if (context?.Document == null)
-            {
-                TxtStatus.Text = "No active document.";
-                return;
-            }
-
-            var doc = context.Document;
-            var ed = doc.Editor;
-            var db = doc.Database;
-
-            // Prompt for a closed polyline
-            PromptEntityOptions options = new PromptEntityOptions("\nSelect a closed polyline: ");
-            options.SetRejectMessage("\nMust be a closed polyline.");
-            options.AddAllowedClass(typeof(Polyline), false);
-
-            var result = ed.GetEntity(options);
-            if (result.Status != PromptStatus.OK)
-            {
-                TxtStatus.Text = "Boundary beam selection canceled.";
-                return;
-            }
-
-            if (_boundaryService.DefineBoundary(context, result, out string error))
-            {
-                PolylineBoundaryManager.RaiseBoundaryChanged();
-
-                // --- Delete all existing edges (clean slate)
-                int edgesDeleted = _gradeBeamService.DeleteEdgesForAllBeams(context);
-                ed.WriteMessage($"\n[DEBUG] Deleted {edgesDeleted} existing grade beam edges.");
-
-                // --- Rebuild edges for all grade beams
-                _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
-                ed.WriteMessage("\n[DEBUG] Rebuilt all grade beam edges.");
-
-                UpdateAll();
-                //Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
-
-                TxtStatus.Text = "Boundary beam defined.";
-
-                // turn on the UI for gradebeam definition.
-                PrelimGBControl.ViewModel.IsPreliminaryGenerated = true;
-                PrelimGBControl.Visibility = System.Windows.Visibility.Collapsed;
-
-            }
-            else if (!string.IsNullOrEmpty(error))
-            {
-                TxtStatus.Text = error;
-                return;
-            }
-        }
 
         private void BtnDeleteBoundary_Click()
         {
@@ -607,27 +613,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
             try
             {
-                // --- Prompt user to select ONE boundary object
-                var peo = new PromptEntityOptions("\nSelect boundary object to delete:");
-                peo.SetRejectMessage("\nObject is not a valid boundary element.");
-                peo.AddAllowedClass(typeof(Polyline), false);
-                peo.AllowNone = false;
-
-                var per = ed.GetEntity(peo);
-                if (per.Status != PromptStatus.OK)
-                {
-                    ed.WriteMessage("\nNo object selected.");
-                    return;
-                }
-
-                // --- Resolve owning beam handle
-                string handle = _boundaryService.ResolveBoundaryBeamHandle(context, per.ObjectId);
-                if (string.IsNullOrEmpty(handle))
-                {
-                    ed.WriteMessage("\nSelected object does not belong to a boundary beam.");
-                    return;
-                }
-
                 // --- Confirm deletion
                 var pko = new PromptKeywordOptions(
                     "\nDelete selected boundary beam? This cannot be undone.")
@@ -644,12 +629,12 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                     return;
                 }
 
-                // --- Delete beam
-                int deleted = _boundaryService.DeleteBoundaryBeam(context, handle);
-                ed.WriteMessage($"\nDeleted {deleted} boundary beam.");
+                // --- Delete boundary beam
+                int deleted = _boundaryService.DeleteBoundaryBeam(context);
+                ed.WriteMessage($"\nDeleted boundary beam.");
 
                 // --- Rebuild edges
-                _gradeBeamService.DeleteEdgesForAllBeams(context);
+                _gradeBeamService.DeleteEdgesForAllGradeBeams(context);
                 _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
 
                 UpdateAll();
@@ -660,10 +645,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 ed.WriteMessage("\nError deleting boundary beam: " + ex.Message);
             }
         }
-
-
-
-
 
         private void UpdateBoundaryDisplay()
         {
@@ -831,14 +812,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             NODCleaner.ClearFoundationNOD(CurrentContext);
         }
 
-        private void BtnTest_Click()
-        {
-            //FoundationTestTools.TestGradeBeamNOD(CurrentContext);
-
-            ////FoundationTestTools.TestDumpGradeBeamNod(CurrentContext);
-            //FoundationTestTools.TestGradeBeamJsonRoundTrip(CurrentContext);
-        }
-
         /// <summary>
         /// Queries the NOD for a list of handles in each subdirectory.
         /// </summary>
@@ -932,7 +905,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 if (convertedAny)
                 {
                     // --- Clean all existing edges before rebuilding
-                    int edgesDeleted = _gradeBeamService.DeleteEdgesForAllBeams(context);
+                    int edgesDeleted = _gradeBeamService.DeleteEdgesForAllGradeBeams(context);
                     ed.WriteMessage($"\n[DEBUG] Deleted {edgesDeleted} existing grade beam edges.");
 
                     // --- Regenerate edges for all grade beams
@@ -998,18 +971,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             });
         }
 
-        private void BtnSaveModel_Click()
-        {
-            var context = CurrentContext;
-            _persistenceService.Save(context);
-        }
-        private void BtnLoadModel_Click()
-        {
-            var context = CurrentContext;
-            _persistenceService.Load(context);
-            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
-        }
-
         #endregion
 
 
@@ -1060,7 +1021,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             using (var tr = db.TransactionManager.StartTransaction())
             {
                 // --- Get the foundation root dictionary
-                var rootDict = NODCore.GetFoundationRoot(tr, db);
+                var rootDict = NODCore.GetFoundationRootDictionary(tr, db);
                 if (rootDict == null) return;
 
                 // --- Build ExtensionDataItem tree including NODObjectWrapper for entities

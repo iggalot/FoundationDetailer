@@ -2,7 +2,6 @@
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
-using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using FoundationDetailsLibraryAutoCAD.AutoCAD.NOD;
 using FoundationDetailsLibraryAutoCAD.Data;
 using FoundationDetailsLibraryAutoCAD.Services;
@@ -60,112 +59,7 @@ namespace FoundationDetailer.Managers
 
         #region Initialization & Attach/Detach
 
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "Required by event handler signature")]
-        private void DocManager_DocumentCreated(object sender, DocumentCollectionEventArgs e, FoundationContext context)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
 
-            AttachDocumentEvents(context);
-        }
-
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "Required by event handler signature")]
-        private void DocManager_DocumentToBeDestroyed(object sender, DocumentCollectionEventArgs e, FoundationContext context)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-
-            DetachDocumentEvents(context);
-            _docBoundaryIds.TryRemove(context.Document, out _);
-            _lastSnapshots.TryRemove(context.Document, out _);
-            _docCommandStates.TryRemove(context.Document, out _);
-
-            if (_deferredIdleHandlers.TryRemove(e.Document, out var existing))
-            {
-                Application.Idle -= existing;
-            }
-        }
-
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "Required by event handler signature")]
-        private void DocManager_DocumentActivated(object sender, DocumentCollectionEventArgs e, FoundationContext context)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-
-            // Defer loading to idle so we don't start transactions inside activation handlers
-            DeferActionForDocument(context, () =>
-            {
-                LoadBoundary(context);
-                BoundaryChanged?.Invoke(null, EventArgs.Empty);
-            });
-        }
-
-        private void AttachDocumentEvents(FoundationContext context)
-        {
-            var doc = context.Document;
-            if (doc == null) return;
-
-            var db = doc.Database;
-            var ed = doc.Editor;
-
-            // Defensive: remove then add to avoid duplicates
-            db.ObjectErased -= Db_ObjectErased;
-            db.ObjectErased += Db_ObjectErased;
-
-            db.ObjectAppended -= Db_ObjectAppended;
-            db.ObjectAppended += Db_ObjectAppended;
-
-            db.ObjectModified -= Db_ObjectModified;
-            db.ObjectModified += Db_ObjectModified;
-
-            db.ObjectOpenedForModify -= Db_ObjectOpenedForModify;
-            db.ObjectOpenedForModify += Db_ObjectOpenedForModify;
-
-            db.ObjectUnappended -= Db_ObjectUnappended;
-            db.ObjectUnappended += Db_ObjectUnappended;
-
-            // Note: ObjectReappended may exist in some API versions; ObjectAppended covers most creation cases.
-
-            doc.CommandWillStart -= Doc_CommandWillStart;
-            doc.CommandWillStart += Doc_CommandWillStart;
-
-            doc.CommandEnded -= Doc_CommandEnded;
-            doc.CommandEnded += Doc_CommandEnded;
-
-            doc.CommandCancelled -= Doc_CommandCancelled;
-            doc.CommandCancelled += Doc_CommandCancelled;
-
-            // Initialize command state holder for this document
-            _docCommandStates.AddOrUpdate(doc, new CommandState(), (d, old) => { old.Clear(); return old; });
-
-            // If this doc is active, attempt to load its stored boundary now (deferred)
-            DeferActionForDocument(context, () => LoadBoundary(context));
-        }
-
-        private static void DetachDocumentEvents(FoundationContext context)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-
-            var doc = context.Document;
-            var model = context.Model;
-
-            if (doc == null) return;
-
-            var db = doc.Database;
-            var ed = doc.Editor;
-
-            db.ObjectErased -= Db_ObjectErased;
-            db.ObjectAppended -= Db_ObjectAppended;
-            db.ObjectModified -= Db_ObjectModified;
-            db.ObjectOpenedForModify -= Db_ObjectOpenedForModify;
-            db.ObjectUnappended -= Db_ObjectUnappended;
-
-            doc.CommandWillStart -= Doc_CommandWillStart;
-            doc.CommandEnded -= Doc_CommandEnded;
-            doc.CommandCancelled -= Doc_CommandCancelled;
-
-            if (_deferredIdleHandlers.TryRemove(doc, out var existing))
-            {
-                Application.Idle -= existing;
-            }
-        }
 
         #endregion
 
@@ -175,25 +69,13 @@ namespace FoundationDetailer.Managers
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
 
-            var doc = context.Document;
-
-
             // Attach to existing documents
             AttachDocumentEvents(context);
+        }
 
-            // Document lifecycle events
-            var dm = Application.DocumentManager;
-            dm.DocumentCreated -= (s, e) => DocManager_DocumentCreated(s, e, context);
-            dm.DocumentCreated += (s, e) => DocManager_DocumentCreated(s, e, context);
-
-            dm.DocumentToBeDestroyed -= (s, e) => DocManager_DocumentToBeDestroyed(s, e, context);
-            dm.DocumentToBeDestroyed += (s, e) => DocManager_DocumentToBeDestroyed(s, e, context);
-
-            dm.DocumentActivated -= (s, e) => DocManager_DocumentActivated(s, e, context);
-            dm.DocumentActivated += (s, e) => DocManager_DocumentActivated(s, e, context);
-
-            // Load for active document (deferred to be safe)
-            LoadBoundaryForActiveDocument(context);
+        private void AttachDocumentEvents(FoundationContext context)
+        {
+            // add document events here
         }
 
 
@@ -207,36 +89,75 @@ namespace FoundationDetailer.Managers
         /// <param name="appendToModelSpace"></param>
         /// <returns></returns>
         /// <exception cref="ArgumentNullException"></exception>
-        internal Polyline RegisterBoundaryBeam(FoundationContext context, Polyline pl, Transaction tr, bool appendToModelSpace = false)
+        internal Polyline RegisterBoundaryBeam(
+            FoundationContext context,
+            Polyline pl,
+            Transaction tr,
+            bool appendToModelSpace = false)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
             if (pl == null) throw new ArgumentNullException(nameof(pl));
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
 
-            Database db = context.Document.Database;
+            var db = context.Document.Database;
 
-            // --- Append to ModelSpace if requested ---
+            // --- Append to ModelSpace if requested and not already in DB ---
             if (appendToModelSpace && pl.ObjectId.IsNull)
             {
                 ModelSpaceWriterService.AppendToModelSpace(tr, db, pl);
             }
 
-            // --- Write grade beam metadata (domain-specific) ---
-            FoundationEntityData.Write(tr, pl, NODCore.KEY_BOUNDARY_SUBDICT);
 
-            // --- Add centerline handle (domain-specific) ---
-            BoundaryNOD.AddBoundaryBeamCenterlineHandleToNOD(context, pl.ObjectId, tr);
+            // --- Open FD_BOUNDARY root dictionary (always for write) ---
+            var boundaryRootDict = NODCore.GetOrCreateBoundaryBeamRootDictionary(tr, db, forWrite: true);
+            if (boundaryRootDict == null)
+                throw new InvalidOperationException("Unable to open FD_BOUNDARY dictionary.");
+
+            // --- Delete existing boundary grade beam node, if any ---
+            if (boundaryRootDict.Count > 0)
+            {
+                // FD_BOUNDARY should only have one entry, get its key
+                string existingHandle = null;
+                foreach (DictionaryEntry de in boundaryRootDict)
+                {
+                    existingHandle = de.Key as string;
+                    break; // only the first
+                }
+
+                if (!string.IsNullOrWhiteSpace(existingHandle))
+                {
+                    DBDictionary existingNode;
+                    if (NODCore.TryGetBoundaryBeamNode(tr, db, out existingNode))
+                    {
+                        int edgesDeleted = 0, beamsDeleted = 0;
+                        NODCore.EraseDictionaryRecursive(tr, db, existingNode, ref edgesDeleted, ref beamsDeleted);
+
+                        // Remove entry from FD_BOUNDARY
+                        if (!boundaryRootDict.IsWriteEnabled)
+                            boundaryRootDict.UpgradeOpen();
+
+                        boundaryRootDict.Remove(existingHandle);
+                    }
+                }
+            }
+
+            // --- Register the new boundary under its centerline handle ---
+            string newHandle = pl.Handle.ToString();
+            NODCore.GetOrCreateBoundaryGradeBeamNode(tr, db, newHandle);
 
             return pl;
         }
 
 
+
         /// <summary>
-        /// Function to fully delete a single grade beam from the NOD and AutoCAD drawing
+        /// Deletes the edges for a single grade beam or boundary beam.
+        /// Keeps the NOD structure and centerline object.
         /// </summary>
         /// <param name="context"></param>
         /// <param name="handle"></param>
-        /// <returns></returns>
-        public int DeleteBoundaryBeam(FoundationContext context, string handle)
+        /// <returns>Number of deleted edge entities.</returns>
+        public int DeleteEdgesForSingleBeam(FoundationContext context, string handle)
         {
             if (context?.Document == null || string.IsNullOrWhiteSpace(handle))
                 return 0;
@@ -244,48 +165,54 @@ namespace FoundationDetailer.Managers
             using (var lockDoc = context.Document.LockDocument())
             using (var tr = context.Document.Database.TransactionManager.StartTransaction())
             {
-                int edgesDeleted = 0;
-                int beamsDeleted = 0;
-
-                int totalDeleted = DeleteBoundaryBeamFullInternal(context, tr, handle, out edgesDeleted, out beamsDeleted);
-
+                int deleted = DeleteBoundaryBeamEdgesOnlyInternal(context, tr);
                 tr.Commit();
-                return totalDeleted;
+                return deleted;
             }
         }
 
         /// <summary>
-        /// Deletes all edge entities of a single grade beam but keeps centerline and NOD dictionary.
+        /// Deletes all edge entities of a single grade/boundary beam but keeps centerline and NOD dictionary.
         /// Returns the number of entities erased.
         /// </summary>
-        internal int DeleteBoundaryBeamEdgesOnlyInternal(FoundationContext context, Transaction tr, string boundaryHandle)
+        internal int DeleteBoundaryBeamEdgesOnlyInternal(FoundationContext context, Transaction tr)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
             if (tr == null) throw new ArgumentNullException(nameof(tr));
-            if (string.IsNullOrWhiteSpace(boundaryHandle)) return 0;
 
             int deleted = 0;
-
-            // --- Get edges dictionary
             var db = context.Document.Database;
-            var edgesDict = BoundaryNOD.GetBoundaryEdgesDictionary(tr, db, boundaryHandle, forWrite: true);
-            if (edgesDict == null) return 0;
+
+            // --- Get the beam node first (boundary or gradebeam)
+            DBDictionary beamNode;
+            if (!NODCore.TryGetBoundaryBeamNode(tr, db, out beamNode))
+                return 0;
+
+            // --- Get the EDGES subdictionary if it exists
+            DBDictionary edgesDict;
+            if (!NODCore.TryGetBeamEdges(tr, beamNode, out edgesDict))
+                return 0;
 
             // --- Copy keys to safely iterate
             var keys = new List<string>();
-            foreach (DBDictionaryEntry entry in edgesDict)
-                keys.Add(entry.Key);
+            foreach (DictionaryEntry entry in edgesDict)
+                keys.Add((string)entry.Key);
 
-            foreach (var key in keys)
+            foreach (var edgeKey in keys)
             {
-                var xrec = tr.GetObject(edgesDict.GetAt(key), OpenMode.ForWrite) as Xrecord;
+                var xrecId = edgesDict.GetAt(edgeKey);
+                var xrec = tr.GetObject(xrecId, OpenMode.ForWrite) as Xrecord;
+
                 if (xrec?.Data != null)
                 {
                     foreach (TypedValue tv in xrec.Data)
                     {
                         if (tv.TypeCode != (int)DxfCode.Text) continue;
 
-                        if (!NODCore.TryGetObjectIdFromHandleString(context, db, tv.Value as string, out ObjectId oid))
+                        string handleStr = tv.Value as string;
+                        if (string.IsNullOrWhiteSpace(handleStr)) continue;
+
+                        if (!NODCore.TryGetObjectIdFromHandleString(tr, db, handleStr, out ObjectId oid))
                             continue;
 
                         if (oid.IsValid && !oid.IsErased)
@@ -296,726 +223,259 @@ namespace FoundationDetailer.Managers
                     }
                 }
 
-                // Remove Xrecord from dictionary
-                edgesDict.Remove(key);
+                // --- Remove the Xrecord itself from the dictionary
+                edgesDict.Remove(edgeKey);
                 xrec?.Erase();
             }
 
-            // --- Remove edges dictionary itself
-            edgesDict.Erase();
-
             return deleted;
         }
+
         /// <summary>
-        /// Internal function to delete a gradebeam with a specified centerline handle.  Removes all edges and associated data.  Clears the NOD entry.
+        /// Deletes all edges and the centerline entity for a single boundary beam handle.
+        /// Uses NODCore helpers to find the node and recursively erase it.
         /// </summary>
-        /// <param name="context"></param>
-        /// <param name="tr"></param>
-        /// <param name="handle"></param>
-        /// <param name="edgesDeleted"></param>
-        /// <param name="beamsDeleted"></param>
-        /// <returns></returns>
-        private int DeleteBoundaryBeamFullInternal(
+        private void DeleteBoundaryBeamFullInternal(
             FoundationContext context,
             Transaction tr,
             string handle,
-            out int edgesDeleted,
-            out int beamsDeleted)
+            ref int edgesDeleted,
+            ref int beamsDeleted)
         {
-            edgesDeleted = 0;
-            beamsDeleted = 0;
-
-            if (context?.Document == null || string.IsNullOrWhiteSpace(handle))
-                return 0;
-
-            // --- Get the boundary beam dictionary
-            var gbDict = BoundaryNOD.GetBoundaryBeamDictionaryByHandle(context, tr, handle);
-            if (gbDict == null) return 0;
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+            if (string.IsNullOrWhiteSpace(handle)) throw new ArgumentNullException(nameof(handle));
 
             var db = context.Document.Database;
 
-            // --- Delete edges only
-            edgesDeleted = DeleteBoundaryBeamEdgesOnlyInternal(context, tr, handle);
+            // --- Get the FD_BOUNDARY beam node
+            if (!NODCore.TryGetBoundaryBeamNode(tr, db, out DBDictionary beamNode))
+                return;
 
-            // --- Delete centerline
-            if (BoundaryNOD.TryGetBoundaryCenterline(context, tr, gbDict, out ObjectId centerlineId) &&
-                centerlineId.IsValid && !centerlineId.IsErased)
+            // --- Recursively erase everything under the node
+            NODCore.EraseDictionaryRecursive(tr, db, beamNode, ref edgesDeleted, ref beamsDeleted);
+
+            // --- Delete the centerline AutoCAD entity if it exists
+            if (NODCore.TryGetObjectIdFromHandleString(tr, db, handle, out ObjectId clId))
             {
-                var ent = tr.GetObject(centerlineId, OpenMode.ForWrite) as Entity;
-                ent?.Erase();
-                beamsDeleted++;
+                if (clId.IsValid && !clId.IsErased)
+                {
+                    (tr.GetObject(clId, OpenMode.ForWrite) as Entity)?.Erase();
+                    beamsDeleted++;
+                }
             }
 
-            // --- Remove the boundary beam dictionary from parent and erase
-            var rootDict = BoundaryNOD.GetBoundaryBeamRoot(tr, db, forWrite: true);
-            if (rootDict != null && rootDict.Contains(handle))
+            // --- Remove the node itself from FD_BOUNDARY
+            var rootDict = NODCore.GetOrCreateBoundaryBeamRootDictionary(tr, db, forWrite: true);
+            if (rootDict != null)
             {
                 rootDict.Remove(handle);
-                gbDict.Erase();
-            }
-
-            return edgesDeleted + beamsDeleted;
-        }
-
-        public bool TrySetBoundary(FoundationContext context, ObjectId candidateId, out string error)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-            if (candidateId == null) throw new ArgumentNullException(nameof(candidateId));
-
-            var doc = context.Document;
-            var model = context.Model;
-            var db = doc.Database;
-
-            error = string.Empty;
-
-            using (doc.LockDocument())
-            {
-                using (var tr = db.TransactionManager.StartTransaction())
-                {
-                    try
-                    {
-                        // Validate entity
-                        var ent = tr.GetObject(candidateId, OpenMode.ForRead, false) as Polyline;
-                        if (ent == null)
-                        {
-                            error = "Selected object is not a polyline.";
-                            return false;
-                        }
-
-                        // Normalize polyline
-                        ent.UpgradeOpen();
-                        EnsureClosedAndCCW(ent);
-                        ent.DowngradeOpen();
-
-                        // Persist handle via NODManager
-                        FoundationEntityData.Write(tr, ent, NODCore.KEY_BOUNDARY_SUBDICT);
-                        AddBoundaryHandleToNOD(context, tr, candidateId);
-
-                        // Update in-memory map
-                        _docBoundaryIds.AddOrUpdate(doc, candidateId, (d, old) => candidateId);
-
-                        tr.Commit();
-
-                        BoundaryChanged?.Invoke(null, EventArgs.Empty);
-                        return true;
-                    }
-                    catch (Autodesk.AutoCAD.Runtime.Exception ex)
-                    {
-                        error = ex.Message;
-                        return false;
-                    }
-                    catch (Exception ex)
-                    {
-                        error = ex.Message;
-                        return false;
-                    }
-                }
+                beamNode.Erase();
             }
         }
 
         /// <summary>
-        /// Highlight all grade beams in the current document.
+        /// Deletes the first (and only) boundary beam in FD_BOUNDARY if one exists.
+        /// Returns total number of entities erased.
+        /// </summary>
+        public int DeleteBoundaryBeam(FoundationContext context)
+        {
+            if (context?.Document == null)
+                return 0;
+
+            using (var lockDoc = context.Document.LockDocument())
+            using (var tr = context.Document.Database.TransactionManager.StartTransaction())
+            {
+                int edgesDeleted = 0;
+                int beamsDeleted = 0;
+
+                var db = context.Document.Database;
+                var rootDict = NODCore.GetOrCreateBoundaryBeamRootDictionary(tr, db, forWrite: true);
+                if (rootDict == null || rootDict.Count == 0)
+                    return 0;
+
+                // --- Get first boundary beam handle
+                string handle = null;
+                foreach (DictionaryEntry de in rootDict)
+                {
+                    handle = de.Key as string;
+                    if (!string.IsNullOrWhiteSpace(handle))
+                        break;
+                }
+
+                if (!string.IsNullOrWhiteSpace(handle))
+                    DeleteBoundaryBeamFullInternal(context, tr, handle, ref edgesDeleted, ref beamsDeleted);
+
+                tr.Commit();
+                return edgesDeleted + beamsDeleted;
+            }
+        }
+
+        /// <summary>
+        /// Highlight the centerline of the first (or only) boundary beam in the current document.
         /// </summary>
         public void HighlightBoundary(FoundationContext context)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
-
             var doc = context.Document;
             if (doc == null) return;
-
-            if (!TryGetBoundary(context, out Polyline pl))
-                return;
-
-            // Bring AutoCAD to front and highlight selected objects
-            SelectionService.FocusAndHighlight(context, new[] { pl.ObjectId }, "HighlightGradeBeam");
-        }
-
-        public bool TryGetBoundary(FoundationContext context, out Polyline pl)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-
-            var doc = context.Document;
-
-            pl = null;
-
-            if (doc == null) return false;
 
             var db = doc.Database;
 
-            try
+            using (var tr = db.TransactionManager.StartTransaction())
             {
-                using (doc.LockDocument())
-                using (var tr = db.TransactionManager.StartTransaction())
+                // --- Get the FD_BOUNDARY root dictionary
+                var rootDict = NODCore.GetOrCreateBoundaryBeamRootDictionary(tr, db);
+                if (rootDict == null || rootDict.Count == 0)
+                    return;
+
+                // --- Get the first (and only) boundary beam handle
+                string handle = null;
+                foreach (DictionaryEntry de in rootDict)
                 {
-                    // Delegate the dictionary and handle lookup to NODManager
-                    if (!NODScanner.TryGetFirstEntity(context, tr, db, NODCore.KEY_BOUNDARY_SUBDICT, out ObjectId oid))
-                        return false;
-
-                    if (oid.IsNull || oid.IsErased || !oid.IsValid)
-                        return false;
-
-                    pl = tr.GetObject(oid, OpenMode.ForRead, false) as Polyline;
-                    return pl != null;
+                    handle = de.Key as string;
+                    if (!string.IsNullOrWhiteSpace(handle))
+                        break;
                 }
-            }
-            catch
-            {
-                return false;
+
+                if (string.IsNullOrWhiteSpace(handle))
+                    return;
+
+                // --- Use NODCore to get the centerline ObjectId
+                if (NODCore.TryGetObjectIdFromHandleString(tr, db, handle, out ObjectId clId)
+                    && clId.IsValid && !clId.IsErased)
+                {
+                    SelectionService.FocusAndHighlight(context, new[] { clId }, "HighlightGradeBeam");
+                }
+
+                tr.Commit();
             }
         }
 
+
+        /// <summary>
+        /// Returns the upper-right corner of the boundary beam's centerline.
+        /// </summary>
         public Point3d? GetBoundaryUpperRight(FoundationContext context)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
-
-            if (!TryGetBoundary(context, out Polyline pl) || pl == null)
-                return null;
-
-            // Use GeometricExtents to get bounding box
-            try
-            {
-                Extents3d extents = pl.GeometricExtents;
-                // Upper-right = Max point of the bounding box
-                return extents.MaxPoint;
-            }
-            catch
-            {
-                // In case the polyline has zero area or is invalid
-                return null;
-            }
-        }
-
-        public void ZoomToBoundary(FoundationContext context)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-
             var doc = context.Document;
+            if (doc == null) return null;
 
-            if (doc == null) return;
+            var db = doc.Database;
 
-            var ed = doc.Editor;
-
-            if (!TryGetBoundary(context, out Polyline pl)) return;
-
-            try
+            using (var tr = db.TransactionManager.StartTransaction())
             {
-                using (doc.LockDocument())
+                // --- Get the FD_BOUNDARY root dictionary
+                var rootDict = NODCore.GetOrCreateBoundaryBeamRootDictionary(tr, db);
+                if (rootDict == null || rootDict.Count == 0)
+                    return null;
+
+                // --- Get the first (and only) boundary beam handle
+                string handle = null;
+                foreach (DictionaryEntry de in rootDict)
                 {
-                    ed.SetImpliedSelection(new ObjectId[] { pl.ObjectId });
-                    Extents3d ext = pl.GeometricExtents;
-                    if (ext.MinPoint.DistanceTo(ext.MaxPoint) < 1e-6) return;
-
-                    var view = ed.GetCurrentView();
-                    Point2d center = new Point2d(
-                        (ext.MinPoint.X + ext.MaxPoint.X) / 2.0,
-                        (ext.MinPoint.Y + ext.MaxPoint.Y) / 2.0
-                    );
-
-                    double width = ext.MaxPoint.X - ext.MinPoint.X;
-                    double height = ext.MaxPoint.Y - ext.MinPoint.Y;
-                    if (width < 1e-6) width = 1.0;
-                    if (height < 1e-6) height = 1.0;
-
-                    view.CenterPoint = center;
-                    view.Width = width * 1.1;
-                    view.Height = height * 1.1;
-
-                    ed.SetCurrentView(view);
+                    handle = de.Key as string;
+                    if (!string.IsNullOrWhiteSpace(handle))
+                        break;
                 }
-            }
-            catch { }
-        }
 
+                if (string.IsNullOrWhiteSpace(handle))
+                    return null;
 
-        #endregion
-
-        #region Event Handlers (robust set)
-
-        private static void Db_ObjectAppended(object sender, ObjectEventArgs e)
-        {
-            var db = sender as Database;
-            if (db == null) return;
-
-            var doc = Application.DocumentManager.GetDocument(db);
-            if (doc == null) return;
-
-            var context = FoundationContext.For(doc);
-            if (context == null) return;
-
-            DeferActionForDocument(context, () => CheckBoundaryForDocument(context));
-        }
-
-        private static void Db_ObjectErased(object sender, ObjectErasedEventArgs e)
-        {
-            var db = sender as Database;
-            if (db == null) return;
-
-            var doc = Application.DocumentManager.GetDocument(db);
-            if (doc == null) return;
-
-            var context = FoundationContext.For(doc);
-            if (context == null) return;
-
-            DeferActionForDocument(context, () => CheckBoundaryForDocument(context));
-        }
-
-        private static void CheckBoundaryForDocument(FoundationContext context)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-
-            var doc = context.Document;
-            var model = context.Model;
-
-            if (doc == null) return;
-
-            var ed = doc.Editor;
-
-            try
-            {
-                Database db = doc.Database;
-
-                using (var tr = db.TransactionManager.StartTransaction())
+                // --- Get centerline ObjectId
+                if (NODCore.TryGetObjectIdFromHandleString(tr, db, handle, out ObjectId clId)
+                    && clId.IsValid && !clId.IsErased)
                 {
-                    // ------------------------------
-                    // 1. Retrieve FD_BOUNDARY dictionary
-                    // ------------------------------
-                    DBDictionary nod =
-                        (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-
-                    if (!nod.Contains(NODCore.ROOT))
-                    {
-                        tr.Commit();
-                        return;
-                    }
-
-                    DBDictionary root =
-                        (DBDictionary)tr.GetObject(nod.GetAt(NODCore.ROOT), OpenMode.ForRead);
-
-                    if (!root.Contains(NODCore.KEY_BOUNDARY_SUBDICT))
-                    {
-                        tr.Commit();
-                        return;
-                    }
-
-                    DBDictionary boundaryDict =
-                        (DBDictionary)tr.GetObject(root.GetAt(NODCore.KEY_BOUNDARY_SUBDICT), OpenMode.ForRead);
-
-                    // ------------------------------
-                    // 2. Expect exactly ONE boundary entry
-                    // ------------------------------
-                    if (boundaryDict.Count == 0)
-                    {
-                        tr.Commit();
-                        return;
-                    }
-
-                    // Get the *first* (and only expected) boundary handle
-                    var entry = boundaryDict.Cast<DBDictionaryEntry>().First();
-                    string handleStr = entry.Key;
-
-                    // ------------------------------
-                    // 3. Convert handle - ObjectId
-                    // ------------------------------
-                    if (!NODCore.TryGetObjectIdFromHandleString(context, db, handleStr, out ObjectId boundaryId) ||
-                        boundaryId.IsNull)
-                    {
-                        tr.Commit();
-                        return;
-                    }
-
-                    // ------------------------------
-                    // 4. Validate that the boundary entity exists and is not erased
-                    // ------------------------------
-                    Entity ent = null;
-
-                    try
-                    {
-                        ent = tr.GetObject(boundaryId, OpenMode.ForRead) as Entity;
-                    }
-                    catch
-                    {
-                        ent = null;
-                    }
-
-                    if (ent == null || ent.IsErased)
-                    {
-                        tr.Commit();
-                        return;
-                    }
-
-                    // ------------------------------
-                    // 5. Store in internal dictionary + notify listeners
-                    // ------------------------------
-                    _docBoundaryIds.AddOrUpdate(doc, boundaryId, (d, old) => boundaryId);
-
-                    BoundaryChanged?.Invoke(null, EventArgs.Empty);
-
-                    tr.Commit();
-                }
-            }
-            catch
-            {
-                // Fail silently (matching your existing behavior)
-            }
-        }
-
-
-        private static void Db_ObjectUnappended(object sender, ObjectEventArgs e)
-        {
-            var db = sender as Database;
-            if (db == null) return;
-
-            var doc = Application.DocumentManager.GetDocument(db);
-            if (doc == null) return;
-
-            var context = FoundationContext.For(doc);
-            if (context == null) return;
-
-            if (e.DBObject == null) return;
-
-            // treat as erased (object removed from DB)
-            if (_docCommandStates.TryGetValue(doc, out CommandState state))
-            {
-                state.ErasedIds.Add(e.DBObject.ObjectId);
-            }
-
-            if (_docBoundaryIds.TryGetValue(doc, out ObjectId stored) && stored == e.DBObject.ObjectId)
-            {
-                _docBoundaryIds.AddOrUpdate(doc, ObjectId.Null, (d, old) => ObjectId.Null);
-                BoundaryChanged?.Invoke(null, EventArgs.Empty);
-            }
-        }
-
-        private static void Db_ObjectModified(object sender, ObjectEventArgs e)
-        {
-            var db = sender as Database;
-            if (db == null) return;
-
-            var doc = Application.DocumentManager.GetDocument(db);
-            if (doc == null) return;
-
-            var context = FoundationContext.For(doc);
-            if (context == null) return;
-
-            DeferActionForDocument(context, () => CheckBoundaryForDocument(context));
-        }
-
-
-        private static void Db_ObjectOpenedForModify(object sender, ObjectEventArgs e)
-        {
-            var db = sender as Database;
-            if (db == null) return;
-
-            var doc = Application.DocumentManager.GetDocument(db);
-            if (doc == null) return;
-
-            var context = FoundationContext.For(doc);
-            if (context == null) return;
-
-            if (e.DBObject == null) return;
-
-            // If the stored boundary is being opened for modify, capture a snapshot for later replacement detection
-            if (_docBoundaryIds.TryGetValue(doc, out ObjectId stored) && stored == e.DBObject.ObjectId)
-            {
-                try
-                {
-                    using (doc.LockDocument())
-                    using (var tr = doc.TransactionManager.StartTransaction())
-                    {
-                        if (e.DBObject.IsErased) { tr.Commit(); return; }
-
-                        var pl = tr.GetObject(e.DBObject.ObjectId, OpenMode.ForRead, false) as Polyline;
-                        if (pl != null)
-                        {
-                            var snap = GeometrySnapshot.FromPolyline(pl);
-                            _lastSnapshots.AddOrUpdate(doc, snap, (d, old) => snap);
-                        }
-
-                        tr.Commit();
-                    }
-                }
-                catch { /* ignore snapshot failures */ }
-            }
-        }
-
-        private static void Doc_CommandWillStart(object sender, CommandEventArgs e)
-        {
-            var db = sender as Database;
-            if (db == null) return;
-
-            var doc = Application.DocumentManager.GetDocument(db);
-            if (doc == null) return;
-
-            var context = FoundationContext.For(doc);
-            if (context == null) return;
-
-            if (e == null || string.IsNullOrEmpty(e.GlobalCommandName)) return;
-
-            var cmd = e.GlobalCommandName.ToUpperInvariant();
-
-            // Reset command state for this document (start new command cycle)
-            var state = _docCommandStates.GetOrAdd(doc, new CommandState());
-            state.Clear();
-            state.CurrentCommand = cmd;
-
-            if (_monitoredCommands.Contains(cmd))
-            {
-                // Some listeners may want to know a monitored command is starting
-                BoundaryChanged?.Invoke(null, EventArgs.Empty);
-            }
-        }
-
-        private static void Doc_CommandEnded(object sender, CommandEventArgs e)
-        {
-            var db = sender as Database;
-            if (db == null) return;
-
-            var doc = Application.DocumentManager.GetDocument(db);
-            if (doc == null) return;
-
-            var context = FoundationContext.For(doc);
-            if (context == null) return;
-
-
-            if (e == null || string.IsNullOrEmpty(e.GlobalCommandName)) return;
-
-            var cmd = e.GlobalCommandName.ToUpperInvariant();
-
-            // If monitored, reload XRecord and notify (deferred)
-            if (_monitoredCommands.Contains(cmd))
-            {
-                DeferActionForDocument(context, () =>
-                {
-                    LoadBoundary(context);
-                    BoundaryChanged?.Invoke(null, EventArgs.Empty);
-                });
-            }
-
-            // Hybrid replacement detection:
-            // 1) If replacement-prone command, attempt to adopt from appended objects observed in this command.
-            // 2) If not found, fallback to scanning all polylines against last snapshot.
-            if (_replacementCommands.Contains(cmd))
-            {
-                if (_docCommandStates.TryGetValue(doc, out CommandState state))
-                {
-                    // Capture a copy of appended ids NOW (state may be cleared later)
-                    var appendedCopy = state.AppendedIds.ToList();
-
-                    DeferActionForDocument(context, () =>
-                    {
-                        bool adopted = false;
-
-                        if (appendedCopy.Count > 0)
-                        {
-                            try
-                            {
-                                using (var tr = doc.TransactionManager.StartTransaction())
-                                {
-                                    foreach (var oid in appendedCopy)
-                                    {
-                                        if (oid.IsNull || oid.IsErased) continue;
-                                        try
-                                        {
-                                            var ent = tr.GetObject(oid, OpenMode.ForRead, false) as Polyline;
-                                            if (ent != null)
-                                            {
-                                                // If snapshot exists, match by similarity; otherwise match by geometry heuristics
-                                                if (_lastSnapshots.TryGetValue(doc, out var snap))
-                                                {
-                                                    if (GeometrySnapshot.IsSimilar(ent, snap))
-                                                    {
-                                                        AdoptReplacement(doc, tr, ent.ObjectId);
-                                                        adopted = true;
-                                                        break;
-                                                    }
-                                                }
-                                                else
-                                                {
-                                                    // No snapshot; try simple heuristics: vertex count equal or close and extents overlap
-                                                    if (TrySimpleHeuristicMatch(doc, tr, ent))
-                                                    {
-                                                        AdoptReplacement(doc, tr, ent.ObjectId);
-                                                        adopted = true;
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        catch { /* ignore per-entity errors */ }
-                                    }
-
-                                    tr.Commit();
-                                }
-                            }
-                            catch { /* ignore */ }
-                        }
-
-                        if (!adopted)
-                        {
-                            TryAdoptReplacementByGeometry(doc, ObjectId.Null);
-                        }
-
-                        // Clear command state after processing (safely)
-                        state.Clear();
-                    });
-                }
-            }
-            else
-            {
-                // For non-replacement commands, also consider that appended objects could match (rare)
-                if (_docCommandStates.TryGetValue(doc, out CommandState st))
-                {
-                    // Capture copy of appended ids now
-                    var appendedCopy = st.AppendedIds.ToList();
-
-                    DeferActionForDocument(context, () =>
+                    var pl = tr.GetObject(clId, OpenMode.ForRead) as Polyline;
+                    if (pl != null)
                     {
                         try
                         {
-                            // Quick attempt: if stored id is null but appended list contains a matching polyline, adopt it
-                            if ((_docBoundaryIds.TryGetValue(doc, out ObjectId stored) && stored.IsNull) && appendedCopy.Count > 0)
-                            {
-                                using (var tr = doc.TransactionManager.StartTransaction())
-                                {
-                                    foreach (var oid in appendedCopy)
-                                    {
-                                        if (oid.IsNull || oid.IsErased) continue;
-                                        try
-                                        {
-                                            var ent = tr.GetObject(oid, OpenMode.ForRead, false) as Polyline;
-                                            if (ent != null)
-                                            {
-                                                if (_lastSnapshots.TryGetValue(doc, out var snap))
-                                                {
-                                                    if (GeometrySnapshot.IsSimilar(ent, snap))
-                                                    {
-                                                        AdoptReplacement(doc, tr, ent.ObjectId);
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        catch { }
-                                    }
-
-                                    tr.Commit();
-                                }
-                            }
+                            return pl.GeometricExtents.MaxPoint;
                         }
-                        catch { }
-
-                        st.Clear();
-                    });
+                        catch
+                        {
+                            return null;
+                        }
+                    }
                 }
+
+                return null;
             }
-        }
-
-        private static void Doc_CommandCancelled(object sender, CommandEventArgs e)
-        {
-            var db = sender as Database;
-            if (db == null) return;
-
-            var doc = Application.DocumentManager.GetDocument(db);
-            if (doc == null) return;
-
-            var context = FoundationContext.For(doc);
-            if (context == null) return;
-
-            if (doc != null)
-            {
-                DeferActionForDocument(context, () => LoadBoundary(context));
-            }
-
-            DeferActionForDocument(context, () => BoundaryChanged?.Invoke(null, EventArgs.Empty));
-        }
-
-        #endregion
-
-        #region Helper Methods & Replacement Detection
-
-        private void LoadBoundaryForActiveDocument(FoundationContext context)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-
-            var doc = context.Document;
-            var model = context.Model;
-
-            if (doc != null)
-                DeferActionForDocument(context, () => LoadBoundary(context));
         }
 
         /// <summary>
-        /// Load the boundary for the specific document from the NamedObjectsDictionary XRecord (if exists).
-        /// Updates the in-memory stored ObjectId.
+        /// Zooms the editor view to the boundary beam's centerline.
         /// </summary>
-        private static void LoadBoundary(FoundationContext context)
+        public void ZoomToBoundary(FoundationContext context)
         {
+            if (context == null) throw new ArgumentNullException(nameof(context));
             var doc = context.Document;
-            var model = context.Model;
-
             if (doc == null) return;
-            try
+
+            var db = doc.Database;
+            var ed = doc.Editor;
+
+            using (var tr = db.TransactionManager.StartTransaction())
+            using (doc.LockDocument())
             {
-                using (doc.LockDocument())
-                using (var tr = doc.TransactionManager.StartTransaction())
+                // --- Get the FD_BOUNDARY root dictionary
+                var rootDict = NODCore.GetOrCreateBoundaryBeamRootDictionary(tr, db);
+                if (rootDict == null || rootDict.Count == 0)
+                    return;
+
+                // --- Get the first (and only) boundary beam handle
+                string handle = null;
+                foreach (DictionaryEntry de in rootDict)
                 {
-                    var db = doc.Database;
-                    var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-                    if (!nod.Contains(XrecordKey))
-                    {
-                        _docBoundaryIds.AddOrUpdate(doc, ObjectId.Null, (d, old) => ObjectId.Null);
-                        tr.Commit();
-                        return;
-                    }
+                    handle = de.Key as string;
+                    if (!string.IsNullOrWhiteSpace(handle))
+                        break;
+                }
 
-                    var xr = (Xrecord)tr.GetObject(nod.GetAt(XrecordKey), OpenMode.ForRead);
-                    if (xr?.Data == null || xr.Data.AsArray().Length == 0)
-                    {
-                        _docBoundaryIds.AddOrUpdate(doc, ObjectId.Null, (d, old) => ObjectId.Null);
-                        tr.Commit();
-                        return;
-                    }
+                if (string.IsNullOrWhiteSpace(handle))
+                    return;
 
-                    var arr = xr.Data.AsArray();
-                    var tv = arr[0];
-                    if (tv == null)
-                    {
-                        _docBoundaryIds.AddOrUpdate(doc, ObjectId.Null, (d, old) => ObjectId.Null);
-                        tr.Commit();
-                        return;
-                    }
+                // --- Get centerline ObjectId
+                if (NODCore.TryGetObjectIdFromHandleString(tr, db, handle, out ObjectId clId) &&
+                    clId.IsValid && !clId.IsErased)
+                {
+                    var pl = tr.GetObject(clId, OpenMode.ForRead) as Polyline;
+                    if (pl == null) return;
 
-                    ObjectId oid = ObjectId.Null;
-
-                    // If stored as a handle string, try parsing robustly.
                     try
                     {
-                        var s = tv.Value as string ?? tv.Value.ToString();
-                        if (NODCore.TryParseHandle(context, s, out Handle h))
-                        {
-                            oid = doc.Database.GetObjectId(false, h, 0);
-                        }
-                        else if (tv.TypeCode == (int)DxfCode.SoftPointerId && tv.Value is ObjectId tvOid)
-                        {
-                            oid = tvOid;
-                        }
-                    }
-                    catch
-                    {
-                        oid = ObjectId.Null;
-                    }
+                        ed.SetImpliedSelection(new ObjectId[] { pl.ObjectId });
+                        Extents3d ext = pl.GeometricExtents;
+                        if (ext.MinPoint.DistanceTo(ext.MaxPoint) < 1e-6) return;
 
-                    _docBoundaryIds.AddOrUpdate(doc, oid, (d, old) => oid);
-                    tr.Commit();
+                        var view = ed.GetCurrentView();
+                        Point2d center = new Point2d(
+                            (ext.MinPoint.X + ext.MaxPoint.X) / 2.0,
+                            (ext.MinPoint.Y + ext.MaxPoint.Y) / 2.0
+                        );
+
+                        double width = ext.MaxPoint.X - ext.MinPoint.X;
+                        double height = ext.MaxPoint.Y - ext.MinPoint.Y;
+                        if (width < 1e-6) width = 1.0;
+                        if (height < 1e-6) height = 1.0;
+
+                        view.CenterPoint = center;
+                        view.Width = width * 1.1;
+                        view.Height = height * 1.1;
+
+                        ed.SetCurrentView(view);
+                    }
+                    catch { }
                 }
-            }
-            catch
-            {
-                _docBoundaryIds.AddOrUpdate(doc, ObjectId.Null, (d, old) => ObjectId.Null);
+
+                tr.Commit();
             }
         }
+        #endregion
 
-
+        #region Helper Methods & Replacement Detection
         /// <summary>
         /// Try to adopt a replacement polyline by geometric similarity.
         /// If candidateOid == ObjectId.Null then we will scan all polylines; otherwise examine only candidateOid.
@@ -1116,42 +576,6 @@ namespace FoundationDetailer.Managers
             catch
             {
                 // ignore adopt failures (we don't want to throw from event handlers)
-            }
-        }
-
-        /// <summary>
-        /// Simple heuristic match when no snapshot: vertex count equality and overlapping extents
-        /// </summary>
-        private static bool TrySimpleHeuristicMatch(Document doc, Transaction tr, Polyline candidate)
-        {
-            if (doc == null || tr == null || candidate == null) return false;
-
-            try
-            {
-                if (!_docBoundaryIds.TryGetValue(doc, out ObjectId prev) || prev.IsNull) return false;
-
-                if (prev.IsErased || !prev.IsValid) return false;
-
-                // Try to get the previous polyline object for quick heuristics
-                var prevEnt = tr.GetObject(prev, OpenMode.ForRead, false) as Polyline;
-                if (prevEnt == null) return false;
-
-                if (Math.Abs(prevEnt.NumberOfVertices - candidate.NumberOfVertices) > 2) return false;
-
-                var extPrev = prevEnt.GeometricExtents;
-                var extCand = candidate.GeometricExtents;
-
-                // extents overlap test
-                var prevRect = new Rectangle(extPrev.MinPoint, extPrev.MaxPoint);
-                var candRect = new Rectangle(extCand.MinPoint, extCand.MaxPoint);
-
-                if (!prevRect.Overlaps(candRect)) return false;
-
-                return true;
-            }
-            catch
-            {
-                return false;
             }
         }
 
@@ -1292,98 +716,6 @@ namespace FoundationDetailer.Managers
 
         #endregion
 
-        #region Misc Helpers (original geometry fixes)
-
-        private static void EnsureClosedAndCCW(Polyline pl)
-        {
-            if (pl == null) return;
-
-            try
-            {
-                if (!pl.Closed)
-                    pl.Closed = true;
-
-                if (!IsCounterClockwise(pl))
-                {
-                    pl.ReverseCurve();
-                }
-            }
-            catch
-            {
-                // ignore
-            }
-        }
-
-        private static bool IsCounterClockwise(Polyline pl)
-        {
-            if (pl == null || pl.NumberOfVertices < 3) return true;
-            double sum = 0;
-            for (int i = 0; i < pl.NumberOfVertices; i++)
-            {
-                Point2d a = pl.GetPoint2dAt(i);
-                Point2d b = pl.GetPoint2dAt((i + 1) % pl.NumberOfVertices);
-                sum += (b.X - a.X) * (b.Y + a.Y);
-            }
-            return sum < 0;
-        }
-
-        private static ObjectId GetBoundaryFromXRecord(FoundationContext context, Transaction tr)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-
-            var doc = context.Document;
-
-            if (doc == null || tr == null) return ObjectId.Null;
-
-            try
-            {
-                var db = doc.Database;
-
-                // Open the Named Objects Dictionary
-                var nod = tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead) as DBDictionary;
-                if (nod == null || !nod.Contains(XrecordKey))
-                    return ObjectId.Null;
-
-                // Open the XRecord
-                var xr = tr.GetObject(nod.GetAt(XrecordKey), OpenMode.ForRead) as Xrecord;
-                if (xr?.Data == null) return ObjectId.Null;
-
-                var arr = xr.Data.AsArray();
-                if (arr.Length == 0)
-                    return ObjectId.Null;
-
-                var tv = arr[0];
-
-                // Convert handle string or ObjectId
-                try
-                {
-                    if (tv.TypeCode == (int)DxfCode.Handle)
-                    {
-                        var s = tv.Value as string ?? tv.Value.ToString();
-                        if (NODCore.TryParseHandle(context, s, out Handle h))
-                        {
-                            return db.GetObjectId(false, h, 0);
-                        }
-                    }
-                    else if (tv.TypeCode == (int)DxfCode.SoftPointerId && tv.Value is ObjectId oid)
-                    {
-                        return oid;
-                    }
-                }
-                catch { }
-
-                return ObjectId.Null;
-            }
-            catch
-            {
-                return ObjectId.Null;
-            }
-        }
-
-
-
-        #endregion
-
         #region Nested helpers & small utility types
 
         // Per-document command-scoped tracking
@@ -1422,139 +754,14 @@ namespace FoundationDetailer.Managers
 
         #endregion
 
-        #region Deferred helper
-
         /// <summary>
-        /// Defers an action to run once at the next Application.Idle, tracked per-document.
-        /// If a previous deferred action exists for the same document it will be replaced.
-        /// The action runs without acquiring the document lock — any action that modifies the DB should call LockDocument/transactions itself.
+        /// The primary function to select a polyline to be added as the boundary beam
         /// </summary>
-        private static void DeferActionForDocument(FoundationContext context, Action action)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-
-            var doc = context.Document;
-
-            if (doc == null || action == null) return;
-
-            // Remove existing handler for this doc if present
-            if (_deferredIdleHandlers.TryRemove(doc, out var existing))
-            {
-                try { Application.Idle -= existing; } catch { }
-            }
-
-            void handler(object s, EventArgs e)
-            {
-                try
-                {
-                    // Unsubscribe immediately
-                    Application.Idle -= handler;
-                    _deferredIdleHandlers.TryRemove(doc, out _);
-
-                    // Execute user action (may perform locking/transactions as needed)
-                    action();
-                }
-                catch
-                {
-                    // swallow exceptions from deferred actions
-                }
-            }
-
-            // Track and subscribe
-            _deferredIdleHandlers.TryAdd(doc, handler);
-            Application.Idle += handler;
-        }
-
-        #endregion
-
-        public static bool TryGetBoundaryHandle(
-            FoundationContext context,
-            Transaction tr,
-            out string handleString)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-            if (tr == null) throw new ArgumentNullException(nameof(tr));
-
-            handleString = null;
-
-            var doc = context.Document;
-            var db = doc.Database;
-
-            // Open NOD
-            var nod = (DBDictionary)
-                tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-
-            if (!nod.Contains(NODCore.ROOT))
-                return false;
-
-            var root = (DBDictionary)
-                tr.GetObject(nod.GetAt(NODCore.ROOT), OpenMode.ForRead);
-
-            if (!root.Contains(NODCore.KEY_BOUNDARY_SUBDICT))
-                return false;
-
-            var boundaryDict = (DBDictionary)
-                tr.GetObject(root.GetAt(NODCore.KEY_BOUNDARY_SUBDICT), OpenMode.ForRead);
-
-            // Boundary dictionary should contain exactly one entry
-            foreach (DBDictionaryEntry entry in boundaryDict)
-            {
-                handleString = entry.Key;
-                return true;
-            }
-
-            return false;
-        }
-
-
-        public bool TryRestoreBoundaryFromNOD(FoundationContext context, Database db, Transaction tr, out ObjectId boundaryId)
-        {
-            boundaryId = ObjectId.Null;
-
-            // Get boundary handle from NOD
-            if (!TryGetBoundaryHandle(context, tr, out string handleString))
-                return false;
-
-            if (!NODCore.TryParseHandle(context, handleString, out Handle handle))
-                return false;
-
-            if (!db.TryGetObjectId(handle, out ObjectId id))
-                return false;
-
-            if (!id.IsValid || id.IsErased)
-                return false;
-
-            boundaryId = id;  // return ObjectId
-            return true;
-        }
-
-        internal void RestoreBoundaryAfterImport(FoundationContext context)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-
-            var doc = context.Document;
-            var db = doc.Database;
-
-            using (doc.LockDocument())
-            using (var tr = doc.Database.TransactionManager.StartTransaction())
-            {
-                if (TryRestoreBoundaryFromNOD(context, db, tr, out ObjectId boundaryId))
-                {
-                    // Set boundary in PolylineBoundaryManager (this triggers BoundaryChanged event)
-                    if (!TrySetBoundary(context, boundaryId, out string error))
-                    {
-                        doc.Editor.WriteMessage($"\nFailed to set boundary: {error}");
-                    }
-                    else
-                    {
-                        doc.Editor.WriteMessage("\nBoundary restored from NOD.");
-                    }
-                }
-
-                tr.Commit(); // read-only, but commit for consistency
-            }
-        }
-
+        /// <param name="context"></param>
+        /// <param name="result"></param>
+        /// <param name="status"></param>
+        /// <returns></returns>
+        /// <exception cref="ArgumentNullException"></exception>
         public bool DefineBoundary(FoundationContext context, PromptEntityResult result, out string status)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
@@ -1571,7 +778,7 @@ namespace FoundationDetailer.Managers
             {
                 using (doc.LockDocument())
                 // Start transaction
-                using (Transaction tr = context.Document.Database.TransactionManager.StartTransaction())
+                using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
                 {
                     // Open the selected object for read
                     Polyline boundary = tr.GetObject(result.ObjectId, OpenMode.ForRead) as Polyline;
@@ -1610,57 +817,64 @@ namespace FoundationDetailer.Managers
             return true;
         }
 
-
-        #region NOD Helpers
-        /// <summary>
-        /// Function to add a polyline boundary handle to the NOD
-        /// </summary>
-        /// <param name="id"></param>
-        internal static void AddBoundaryHandleToNOD(FoundationContext context, Transaction tr, ObjectId id)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-            if (tr == null) throw new ArgumentNullException(nameof(tr));
-            if (id.IsNull) return;
-
-            var doc = context.Document;
-            var db = doc.Database;
-
-            // Ensure NOD structure exists
-            NODCore.InitFoundationNOD(context, tr);
-
-            var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
-            var root = (DBDictionary)tr.GetObject(nod.GetAt(NODCore.ROOT), OpenMode.ForWrite);
-            var boundaryDict = (DBDictionary)tr.GetObject(root.GetAt(NODCore.KEY_BOUNDARY_SUBDICT), OpenMode.ForWrite);
-
-            string handleStr = id.Handle.ToString().ToUpperInvariant();
-            NODCore.AddHandleToMetadataDictionary(tr, boundaryDict, handleStr);
-
-        }
-
-        public string ResolveBoundaryBeamHandle(FoundationContext context, ObjectId objectId)
-        {
-            if (context?.Document == null || objectId == ObjectId.Null)
-                return null;
-
-            using (var tr = context.Document.Database.TransactionManager.StartTransaction())
+            /// <summary>
+            /// Attempts to retrieve the boundary polyline for the current document.
+            /// Opens a transaction internally and reads the FD_BOUNDARY dictionary.
+            /// </summary>
+            /// <param name="context">Foundation context</param>
+            /// <param name="boundary">Outputs the boundary polyline if found</param>
+            /// <returns>True if a valid boundary polyline was retrieved, false otherwise</returns>
+            public bool TryGetBoundary(FoundationContext context, out Polyline boundary)
             {
-                if (BoundaryNOD.TryResolveOwningBoundaryBeam(
-                    context,
-                    tr,
-                    objectId,
-                    out string handle,
-                    out bool _,
-                    out bool _))
+                boundary = null;
+
+                if (context == null) throw new ArgumentNullException(nameof(context));
+                var doc = context.Document;
+                if (doc == null) return false;
+
+                var db = doc.Database;
+
+            using (doc.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                try
                 {
-                    return handle;
+                    // --- Get the FD_BOUNDARY node using NODCore helper
+                    if (!NODCore.TryGetBoundaryBeamNode(tr, db, out DBDictionary boundaryDict))
+                        return false;
+
+                    if (boundaryDict.Count == 0)
+                        return false;
+
+                    // --- Get the first entry (there should be only one)
+                    string handleStr = null;
+                    foreach (DictionaryEntry entry in boundaryDict)
+                    {
+                        handleStr = entry.Key as string;
+                        if (!string.IsNullOrWhiteSpace(handleStr))
+                            break;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(handleStr))
+                        return false;
+
+                    // --- Convert handle string to ObjectId
+                    if (!NODCore.TryGetObjectIdFromHandleString(tr, db, handleStr, out ObjectId plId))
+                        return false;
+
+                    // --- Open the polyline
+                    var pl = tr.GetObject(plId, OpenMode.ForRead) as Polyline;
+                    if (pl == null || pl.IsErased)
+                        return false;
+
+                    boundary = pl;
+                    return true;
+                }
+                catch
+                {
+                    return false;
                 }
             }
-
-            return null;
         }
-
-        #endregion
-
-
     }
 }
