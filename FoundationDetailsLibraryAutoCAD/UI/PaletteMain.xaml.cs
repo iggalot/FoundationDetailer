@@ -229,6 +229,38 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             PrelimGBControl.Visibility = System.Windows.Visibility.Visible;
         }
 
+        private void PrelimGBControl_AddPreliminaryClicked(object sender, PrelimGBEventArgs e)
+        {
+            var context = CurrentContext;
+            if (context == null) return;
+
+            if (!_boundaryService.TryGetBoundary(context, out Polyline boundary))
+            {
+                TxtStatus.Text = "No boundary selected.";
+                return;
+            }
+
+            try
+            {
+                var beams = _gradeBeamService.CreatePreliminaryGradeBeamLayout(
+                    context,
+                    boundary,
+                    e.HorzMin,
+                    e.HorzMax,
+                    e.VertMin,
+                    e.VertMax,
+                    vertexCount: GradeBeamManager.DEFAULT_VERTEX_QTY
+                );
+
+                UpdateAll();
+
+                TxtStatus.Text = $"Created {beams.Count} preliminary grade beams.";
+            }
+            catch (System.Exception ex)
+            {
+                TxtStatus.Text = $"Error creating grade beams: {ex.Message}";
+            }
+        }
 
 
 
@@ -493,51 +525,9 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             //Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
         }
 
-        //// Clip the line to the bounding box
-        //if (!MathHelperManager.TryClipLineToBoundingBoxExtents(basePt, dir, ext, out Point3d s, out Point3d e))
-        //    continue;
-        //var start = s;
-        //var end = e;
-
         #region --- UI Updates ---
 
-        private void PrelimGBControl_AddPreliminaryClicked(object sender, PrelimGBEventArgs e)
-        {
-            var context = CurrentContext;
-            if (context == null) return;
 
-            if (!_boundaryService.TryGetBoundary(context, out Polyline boundary))
-            {
-                TxtStatus.Text = "No boundary selected.";
-                return;
-            }
-
-            try
-            {
-                var beams = _gradeBeamService.CreatePreliminaryGradeBeamLayout(
-                    context,
-                    boundary,
-                    e.HorzMin,
-                    e.HorzMax,
-                    e.VertMin,
-                    e.VertMax,
-                    vertexCount: GradeBeamManager.DEFAULT_VERTEX_QTY
-                );
-
-                
-
-                TxtStatus.Text = $"Created {beams.Count} preliminary grade beams.";
-                PrelimGBControl.ViewModel.IsPreliminaryGenerated = true;
-                PrelimGBControl.Visibility = System.Windows.Visibility.Collapsed;
-
-                UpdateAll();
-                //Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
-            }
-            catch (System.Exception ex)
-            {
-                TxtStatus.Text = $"Error creating grade beams: {ex.Message}";
-            }
-        }
 
         private void GradeBeam_DeleteAllClicked(object sender, EventArgs e)
         {

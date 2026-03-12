@@ -861,38 +861,44 @@ namespace FoundationDetailer.Managers
             return true;
         }
 
-            /// <summary>
-            /// Attempts to retrieve the boundary polyline for the current document.
-            /// Opens a transaction internally and reads the FD_BOUNDARY dictionary.
-            /// </summary>
-            /// <param name="context">Foundation context</param>
-            /// <param name="boundary">Outputs the boundary polyline if found</param>
-            /// <returns>True if a valid boundary polyline was retrieved, false otherwise</returns>
-            public bool TryGetBoundary(FoundationContext context, out Polyline boundary)
-            {
-                boundary = null;
+        /// <summary>
+        /// Attempts to retrieve the boundary polyline for the current document.
+        /// Opens a transaction internally and reads the FD_BOUNDARY dictionary.
+        /// </summary>
+        /// <param name="context">Foundation context</param>
+        /// <param name="boundary">Outputs the boundary polyline if found</param>
+        /// <returns>True if a valid boundary polyline was retrieved, false otherwise</returns>
+        /// <summary>
+        /// Attempts to retrieve the boundary polyline for the current document.
+        /// </summary>
+        /// <param name="context">Foundation context</param>
+        /// <param name="boundary">Outputs the boundary polyline if found</param>
+        /// <returns>True if a valid boundary polyline was retrieved, false otherwise</returns>
+        public bool TryGetBoundary(FoundationContext context, out Polyline boundary)
+        {
+            boundary = null;
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            var doc = context.Document;
+            if (doc == null) return false;
 
-                if (context == null) throw new ArgumentNullException(nameof(context));
-                var doc = context.Document;
-                if (doc == null) return false;
-
-                var db = doc.Database;
+            var db = doc.Database;
 
             using (doc.LockDocument())
             using (var tr = db.TransactionManager.StartTransaction())
             {
                 try
                 {
-                    // --- Get the FD_BOUNDARY node using NODCore helper
-                    if (!NODCore.TryGetBoundaryBeamNode(tr, db, out DBDictionary boundaryDict))
+                    // --- Get the FD_BOUNDARY root dictionary
+                    DBDictionary boundaryRoot;
+                    if (!NODCore.TryGetBoundaryBeamRoot(tr, db, out boundaryRoot))
                         return false;
 
-                    if (boundaryDict.Count == 0)
+                    if (boundaryRoot.Count == 0)
                         return false;
 
-                    // --- Get the first entry (there should be only one)
+                    // --- The first key of the root dictionary is the polyline handle
                     string handleStr = null;
-                    foreach (DictionaryEntry entry in boundaryDict)
+                    foreach (DictionaryEntry entry in boundaryRoot)
                     {
                         handleStr = entry.Key as string;
                         if (!string.IsNullOrWhiteSpace(handleStr))
@@ -903,7 +909,8 @@ namespace FoundationDetailer.Managers
                         return false;
 
                     // --- Convert handle string to ObjectId
-                    if (!NODCore.TryGetObjectIdFromHandleString(tr, db, handleStr, out ObjectId plId))
+                    ObjectId plId;
+                    if (!NODCore.TryGetObjectIdFromHandleString(tr, db, handleStr, out plId))
                         return false;
 
                     // --- Open the polyline
