@@ -27,11 +27,9 @@
                 <Button x:Name="BtnQuery" Content="Query and Sync NOD" Margin="0,5"/>
                 <Button x:Name="BtnEraseNODFully" Content="EraseNODFully" Margin="0,5"/>
 
-                <Button x:Name="BtnTest" Content="Test" Margin="0,5"/>
-
                 <StackPanel Orientation="horizontal">
                     <Button x:Name="BtnSelectBoundary" Content="Select Boundary" Width="75" Margin="0,5"/>
-                    <Button x:Name="BtnDeleteBoundary" Content="Delete Boundary" Width="75" Margin="0,5"/>
+                    <Button x:Name="BtnDeleteBoundary" Content="Clear Boundary" Width="75" Margin="0,5"/>
                 </StackPanel>
 
                 <!-- Boundary Information GroupBox -->

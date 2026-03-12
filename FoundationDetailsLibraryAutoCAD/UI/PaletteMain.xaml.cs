@@ -89,6 +89,16 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
         }
 
+        /// <summary>
+        /// Queries the NOD for a list of handles in each subdirectory.
+        /// </summary>
+        private void BtnQueryNOD_Click(object sender, RoutedEventArgs e)
+        {
+            NODScanner.InspectFoundationNOD(CurrentContext);
+
+            TxtStatus.Text = "Displaying NOD structure.";
+        }
+
         private void BtnDeleteBoundary_Click()
         {
             var context = CurrentContext;
@@ -125,15 +135,23 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
 
                 UpdateAll();
-                UpdateBoundaryDisplay();
+
+                TxtStatus.Text = "Boundary deleted.";
             }
             catch (Exception ex)
             {
                 ed.WriteMessage("\nError deleting boundary beam from NOD structure: " + ex.Message);
+                TxtStatus.Text = "Error deleting boundary beam from NOD structure: " + ex.Message;
             }
         }
 
+        private void BtnEraseNODFully_Click()
+        {
+            NODCleaner.ClearFoundationNOD(CurrentContext);
+            UpdateAll();
 
+            TxtStatus.Text = "NOD fully erased.";
+        }
 
         private void BtnDefineFoundationBoundary_Click()
         {
@@ -207,12 +225,25 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             TxtStatus.Text = "Boundary defined.";
 
             // Enable grade beam UI
-            PrelimGBControl.ViewModel.IsPreliminaryGenerated = true;
-            PrelimGBControl.Visibility = System.Windows.Visibility.Collapsed;
-
-            // Notify listeners
-            PolylineBoundaryManager.RaiseBoundaryChanged();
+            PrelimGBControl.ViewModel.IsPreliminaryGenerated = false;
+            PrelimGBControl.Visibility = System.Windows.Visibility.Visible;
         }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -865,18 +896,9 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
 
         #region --- UI Button Click Handlers ---
-        private void BtnEraseNODFully_Click()
-        {
-            NODCleaner.ClearFoundationNOD(CurrentContext);
-        }
 
-        /// <summary>
-        /// Queries the NOD for a list of handles in each subdirectory.
-        /// </summary>
-        private void BtnQueryNOD_Click(object sender, RoutedEventArgs e)
-        {
-            NODScanner.InspectFoundationNOD(CurrentContext);
-        }
+
+
 
         // ---------------------------
         // Button click handler
