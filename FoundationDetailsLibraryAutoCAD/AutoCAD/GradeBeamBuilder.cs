@@ -120,8 +120,9 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                     return ln.ObjectId;
                 }).ToArray();
 
-                // --- Store edges using GradeBeamNOD
-                GradeBeamNOD.StoreEdgeObjects(context, tr, db, group.Key.ToString(), leftIds, rightIds);
+                string handle = group.Key.Handle.ToString();
+
+                GradeBeamNOD.StoreEdgeObjects(context, tr, db, handle, leftIds, rightIds);
             }
 
             doc.Editor.Regen();

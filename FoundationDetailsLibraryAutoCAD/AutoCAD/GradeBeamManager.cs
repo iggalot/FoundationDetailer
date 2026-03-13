@@ -803,7 +803,7 @@ namespace FoundationDetailer.AutoCAD
         #endregion
 
 
-        public void DrawGradeBeamLengthTable(FoundationContext context, Point3d? insertPoint = null, double scale=1.0)
+        public void DrawGradeBeamLengthTable(FoundationContext context, Point3d? insertPoint = null, double scale = 1.0)
         {
             if (context == null) return;
 
@@ -811,45 +811,51 @@ namespace FoundationDetailer.AutoCAD
             var db = doc.Database;
             var ed = doc.Editor;
 
-            // Use default insert point if none provided
             Point3d pt = insertPoint ?? GradeBeamManager.DEFAULT_GRADEBEAMLENGTHTABLE_INSERT_PT;
 
             using (doc.LockDocument())
             using (var tr = db.TransactionManager.StartTransaction())
             {
-                // Open BlockTable for write
                 var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForWrite);
                 var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
-                // --- Delete any existing block named GRADEBEAMLENGTHTABLE
+                // --- Delete any existing block references and block definition
                 if (bt.Has("GRADEBEAMLENGTHTABLE"))
                 {
                     var blockId = bt["GRADEBEAMLENGTHTABLE"];
-                    var blockRefIds = new List<ObjectId>();
+                    var refsToErase = new List<ObjectId>();
 
-                    // find all references in model space
                     foreach (ObjectId id in ms)
                     {
-                        var ent = tr.GetObject(id, OpenMode.ForRead) as BlockReference;
-                        if (ent != null && ent.Name == "GRADEBEAMLENGTHTABLE")
-                            blockRefIds.Add(id);
+                        if (id.IsErased) continue;
+                        if (!(tr.GetObject(id, OpenMode.ForRead) is BlockReference ent)) continue;
+
+                        try
+                        {
+                            var def = tr.GetObject(ent.BlockTableRecord, OpenMode.ForRead) as BlockTableRecord;
+                            if (def != null && def.Name.Equals("GRADEBEAMLENGTHTABLE", StringComparison.OrdinalIgnoreCase))
+                                refsToErase.Add(id);
+                        }
+                        catch { /* ignore references that fail to resolve */ }
                     }
 
-                    // Erase references
-                    foreach (var id in blockRefIds)
+                    foreach (var refId in refsToErase)
                     {
-                        var ent = tr.GetObject(id, OpenMode.ForWrite) as Entity;
-                        ent?.Erase();
+                        if (!refId.IsErased)
+                        {
+                            var entWrite = tr.GetObject(refId, OpenMode.ForWrite) as Entity;
+                            entWrite?.Erase();
+                        }
                     }
 
-                    // Erase existing block definition
+                    // Erase the block definition itself
                     var blockDef = tr.GetObject(blockId, OpenMode.ForWrite) as BlockTableRecord;
                     if (blockDef != null && !blockDef.IsErased)
                         blockDef.Erase();
                 }
 
                 // --- Get grade beam centerlines
-                List<Polyline> gradeBeamCenterlines = GetAllGradeBeamCenterlinePolylines(context);
+                var gradeBeamCenterlines = GetAllGradeBeamCenterlinePolylines(context);
                 if (gradeBeamCenterlines.Count == 0)
                 {
                     ed.WriteMessage("\nNo grade beams currently defined. Skipping table generation.");
@@ -866,12 +872,12 @@ namespace FoundationDetailer.AutoCAD
                     columnText[c] = new List<string>();
 
                 columnText[0].AddRange(Enumerable.Range(1, gradeBeamCenterlines.Count).Select(i => i.ToString()));
-                columnText[1].AddRange(Enumerable.Repeat("", gradeBeamCenterlines.Count)); // placeholder labels
+                columnText[1].AddRange(Enumerable.Repeat("", gradeBeamCenterlines.Count));
                 columnText[2].AddRange(gradeBeamCenterlines.Select(pl =>
                     Math.Ceiling(MathHelperManager.ComputePolylineLengthInFeet(pl)).ToString()));
 
                 // --- Compute column widths
-                double padding = 0.2 * scale; // inches
+                double padding = 0.2 * scale;
                 double[] colWidths = new double[colCount];
                 for (int c = 0; c < colCount; c++)
                 {
@@ -882,17 +888,16 @@ namespace FoundationDetailer.AutoCAD
                     colWidths[c] = maxWidth + padding;
                 }
 
-                // --- Row height and table size
                 double rowHeight = 0.4 * scale;
                 double tableWidth = colWidths.Sum();
                 double tableHeight = rowCount * rowHeight;
 
-                // --- Create a new block
+                // --- Create new block definition
                 BlockTableRecord newBlock = new BlockTableRecord { Name = "GRADEBEAMLENGTHTABLE" };
                 ObjectId blockIdNew = bt.Add(newBlock);
                 tr.AddNewlyCreatedDBObject(newBlock, true);
 
-                // --- Draw outer border rectangle
+                // --- Draw outer rectangle
                 Polyline outer = new Polyline(5);
                 outer.AddVertexAt(0, new Point2d(0, 0), 0, 0, 0);
                 outer.AddVertexAt(1, new Point2d(tableWidth, 0), 0, 0, 0);
@@ -903,8 +908,8 @@ namespace FoundationDetailer.AutoCAD
                 newBlock.AppendEntity(outer);
                 tr.AddNewlyCreatedDBObject(outer, true);
 
-                // --- Draw vertical lines starting below the title row
-                double headerTopY = -rowHeight; // top of column headers (after title)
+                // --- Draw vertical lines
+                double headerTopY = -rowHeight;
                 double x = 0;
                 for (int c = 0; c <= colCount; c++)
                 {
@@ -914,9 +919,7 @@ namespace FoundationDetailer.AutoCAD
                     vLine.LineWeight = (c == 0 || c == colCount) ? LineWeight.LineWeight050 : LineWeight.LineWeight015;
                     newBlock.AppendEntity(vLine);
                     tr.AddNewlyCreatedDBObject(vLine, true);
-
-                    if (c < colCount)
-                        x += colWidths[c];
+                    if (c < colCount) x += colWidths[c];
                 }
 
                 // --- Draw horizontal lines
@@ -933,11 +936,10 @@ namespace FoundationDetailer.AutoCAD
                 }
 
                 // --- Insert title
-                InsertMText(newBlock, tr,
-                    new Point3d(tableWidth / 2, -rowHeight / 2, 0),
+                InsertMText(newBlock, tr, new Point3d(tableWidth / 2, -rowHeight / 2, 0),
                     "GRADE BEAM LENGTHS", tableWidth, rowHeight, CellAlignment.MiddleCenter, scale);
 
-                // --- Insert column headers
+                // --- Insert headers
                 x = 0;
                 y = -rowHeight * 1.5;
                 for (int c = 0; c < colCount; c++)
@@ -965,26 +967,23 @@ namespace FoundationDetailer.AutoCAD
                     }
                 }
 
-                // --- Insert TOTAL row (drop one row below last data row)
+                // --- TOTAL row
                 double totalLengthFeet = Math.Ceiling(gradeBeamCenterlines.Sum(pl => MathHelperManager.ComputePolylineLengthInFeet(pl)));
                 double totalRowY = -rowHeight * (gradeBeamCenterlines.Count + 2.5);
-
-                // Merge first two columns for TOTAL label
                 InsertMText(newBlock, tr,
                     new Point3d((colWidths[0] + colWidths[1]) / 2, totalRowY, 0),
                     "TOTAL", colWidths[0] + colWidths[1], rowHeight, CellAlignment.MiddleCenter, scale);
-
-                // Last column for total length
                 InsertMText(newBlock, tr,
                     new Point3d(colWidths[0] + colWidths[1] + colWidths[2] / 2, totalRowY, 0),
                     totalLengthFeet.ToString() + " ft.", colWidths[2], rowHeight, CellAlignment.MiddleRight, scale);
 
-                // --- Insert block reference into model space
+                // --- Insert block reference in ModelSpace
                 BlockReference blockRef = new BlockReference(pt, blockIdNew);
                 ms.AppendEntity(blockRef);
                 tr.AddNewlyCreatedDBObject(blockRef, true);
 
                 tr.Commit();
+                doc.Editor.Regen();
             }
         }
 
