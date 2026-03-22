@@ -1,8 +1,29 @@
 ﻿// NOD RULES:
-// 1) Never iterate DBDictionary directly
-// 2) Always use EnumerateDictionary / EnumerateHandleKeys
-// 3) Never assume ObjectId validity
-// 4) All writes require DocumentLock
+// current NOD structure should be this.
+//NOD
+//└─ EE_Foundation
+//   │
+//   ├─ FD_GRADEBEAM
+//   │   │
+//   │   ├─ 2A31
+//   │   │   ├─ EDGES
+//   │   │   │   ├─ e1
+//   │   │   │   └─ e2
+//   │   │   │
+//   │   │   └─ METADATA
+//   │   │       └─ SECTION
+//   │   │           ├─ Width
+//   │   │           └─ Depth
+//   │   │
+//   │   └─ 2A42
+//   │       ├─ EDGES
+//   │       └─ METADATA
+//   │
+//   └─ FD_BOUNDARY
+//       │
+//       └─ 3B11
+//           ├─ EDGES
+//           └─ METADATA
 
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Runtime;
@@ -26,23 +47,26 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         // ==========================================================
         public const string ROOT = "EE_Foundation";
 
+        // Primary subdicts under the ROOT ofthe NOD
         public const string KEY_BOUNDARY_SUBDICT = "FD_BOUNDARY";
         public const string KEY_GRADEBEAM_SUBDICT = "FD_GRADEBEAM";
         //public const string KEY_SLABSTRAND_SUBDICT = "FD_SLABSTRAND";
         //public const string KEY_REBAR = "FD_REBAR";
 
-        public const string KEY_CENTERLINE = "FD_CENTERLINE";
+        // The gradebam NODE subdicts -- 
         public const string KEY_EDGES_SUBDICT = "FD_EDGES";
         public const string KEY_BEAMSTRAND_SUBDICT = "FD_BEAMSTRAND";
         public const string KEY_METADATA_SUBDICT = "FD_METADATA";
 
-        public const string KEY_SECTION = "SECTION";
-        public const string KEY_WIDTH = "WIDTH";
-        public const string KEY_DEPTH = "DEPTH";
+        // Items under the SECTION subdict of the meta subdict
+        public const string KEY_META_SECTION_SUBDICT = "SECTION";
+        public const string KEY_SECTION_WIDTH = "WIDTH";
+        public const string KEY_SECTION_DEPTH = "DEPTH";
 
-        public const string KEY_ANALYSIS = "ANALYSIS";
-        public const string KEY_DESIGN = "DESIGN";
-        public const string KEY_STATUS = "STATUS";
+        // Items under the ANALYSIS subdict of the meta subdict
+        public const string KEY_META_ANALYSIS_SUBDICT = "ANALYSIS";
+        public const string KEY_ANALYSIS_DESIGN = "DESIGN";
+        public const string KEY_ANALYSIS_STATUS = "STATUS";
 
         public static readonly string[] KNOWN_ROOT_SUBDIRS =
         {
@@ -57,26 +81,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         #region Enumeration Helpers
         internal static IEnumerable<(string Key, ObjectId Id)> EnumerateDictionary(DBDictionary dict)
         {
-            if (dict == null)
-                yield break;
-
-            foreach (DictionaryEntry entry in dict)
-            {
-                if (entry.Key is string key &&
-                    entry.Value is ObjectId id &&
-                    id.IsValid && !id.IsNull)
-                {
-                    yield return (key, id);
-                }
-            }
-        }
-        internal static IEnumerable<ExtensionDataItem> EnumerateDictionaryWithHandles(
-            FoundationContext context,
-            Transaction tr,
-            DBDictionary dict,
-            Database db)
-        {
-            if (context == null || tr == null || dict == null || db == null)
+            if (dict == null || dict.IsErased)
                 yield break;
 
             foreach (DictionaryEntry entry in dict)
@@ -84,296 +89,26 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 if (!(entry.Key is string key))
                     continue;
 
-                if (!(entry.Value is ObjectId objId))
-                    continue; // skip non-ObjectId entries
+                if (!(entry.Value is ObjectId id))
+                    continue;
 
-                var obj = tr.GetObject(objId, OpenMode.ForRead);
-                // Subdictionary - recurse
-                if (obj is DBDictionary subDict)
-                {
-                    yield return new ExtensionDataItem
-                    {
-                        Name = key,
-                        Type = "Subdictionary",
-                        Children = new ObservableCollection<ExtensionDataItem>(
-                            EnumerateDictionaryWithHandles(context, tr, subDict, db))
-                    };
-                }
-                // Xrecord - show typed values
-                else if (obj is Xrecord xr)
-                {
-                    var xrValues = new List<string>();
-                    if (xr.Data != null)
-                    {
-                        foreach (TypedValue tv in xr.Data)
-                            xrValues.Add($"[{tv.TypeCode}: {tv.Value}]");
-                    }
+                if (!id.IsValid || id.IsNull || id.IsErased)
+                    continue;
 
-                    yield return new ExtensionDataItem
-                    {
-                        Name = key,
-                        Type = "XRecord",
-                        Value = xrValues
-                    };
-                }
-                // Entity - show handle
-                else if (obj is Entity ent)
-                {
-                    yield return new ExtensionDataItem
-                    {
-                        Name = key,
-                        Type = ent.GetType().Name,
-                        ObjectId = ent.ObjectId,
-                        Value = new List<string> { $"Handle: {ent.Handle}" }
-                    };
-                }
-                // Fallback for unknown objects
-                else
-                {
-                    yield return new ExtensionDataItem
-                    {
-                        Name = key,
-                        Type = obj?.GetType().Name ?? "Unknown",
-                        ObjectId = ObjectId.Null
-                    };
-                }
+                yield return (key, id);
             }
         }
-
-
-
-        internal static IEnumerable<ObjectId> EnumerateValidEntityIds(
-            FoundationContext context,
-            Transaction tr,
-            Database db,
-            DBDictionary dict)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-            if (tr == null) throw new ArgumentNullException(nameof(tr));
-            if (db == null) throw new ArgumentNullException(nameof(db));
-            if (dict == null) yield break;
-
-            foreach (var id in NODScanner.ProcessDictionaryEntries(
-                context, tr, db, dict, "EnumerateValidEntityIds",
-                (handleKey, _) =>
-                {
-                    var entry = ValidateHandleOrId(context, tr, db, "EnumerateValidEntityIds", handleKey);
-                    return entry.Status == HandleStatus.Valid ? entry.Id : ObjectId.Null;
-                },
-                recurseSubDictionaries: true))
-            {
-                if (!id.IsNull)
-                    yield return id;
-            }
-        }
-
-        #endregion
-
-        #region Validation
-
-        /// <summary>
-        /// Checks if a string is a valid hexadecimal handle.
-        /// </summary>
-        private static bool IsValidHexHandle(string handle)
-        {
-            if (string.IsNullOrWhiteSpace(handle))
-                return false;
-
-            return handle.All(c =>
-                (c >= '0' && c <= '9') ||
-                (c >= 'A' && c <= 'F') ||
-                (c >= 'a' && c <= 'f'));
-        }
-
-        /// <summary>
-        /// Tries to resolve a handle string to an ObjectId.
-        /// </summary>
-        internal static bool TryResolveHandleToObjectId(
-            FoundationContext context,
-            Database db,
-            string handleStr,
-            out ObjectId id)
-        {
-            id = ObjectId.Null;
-
-            if (!IsValidHexHandle(handleStr))
-                return false;
-
-            try
-            {
-                var handle = new Handle(Convert.ToInt64(handleStr, 16));
-                id = db.GetObjectId(false, handle, 0);
-                return id.IsValid && !id.IsNull && !id.IsErased;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// Unified validation for either a handle string or an ObjectId.
-        /// Returns a <see cref="HandleEntry"/> with status indicating validity, missing, or invalid.
-        /// </summary>
-        internal static HandleEntry ValidateHandleOrId(
-            FoundationContext context,
-            Transaction tr,
-            Database db,
-            string groupName,
-            string handleStr,
-            ObjectId id = default)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-
-            var result = new HandleEntry
-            {
-                GroupName = groupName,
-                HandleKey = handleStr ?? string.Empty,
-                Id = id
-            };
-
-            // Resolve handle string to ObjectId if provided
-            if (!string.IsNullOrEmpty(handleStr))
-            {
-                if (!TryResolveHandleToObjectId(context, db, handleStr, out ObjectId resolved))
-                {
-                    result.Status = HandleStatus.Invalid;
-                    return result;
-                }
-                result.Id = resolved;
-            }
-
-            // Check for valid ObjectId
-            if (result.Id.IsNull || !result.Id.IsValid)
-            {
-                result.Status = HandleStatus.Invalid;
-                return result;
-            }
-
-            try
-            {
-                // Attempt to fetch the entity
-                var obj = tr.GetObject(result.Id, OpenMode.ForRead, false);
-                if (obj == null || obj.IsErased)
-                {
-                    result.Status = HandleStatus.Missing;
-                    return result;
-                }
-
-                // If it's an Entity, store it
-                if (obj is Entity ent)
-                    result.Entity = ent;
-
-                result.Status = HandleStatus.Valid;
-            }
-            catch
-            {
-                result.Status = HandleStatus.Missing;
-                result.Entity = null;
-            }
-
-            return result;
-        }
-
-
-        #endregion
-
-
-        #region Handle Resolution
-        /// <summary>
-        /// Attempts to resolve a handle string into a valid ObjectId in the database.
-        /// Supports hex (with or without "0x") and decimal formats; no transaction required.
-        /// </summary>
-        /// <param name="db">Database in which to resolve the handle.</param>
-        /// <param name="handleStr">String representation of the handle.</param>
-        /// <param name="id">Receives the resolved ObjectId, or ObjectId.Null if unsuccessful.</param>
-        /// <returns>True if parsing and resolution succeed; otherwise false.</returns>
-        internal static bool TryGetObjectIdFromHandleString(FoundationContext context,
-            Database db, string handleStr, out ObjectId id)
-        {
-            id = ObjectId.Null;
-
-            // Parse the string into a Handle structure
-            if (!TryParseHandle(context, handleStr, out Handle handle))
-                return false;
-
-            // Resolve the Handle into an ObjectId
-            return TryGetObjectIdFromHandle(db, handle, out id);
-        }
-
-        /// <summary>
-        /// Attempts to parse a string into an AutoCAD Handle, trying hex first, then decimal as fallback.
-        /// </summary>
-        /// <param name="handleString">String representation of the handle.</param>
-        /// <param name="handle">Receives the parsed Handle if successful.</param>
-        /// <returns>True if parsing succeeds; otherwise false.</returns>
-        internal static bool TryParseHandle(FoundationContext context, string handleString, out Handle handle)
-        {
-            handle = default;
-
-            if (string.IsNullOrWhiteSpace(handleString))
-                return false;
-
-            string s = handleString.Trim();
-
-            // Remove optional "0x" prefix if present
-            if (s.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
-                s = s.Substring(2);
-
-            // 1) Try hexadecimal parsing (canonical AutoCAD format)
-            if (long.TryParse(
-                    s,
-                    System.Globalization.NumberStyles.HexNumber,
-                    System.Globalization.CultureInfo.InvariantCulture,
-                    out long hexValue))
-            {
-                handle = new Handle(hexValue);
-                return true;
-            }
-
-            // 2) Defensive fallback: decimal parsing
-            if (long.TryParse(
-                    s,
-                    System.Globalization.NumberStyles.Integer,
-                    System.Globalization.CultureInfo.InvariantCulture,
-                    out long decValue))
-            {
-                handle = new Handle(decValue);
-                return true;
-            }
-
-            return false;
-        }
-
-
-        /// <summary>
-        /// Resolves an AutoCAD Handle to a valid ObjectId in the database.
-        /// </summary>
-        /// <param name="db">Database in which to resolve the handle.</param>
-        /// <param name="handle">Handle to resolve.</param>
-        /// <param name="id">Receives the resolved ObjectId if successful.</param>
-        /// <returns>True if resolution succeeds; otherwise false.</returns>
-        internal static bool TryGetObjectIdFromHandle(
-            Database db, Handle handle, out ObjectId id)
-        {
-            id = ObjectId.Null;
-
-            try
-            {
-                id = db.GetObjectId(false, handle, 0);
-                return id.IsValid && !id.IsNull;
-            }
-            catch
-            {
-                id = ObjectId.Null;
-                return false;
-            }
-        }
-
+        
         #endregion
 
         #region NOD Structure Creation and Retrieval
-
+        /// <summary>
+        /// Initialize the NOD tree structure
+        /// </summary>
+        /// <param name="context"></param>
+        /// <param name="tr"></param>
+        /// <returns></returns>
+        /// <exception cref="ArgumentNullException"></exception>
         public static DBDictionary InitFoundationNOD(FoundationContext context, Transaction tr)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
@@ -384,23 +119,203 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             var nod = (DBDictionary)tr.GetObject(
                 db.NamedObjectsDictionaryId, OpenMode.ForWrite);
 
+            // Make the root dictionary
             var root = GetOrCreateNestedSubDictionary(tr, nod, ROOT);
 
+            // Get or create each known root subdirectory; existing ones are preserved
             foreach (var key in KNOWN_ROOT_SUBDIRS)
                 GetOrCreateNestedSubDictionary(tr, root, key);
 
             return root;
         }
 
-        internal static DBDictionary GetFoundationRoot(Transaction tr, Database db)
+        /// <summary>
+        /// Creates or retrieves a grade beam node by handle within the specified subdictionary.
+        /// Ensures required subdictionaries (edges, strands) exist.
+        /// </summary>
+        internal static DBDictionary InitGradeBeamNode_Internal(
+            Transaction tr,
+            DBDictionary parentDict,
+            string centerlineHandle)
         {
-            var nod = tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead) as DBDictionary;
-            if (nod == null || !nod.Contains(ROOT))
-                return null;
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+            if (parentDict == null) throw new ArgumentNullException(nameof(parentDict));
+            if (string.IsNullOrWhiteSpace(centerlineHandle)) throw new ArgumentException("Centerline handle is required.", nameof(centerlineHandle));
 
-            return tr.GetObject(nod.GetAt(ROOT), OpenMode.ForRead) as DBDictionary;
+            // --- Try to get existing node
+            if (TryGetNestedSubDictionary(tr, parentDict, out var existingNode, centerlineHandle))
+                return existingNode;
+
+            // --- Upgrade parent dictionary for writing
+            if (!parentDict.IsWriteEnabled)
+                parentDict.UpgradeOpen();
+
+            // --- Create new grade beam node
+            var gbNode = new DBDictionary();
+            parentDict.SetAt(centerlineHandle, gbNode);
+            tr.AddNewlyCreatedDBObject(gbNode, true);
+
+            // --- Ensure required subdictionaries exist
+            GetOrCreateNestedSubDictionary(tr, gbNode, KEY_EDGES_SUBDICT);
+            GetOrCreateNestedSubDictionary(tr, gbNode, KEY_BEAMSTRAND_SUBDICT);
+
+            // --- Always create META dictionary and SECTION subdictionary
+            var metaDict = GetOrCreateNestedSubDictionary(tr, gbNode, KEY_METADATA_SUBDICT);
+            GetOrCreateNestedSubDictionary(tr, metaDict, KEY_META_SECTION_SUBDICT);
+
+            return gbNode;
         }
 
+        #endregion
+
+        #region GET OR CREATE functions
+        /// <summary>
+        /// Return the FD_GRADEBEAM subdictionary under root
+        /// </summary>
+        /// <param name="tr"></param>
+        /// <param name="db"></param>
+        /// <param name="forWrite"></param>
+        /// <returns></returns>        
+        internal static DBDictionary GetOrCreateGradeBeamRootDictionary(
+            Transaction tr,
+            Database db,
+            bool forWrite = false)
+        {
+            if (tr == null || db == null)
+                return null;
+
+            var rootDict = GetFoundationRootDictionary(tr, db);
+            if (rootDict == null)
+                return null;
+
+            // If we are allowed to create it, delegate to helper
+            if (forWrite)
+            {
+                return GetOrCreateNestedSubDictionary(
+                    tr,
+                    rootDict,
+                    NODCore.KEY_GRADEBEAM_SUBDICT);
+            }
+
+            // Otherwise only return if it exists
+            if (rootDict.Contains(NODCore.KEY_GRADEBEAM_SUBDICT))
+            {
+                return tr.GetObject(
+                    rootDict.GetAt(NODCore.KEY_GRADEBEAM_SUBDICT),
+                    OpenMode.ForRead) as DBDictionary;
+            }
+
+            return null;
+        }
+
+
+        /// <summary>
+        /// Return the FD_BOUNDARY subdictionary
+        /// </summary>
+        /// <param name="tr"></param>
+        /// <param name="db"></param>
+        /// <param name="forWrite"></param>
+        /// <returns></returns>        
+        internal static DBDictionary GetOrCreateBoundaryBeamRootDictionary(
+            Transaction tr,
+            Database db,
+            bool forWrite = false)
+        {
+            if (tr == null || db == null)
+                return null;
+
+            var rootDict = GetFoundationRootDictionary(tr, db);
+            if (rootDict == null)
+                return null;
+
+            // If we are allowed to create it, delegate to helper
+            if (forWrite)
+            {
+                return GetOrCreateNestedSubDictionary(
+                    tr,
+                    rootDict,
+                    NODCore.KEY_BOUNDARY_SUBDICT);
+            }
+
+            // Otherwise only return if it exists
+            if (rootDict.Contains(NODCore.KEY_BOUNDARY_SUBDICT))
+            {
+                return tr.GetObject(
+                    rootDict.GetAt(NODCore.KEY_BOUNDARY_SUBDICT),
+                    OpenMode.ForRead) as DBDictionary;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Get or create a grade beam node under FD_BOUNDARY (single entry)
+        /// </summary>
+        internal static DBDictionary GetOrCreateBoundaryGradeBeamNode(Transaction tr, Database db, string handle)
+        {
+            if (string.IsNullOrWhiteSpace(handle))
+                throw new ArgumentException("Handle is required", nameof(handle));
+
+            var root = GetOrCreateBoundaryBeamRootDictionary(tr, db, forWrite: true);
+            return CreateGradeBeamNode_Internal(tr, root, handle);
+        }
+
+        /// <summary>
+        /// Get or create a grade beam node under FD_GRADEBEAMS (multiple entries)
+        /// </summary>
+        internal static DBDictionary GetOrCreateGradeBeamNode(Transaction tr, Database db, string handle)
+        {
+            if (string.IsNullOrWhiteSpace(handle))
+                throw new ArgumentException("Handle is required", nameof(handle));
+
+            var root = GetOrCreateGradeBeamRootDictionary(tr, db, forWrite: true);
+            return CreateGradeBeamNode_Internal(tr, root, handle);
+        }
+
+        /// <summary>
+        /// Creates (or gets if it already exists) a grade beam node by handle within the specified parent dictionary.
+        /// Ensures the required subdictionaries (edges and strands) are present.
+        /// </summary>
+        internal static DBDictionary CreateGradeBeamNode_Internal(
+            Transaction tr,
+            DBDictionary parentDict,
+            string centerlineHandle)
+        {
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+            if (parentDict == null) throw new ArgumentNullException(nameof(parentDict));
+            if (string.IsNullOrWhiteSpace(centerlineHandle)) throw new ArgumentNullException(nameof(centerlineHandle));
+
+            // --- Check if the node already exists
+            DBDictionary gbNode = null;
+            if (TryGetNestedSubDictionary(tr, parentDict, out gbNode, centerlineHandle))
+            {
+                return gbNode;
+            }
+
+            // --- Upgrade parent for writing
+            parentDict.UpgradeOpen();
+
+            // --- Create the new grade beam node
+            gbNode = new DBDictionary();
+            parentDict.SetAt(centerlineHandle, gbNode);
+            tr.AddNewlyCreatedDBObject(gbNode, true);
+
+            // --- Ensure required subdictionaries exist
+            GetOrCreateNestedSubDictionary(tr, gbNode, NODCore.KEY_EDGES_SUBDICT);
+            GetOrCreateNestedSubDictionary(tr, gbNode, NODCore.KEY_BEAMSTRAND_SUBDICT);
+
+            return gbNode;
+        }
+        #endregion
+
+
+        #region TRY GET functions
+        /// <summary>
+        /// Gets the EE_FOUNDATION root subdictionary
+        /// </summary>
+        /// <param name="tr"></param>
+        /// <param name="db"></param>
+        /// <returns></returns>
         internal static DBDictionary GetFoundationRootDictionary(
         Transaction tr,
         Database db)
@@ -417,6 +332,189 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 OpenMode.ForRead) as DBDictionary;
         }
 
+        /// <summary>
+        /// Tries to get the FD_BOUNDARY root dictionary under ROOT.
+        /// </summary>
+        internal static bool TryGetBoundaryBeamRoot(Transaction tr, Database db, out DBDictionary result)
+        {
+            result = null;
+
+            if (tr == null || db == null)
+                return false;
+
+            var rootDict = GetFoundationRootDictionary(tr, db);
+            if (rootDict == null)
+                return false;
+
+            return TryGetNestedSubDictionary(tr, rootDict, out result, KEY_BOUNDARY_SUBDICT);
+        }
+
+        /// <summary>
+        /// Try to get a grade beam node under FD_BOUNDARY by centerline handle
+        /// </summary>
+        internal static bool TryGetBoundaryBeamNode(Transaction tr, Database db, out DBDictionary result)
+        {
+            result = null;
+
+            // --- Validate inputs
+            if (tr == null || db == null)
+                return false;
+
+            // --- Get the FD_BOUNDARY root dictionary
+            if (!TryGetBoundaryBeamRoot(tr, db, out var boundaryRoot))
+                return false;
+
+            if (boundaryRoot == null || boundaryRoot.Count == 0)
+                return false;
+
+            // --- Get the first (and only) grade beam subdictionary safely
+            foreach (DictionaryEntry entry in boundaryRoot)
+            {
+                if (entry.Value is ObjectId dictId && dictId.IsValid && !dictId.IsErased)
+                {
+                    try
+                    {
+                        var subDict = tr.GetObject(dictId, OpenMode.ForRead) as DBDictionary;
+                        if (subDict != null)
+                        {
+                            result = subDict;
+                            return true;
+                        }
+                    }
+                    catch
+                    {
+                        // Ignore invalid objects and continue
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Try to get FD_GRADEBEAMS root dictionary under ROOT
+        /// </summary>
+        internal static bool TryGetGradeBeamsRoot(Transaction tr, Database db, out DBDictionary result)
+        {
+            result = null;
+            var root = GetFoundationRootDictionary(tr, db);
+            if (root == null || !root.Contains(KEY_GRADEBEAM_SUBDICT))
+                return false;
+
+            result = tr.GetObject(root.GetAt(KEY_GRADEBEAM_SUBDICT), OpenMode.ForRead) as DBDictionary;
+            return result != null;
+        }
+
+        /// <summary>
+        /// Try to get a grade beam node under FD_GRADEBEAMS by centerline handle
+        /// </summary>
+        internal static bool TryGetGradeBeamNode(Transaction tr, Database db, string handle, out DBDictionary result)
+        {
+            result = null;
+            if (!TryGetGradeBeamsRoot(tr, db, out var gradeBeamsRoot))
+                return false;
+
+            return TryGetNestedSubDictionary(tr, gradeBeamsRoot, out result, handle);
+        }
+
+        /// <summary>
+        /// Tries to get the edges subdictionary under a grade beam node.
+        /// </summary>
+        /// <param name="tr">Open transaction.</param>
+        /// <param name="gradeBeamNode">The grade beam node dictionary.</param>
+        /// <param name="edgesDict">Outputs the edges dictionary if found.</param>
+        /// <returns>True if edges dictionary exists, false otherwise.</returns>
+        internal static bool TryGetBeamEdges(Transaction tr, DBDictionary gradeBeamNode, out DBDictionary edgesDict)
+        {
+            edgesDict = null;
+            if (tr == null || gradeBeamNode == null)
+                return false;
+
+            return TryGetNestedSubDictionary(tr, gradeBeamNode, out edgesDict, NODCore.KEY_EDGES_SUBDICT);
+        }
+
+        /// <summary>
+        /// Tries to get the META subdictionary under a grade beam node.
+        /// </summary>
+        /// <param name="tr">Open transaction.</param>
+        /// <param name="gradeBeamNode">The grade beam node dictionary.</param>
+        /// <param name="metaDict">Outputs the META dictionary if found.</param>
+        /// <returns>True if META dictionary exists, false otherwise.</returns>
+        internal static bool TryGetGradeBeamMeta(Transaction tr, DBDictionary gradeBeamNode, out DBDictionary metaDict)
+        {
+            metaDict = null;
+            if (tr == null || gradeBeamNode == null)
+                return false;
+
+            return TryGetNestedSubDictionary(tr, gradeBeamNode, out metaDict, NODCore.KEY_METADATA_SUBDICT);
+        }
+
+        /// <summary>
+        /// Tries to get the SECTION subdictionary under the META dictionary of a grade beam node.
+        /// </summary>
+        /// <param name="tr">Open transaction.</param>
+        /// <param name="gradeBeamNode">The grade beam node dictionary.</param>
+        /// <param name="sectionDict">Outputs the SECTION dictionary if found.</param>
+        /// <returns>True if SECTION dictionary exists, false otherwise.</returns>
+        internal static bool TryGetGradeBeamSection(
+            Transaction tr,
+            DBDictionary gradeBeamNode,
+            out DBDictionary sectionDict)
+        {
+            sectionDict = null;
+
+            if (tr == null || gradeBeamNode == null)
+                return false;
+
+            // Try to get the META dictionary under the grade beam node
+            if (!TryGetGradeBeamMeta(tr, gradeBeamNode, out var metaDict))
+                return false;
+
+            // Try to get the SECTION dictionary under META
+            return TryGetNestedSubDictionary(tr, metaDict, out sectionDict, NODCore.KEY_META_SECTION_SUBDICT);
+        }
+
+        internal static bool TryGetObjectIdFromHandleString(
+            Transaction tr,
+            Database db,
+            string handleStr,
+            out ObjectId result)
+        {
+            result = ObjectId.Null;
+
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+            if (db == null) throw new ArgumentNullException(nameof(db));
+            if (string.IsNullOrWhiteSpace(handleStr))
+                return false;
+
+            try
+            {
+                // --- Convert hex string back to Handle
+                long handleValue = Convert.ToInt64(handleStr, 16); // <-- use Int64
+                Handle handle = new Handle(handleValue);
+
+                // --- Get ObjectId from handle
+                ObjectId id = db.GetObjectId(false, handle, 0);
+                if (id.IsNull || id.IsErased)
+                    return false;
+
+                // --- Open object to ensure it exists
+                var obj = tr.GetObject(id, OpenMode.ForRead, false);
+                if (obj == null || obj.IsErased)
+                    return false;
+
+                result = id;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        #endregion
+
+        #region PRIMARY UTILITY FUNCTIONS
         /// <summary>
         /// Ensures a subdictionary exists under another subdictionary (nested).
         /// </summary>
@@ -436,36 +534,23 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             {
                 if (current.Contains(key))
                 {
-                    // --- Read existing object
-                    var objId = current.GetAt(key);
-                    var obj = tr.GetObject(objId, OpenMode.ForRead);
+                    var obj = tr.GetObject(current.GetAt(key), OpenMode.ForRead) as DBDictionary;
 
-                    if (obj is DBDictionary dict)
-                    {
-                        current = dict;
-                    }
-                    else
-                    {
-                        // --- Replace invalid object with dictionary
-                        current.UpgradeOpen();
-                        var newDict = new DBDictionary();
-                        current.SetAt(key, newDict);
-                        tr.AddNewlyCreatedDBObject(newDict, true);
+                    if (obj == null)
+                        throw new InvalidOperationException(
+                            $"Key '{key}' exists but is not a DBDictionary.");
 
-                        // Optionally erase old object if safe:
-                        obj.UpgradeOpen();
-                        obj.Erase();
-
-                        current = newDict;
-                    }
+                    current = obj;
                 }
                 else
                 {
-                    // --- Create new dictionary if key missing
-                    if (!current.IsWriteEnabled) current.UpgradeOpen();
+                    if (!current.IsWriteEnabled)
+                        current.UpgradeOpen();
+
                     var sub = new DBDictionary();
                     current.SetAt(key, sub);
                     tr.AddNewlyCreatedDBObject(sub, true);
+
                     current = sub;
                 }
             }
@@ -474,10 +559,10 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         }
 
         internal static bool TryGetNestedSubDictionary(
-    Transaction tr,
-    DBDictionary root,
-    out DBDictionary result,
-    params string[] keys)
+            Transaction tr,
+            DBDictionary root,
+            out DBDictionary result,
+            params string[] keys)
         {
             result = null;
 
@@ -486,14 +571,16 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
             DBDictionary current = root;
 
-            foreach (var key in keys)
+            foreach (string key in keys)
             {
                 if (!current.Contains(key))
                     return false;
 
-                current = (DBDictionary)tr.GetObject(
-                    current.GetAt(key),
-                    OpenMode.ForRead);
+                var obj = tr.GetObject(current.GetAt(key), OpenMode.ForRead) as DBDictionary;
+                if (obj == null)
+                    return false;
+
+                current = obj;
             }
 
             result = current;
@@ -501,407 +588,65 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         }
 
 
-
-        internal static DBDictionary GetOrCreateGradeBeamNode(
-            Transaction tr,
-            DBDictionary gradeBeamRoot,
-            string centerlineHandle)
-        {
-            var gbNode = GetOrCreateNestedSubDictionary(
-                tr, gradeBeamRoot, centerlineHandle);
-
-            var cl = GetOrCreateNestedSubDictionary(tr, gbNode, KEY_CENTERLINE);
-            var edges = GetOrCreateNestedSubDictionary(tr, gbNode, KEY_EDGES_SUBDICT);
-            var strands = GetOrCreateNestedSubDictionary(tr, gbNode, KEY_BEAMSTRAND_SUBDICT);
-
-            AddHandleToMetadataDictionary(tr, cl, centerlineHandle);
-
-            return gbNode;
-        }
-
-        internal static void AddHandleToMetadataDictionary(
-    Transaction tr,
-    DBDictionary dict,
-    string handle)
-        {
-            if (!dict.Contains(handle))
-            {
-                var xr = new Xrecord
-                {
-                    Data = new ResultBuffer(
-                        new TypedValue((int)DxfCode.Handle, handle))
-                };
-                dict.SetAt(handle, xr);
-                tr.AddNewlyCreatedDBObject(xr, true);
-            }
-        }
-
-
-        internal static Xrecord GetOrCreateMetadataXrecord(
-            Transaction tr,
-            DBDictionary parent,
-            string key)
-                {
-                    if (tr == null || parent == null || string.IsNullOrWhiteSpace(key))
-                        throw new ArgumentNullException();
-
-                    // Create if missing
-                    if (!parent.Contains(key))
-                    {
-                        Xrecord newRecord = new Xrecord();
-                        parent.SetAt(key, newRecord);
-                        tr.AddNewlyCreatedDBObject(newRecord, true);
-                        return newRecord;
-                    }
-
-                    ObjectId id = parent.GetAt(key);
-                    DBObject obj = tr.GetObject(id, OpenMode.ForWrite);
-
-                    // Correct type - return
-                    Xrecord existingRecord = obj as Xrecord;
-                    if (existingRecord != null)
-                        return existingRecord;
-
-                    // Wrong type - repair
-                    obj.Erase();
-
-                    Xrecord repairedRecord = new Xrecord();
-                    parent.SetAt(key, repairedRecord);
-                    tr.AddNewlyCreatedDBObject(repairedRecord, true);
-
-                    return repairedRecord;
-                }
-
-
-
-        #endregion
-
-
-
-        #region Cleanup and Mutation
-
-        public static void CleanupFoundationNod(
-    FoundationContext context,
-    IEnumerable<HandleEntry> scanResults)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-
-            var doc = context.Document;
-            var model = context.Model;
-            var db = doc.Database;
-
-            if (scanResults == null)
-                return;
-
-            using (doc.LockDocument()) // REQUIRED
-            {
-                using (Transaction tr = db.TransactionManager.StartTransaction())
-                {
-                    try
-                    {
-                        DBDictionary root = GetFoundationRootDictionary(tr, db);
-                        if (root == null)
-                            return;
-
-                        foreach (var group in scanResults
-                            .Where(r => r.Status != "Valid")
-                            .GroupBy(r => r.GroupName))
-                        {
-                            CleanupGroup(
-                                tr,
-                                root,
-                                group.Key,
-                                group.Select(r => r.HandleKey)
-                            );
-                        }
-
-                        tr.Commit();
-                    }
-                    catch (System.Exception ex)
-                    {
-                        doc.Editor.WriteMessage(
-                            $"\n[EE_FOUNDATION] Cleanup failed: {ex.Message}"
-                        );
-                    }
-                }
-            }
-        }
-
-        private static void CleanupGroup(
-            Transaction tr,
-            DBDictionary root,
-            string groupName,
-            IEnumerable<string> handleKeys)
-        {
-            if (!root.Contains(groupName))
-                return;
-
-            var subDict = tr.GetObject(
-                root.GetAt(groupName),
-                OpenMode.ForRead) as DBDictionary;
-
-            if (subDict == null)
-                return;
-
-            subDict.UpgradeOpen();
-
-            foreach (string handle in handleKeys)
-            {
-                if (subDict.Contains(handle))
-                {
-                    subDict.Remove(handle);
-                }
-            }
-        }
-
-        /// <summary>
-        /// Removes all entries from a subdictionary under EE_Foundation
-        /// without deleting the subdictionary itself.
-        /// </summary>
-        internal static bool ClearFoundationSubDictionaryInternal(
+        // --- Helper to recursively erase all entries in a dictionary
+        internal static void EraseDictionaryRecursive(
             Transaction tr,
             Database db,
-            string subDictName)
+            DBDictionary dict,
+            ref int edgesDeleted,
+            ref int beamsDeleted,
+            bool eraseEntities = true)
         {
-            if (tr == null) throw new ArgumentNullException(nameof(tr));
-            if (db == null) throw new ArgumentNullException(nameof(db));
-            if (string.IsNullOrWhiteSpace(subDictName))
-                throw new ArgumentException("Subdictionary name required.", nameof(subDictName));
+            if (tr == null || db == null || dict == null)
+                return;
 
-            // Normalize name
-            subDictName = subDictName.Trim().ToUpperInvariant();
+            var ids = new List<ObjectId>();
+            foreach (DictionaryEntry entry in dict)
+                if (entry.Value is ObjectId id && id.IsValid && !id.IsNull)
+                    ids.Add(id);
 
-            // Open the top-level NOD
-            var nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
-
-            // Get the EE_Foundation root dictionary
-            var root = NODCore.GetOrCreateNestedSubDictionary(tr, nod, NODCore.ROOT);
-            if (root == null)
-                return false;
-
-            // Get the requested subdictionary (no creation, just read/write if exists)
-            DBDictionary subDict;
-            try
+            foreach (var id in ids)
             {
-                subDict = (DBDictionary)tr.GetObject(root.GetAt(subDictName), OpenMode.ForWrite);
-            }
-            catch
-            {
-                // Subdictionary does not exist
-                return false;
-            }
+                if (id.IsErased)
+                    continue;
 
-            // Collect keys first (cannot modify while iterating)
-            var keys = EnumerateDictionary(subDict)
-                       .Select(e => e.Key)
-                       .ToList();
-
-            foreach (string key in keys)
-            {
-                try
-                {
-                    var obj = tr.GetObject(subDict.GetAt(key), OpenMode.ForWrite);
-                    obj.Erase();
-                }
-                catch { }
-            }
-
-            return true;
-        }
-
-
-        #endregion
-
-        #region Entity Deletion
-
-        /// <summary>
-        /// Deletes a subdictionary and all its children (subdictionaries, XRecords, and Entities)
-        /// under the specified parent dictionary.
-        /// Returns true if the subdictionary existed and was deleted.
-        /// </summary>
-        internal static bool DeleteNODSubDictionary(
-            FoundationContext context,
-            Transaction tr,
-            DBDictionary parentDict,
-            string key)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-            if (tr == null) throw new ArgumentNullException(nameof(tr));
-            if (parentDict == null) throw new ArgumentNullException(nameof(parentDict));
-            if (string.IsNullOrWhiteSpace(key)) throw new ArgumentException("Key required.", nameof(key));
-
-            if (!parentDict.Contains(key))
-                return false;
-
-            var obj = tr.GetObject(parentDict.GetAt(key), OpenMode.ForWrite);
-
-            // If it’s a dictionary, erase all children recursively
-            if (obj is DBDictionary dict)
-            {
-                foreach (var (childKey, childId) in EnumerateDictionary(dict))
-                {
-                    try
-                    {
-                        var childObj = tr.GetObject(childId, OpenMode.ForWrite);
-                        if (childObj is DBDictionary subDict)
-                        {
-                            // recurse
-                            DeleteNODSubDictionary(context, tr, dict, childKey);
-                        }
-                        childObj.Erase();
-                    }
-                    catch
-                    {
-                        // ignore individual errors
-                    }
-                }
-            }
-
-            // Finally, erase the subdictionary or object itself
-            obj.Erase();
-            return true;
-        }
-
-        #endregion
-
-        #region High-Level Operations
-        public static List<HandleEntry> IterateFoundationNod(FoundationContext context, bool cleanStale = false)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-
-            // PASS 1 Read-only scan
-            var results = NODScanner.ScanFoundationNod(context);
-
-            // PASS 2 Cleanup if requested
-            if (cleanStale && results.Count > 0)
-            {
-                CleanupFoundationNod(context, results);
-
-                // Rescan so results reflect cleaned NOD
-                results = NODScanner.ScanFoundationNod(context);
-            }
-
-            return results;
-        }
-
-        public static void CleanFoundationNOD(FoundationContext context)
-        {
-            if (context == null) throw new ArgumentNullException(nameof(context));
-
-            // Iterate with cleanup enabled - no need to call Cleanup again manually
-            IterateFoundationNod(context, cleanStale: true);
-        }
-
-
-        #endregion
-
-        #region Serialization
-
-        /// <summary>
-        /// Recursively exports a DBDictionary, serializing Entities, XRecords, and subdictionaries.
-        /// </summary>
-        internal static Dictionary<string, object> ToDictionaryRepresentation(DBDictionary dict, Transaction tr)
-        {
-            var result = new Dictionary<string, object>();
-
-            foreach (DBDictionaryEntry entry in dict)
-            {
-                DBObject obj;
-                try
-                {
-                    obj = tr.GetObject(entry.Value, OpenMode.ForRead);
-                }
-                catch
-                {
-                    continue; // skip unreadable objects
-                }
+                var obj = tr.GetObject(id, OpenMode.ForWrite, false);
 
                 if (obj is DBDictionary subDict)
                 {
-                    // Always mark type as "Dictionary" for nested dictionaries
-                    result[entry.Key] = new Dictionary<string, object>
-            {
-                { "Type", "Dictionary" },
-                { "Children", ToDictionaryRepresentation(subDict, tr) } // recurse
-            };
+                    EraseDictionaryRecursive(tr, db, subDict, ref edgesDeleted, ref beamsDeleted, eraseEntities);
+                    subDict.Erase();
                 }
-                else if (obj is Xrecord xr)
+                else if (obj is Xrecord xrec)
                 {
-                    var dataList = new List<string>();
-                    if (xr.Data != null)
+                    if (xrec.Data != null)
                     {
-                        foreach (TypedValue tv in xr.Data)
-                            dataList.Add(tv.Value?.ToString());
-                    }
+                        foreach (TypedValue tv in xrec.Data)
+                        {
+                            if (!eraseEntities) continue; // <-- skip entities if false
 
-                    result[entry.Key] = new Dictionary<string, object>
-            {
-                { "Type", "XRecord" },
-                { "Data", dataList }
-            };
-                }
-                else if (obj is Entity ent)
-                {
-                    result[entry.Key] = new Dictionary<string, object>
-            {
-                { "Type", "Entity" },
-                { "Handle", ent.Handle.ToString() }
-            };
-                }
-                else
-                {
-                    // fallback for unexpected object types
-                    result[entry.Key] = new Dictionary<string, object>
-            {
-                { "Type", obj != null ? obj.GetType().Name : "Unknown" }
-            };
-                }
-            }
-
-            return result;
-        }
-
-
-
-        /// <summary>
-        /// Recursively checks if a key or handle exists anywhere inside a dictionary or its children.
-        /// </summary>
-        internal static bool IsKeyOrHandleInDictionary(Transaction tr, DBDictionary dict, string keyOrHandle)
-        {
-            foreach (var (key, id) in NODCore.EnumerateDictionary(dict))
-            {
-                if (string.Equals(key, keyOrHandle, StringComparison.OrdinalIgnoreCase))
-                    return true;
-
-                try
-                {
-                    var obj = tr.GetObject(id, OpenMode.ForRead);
-                    switch (obj)
-                    {
-                        case DBDictionary subDict:
-                            if (IsKeyOrHandleInDictionary(tr, subDict, keyOrHandle)) return true;
-                            break;
-                        case Xrecord xrec:
-                            if (xrec.Data != null)
+                            if (tv.TypeCode == (int)DxfCode.Text && tv.Value is string handleStr)
                             {
-                                foreach (TypedValue tv in xrec.Data)
+                                try
                                 {
-                                    if (tv.TypeCode == (int)DxfCode.Text &&
-                                        string.Equals(tv.Value as string, keyOrHandle, StringComparison.OrdinalIgnoreCase))
+                                    var handle = new Handle(Convert.ToInt64(handleStr, 16));
+                                    ObjectId entId = db.GetObjectId(false, handle, 0);
+
+                                    if (entId.IsValid && !entId.IsErased)
                                     {
-                                        return true;
+                                        (tr.GetObject(entId, OpenMode.ForWrite) as Entity)?.Erase();
+                                        edgesDeleted++;
                                     }
                                 }
+                                catch { }
                             }
-                            break;
+                        }
                     }
+
+                    xrec.Erase();
                 }
-                catch { }
             }
-
-            return false;
         }
-
 
         #endregion
 
@@ -942,6 +687,37 @@ double value)
                 .AsArray()
                 .FirstOrDefault(tv => tv.TypeCode == (int)DxfCode.Real)
                 .Value as double?;
+        }
+
+        /// <summary>
+        /// Counts the number of grade beam nodes under FD_GRADEBEAM in the current document.
+        /// </summary>
+        /// <param name="tr">Open transaction</param>
+        /// <param name="db">Database</param>
+        /// <returns>Number of grade beam subdictionaries</returns>
+        public static int CountGradeBeams(Transaction tr, Database db)
+        {
+            if (tr == null) throw new ArgumentNullException(nameof(tr));
+            if (db == null) throw new ArgumentNullException(nameof(db));
+
+            // Try to get the FD_GRADEBEAM root dictionary
+            DBDictionary gradeBeamRoot = GetOrCreateGradeBeamRootDictionary(tr, db, forWrite: false);
+            if (gradeBeamRoot == null || gradeBeamRoot.Count == 0)
+                return 0;
+
+            int count = 0;
+
+            foreach (DictionaryEntry entry in gradeBeamRoot)
+            {
+                if (entry.Value is ObjectId id && id.IsValid && !id.IsErased)
+                {
+                    var subDict = tr.GetObject(id, OpenMode.ForRead) as DBDictionary;
+                    if (subDict != null)
+                        count++;
+                }
+            }
+
+            return count;
         }
     }
 }

@@ -11,17 +11,22 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         public static void ClearFoundationNOD(FoundationContext context)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
+
             Document doc = context.Document;
+            if (doc == null) return;
+
             Database db = doc.Database;
             Editor ed = doc.Editor;
 
-            // Prompt user for confirmation
+            // --- Confirm deletion with user ---
             PromptKeywordOptions pko = new PromptKeywordOptions(
-                "\nWARNING: This will completely clear the EE_Foundation NOD. Are you sure?");
+                "\nWARNING: This will completely clear the EE_Foundation NOD. Are you sure?")
+            {
+                AllowNone = false,
+                Message = "\nConfirm deletion (Yes/No): "
+            };
             pko.Keywords.Add("Yes");
             pko.Keywords.Add("No");
-            pko.AllowNone = false;
-            pko.Message = "\nConfirm deletion (Yes/No): ";
 
             var res = ed.GetKeywords(pko);
             if (res.Status != PromptStatus.OK || res.StringResult != "Yes")
@@ -35,30 +40,50 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             {
                 try
                 {
-                    // Access the Named Objects Dictionary
-                    DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+                    // --- Get the EE_Foundation root dictionary
+                    DBDictionary root = NODCore.GetFoundationRootDictionary(tr, db);
 
-                    // If ROOT exists, erase it
-                    if (nod.Contains(NODCore.ROOT))
+                    if (root != null)
                     {
-                        var rootId = nod.GetAt(NODCore.ROOT);
-                        var rootObj = tr.GetObject(rootId, OpenMode.ForWrite);
-                        rootObj.Erase();
+                        int edgesDeleted = 0;
+                        int beamsDeleted = 0;
+
+                        foreach (string subKey in NODCore.KNOWN_ROOT_SUBDIRS)
+                        {
+                            DBDictionary subDict;
+                            if (NODCore.TryGetNestedSubDictionary(tr, root, out subDict, subKey))
+                            {
+                                // Recursively erase contents
+                                NODCore.EraseDictionaryRecursive(tr, db, subDict, ref edgesDeleted, ref beamsDeleted, eraseEntities: true);
+
+                                // Upgrade subDict before erasing
+                                if (!subDict.IsErased)
+                                {
+                                    if (!subDict.IsWriteEnabled)
+                                        subDict.UpgradeOpen();
+
+                                    subDict.Erase();
+                                }
+
+                                // Upgrade root before removing key
+                                if (!root.IsWriteEnabled)
+                                    root.UpgradeOpen();
+
+                                if (root.Contains(subKey))
+                                    root.Remove(subKey);
+                            }
+                        }
+
+                        ed.WriteMessage($"\nCleared {edgesDeleted} edge entities and {beamsDeleted} beam nodes.");
                     }
 
-                    // --- Immediately recreate an empty ROOT dictionary ---
-                    var newRoot = new DBDictionary();
-                    nod.SetAt(NODCore.ROOT, newRoot);
-                    tr.AddNewlyCreatedDBObject(newRoot, true);
-
-                    // Optional: recreate empty subdictionaries for boundary and grade beam
-                    NODCore.GetOrCreateNestedSubDictionary(tr, newRoot, NODCore.KEY_BOUNDARY_SUBDICT);
-                    NODCore.GetOrCreateNestedSubDictionary(tr, newRoot, NODCore.KEY_GRADEBEAM_SUBDICT);
+                    // --- Recreate empty ROOT structure and known subdicts ---
+                    NODCore.InitFoundationNOD(context, tr);
 
                     tr.Commit();
                     ed.WriteMessage("\nEE_Foundation NOD has been cleared and reset.");
                 }
-                catch (Exception ex)
+                catch (System.Exception ex)
                 {
                     ed.WriteMessage($"\nError clearing NOD: {ex.Message}");
                 }

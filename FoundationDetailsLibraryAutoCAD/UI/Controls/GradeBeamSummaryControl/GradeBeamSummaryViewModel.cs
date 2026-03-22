@@ -6,33 +6,10 @@ namespace FoundationDetailsLibraryAutoCAD.UI.Controls.GradeBeamSummaryControl
     public class GradeBeamSummaryViewModel : INotifyPropertyChanged
     {
         private int _quantity;
+        public int Quantity { get => _quantity; set { _quantity = value; OnPropertyChanged(); } }
+
         private double _totalLength;
-
-        public int Quantity
-        {
-            get => _quantity;
-            set
-            {
-                if (_quantity != value)
-                {
-                    _quantity = value;
-                    OnPropertyChanged();
-                }
-            }
-        }
-
-        public double TotalLength
-        {
-            get => _totalLength;
-            set
-            {
-                if (_totalLength != value)
-                {
-                    _totalLength = value;
-                    OnPropertyChanged();
-                }
-            }
-        }
+        public double TotalLength { get => _totalLength; set { _totalLength = value; OnPropertyChanged(); } }
 
         public event PropertyChangedEventHandler PropertyChanged;
         protected void OnPropertyChanged([CallerMemberName] string propName = null)
