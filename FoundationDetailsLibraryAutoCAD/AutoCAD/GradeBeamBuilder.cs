@@ -41,33 +41,33 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         // Internal helper that assumes transaction is open
         private static void CreateGradeBeamsInternal(FoundationContext context, Transaction tr)
         {
+            if (context?.Document == null || tr == null) return;
+
             var db = context.Document.Database;
             var doc = context.Document;
+
             var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
             var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
-            // --- Enumerate all beams
+            // --- Enumerate all grade beams
             var beams = GradeBeamNOD.EnumerateGradeBeams(context, tr).ToList();
-            if (beams.Count == 0) return;
+            if (!beams.Any()) return;
 
             // --- Delete all existing edges
             foreach (var (_, gbDict) in beams)
                 GradeBeamNOD.DeleteBeamEdgesOnly(context, tr, gbDict);
 
-            // --- Build beam-specific width dictionary
-            var beamWidths = new Dictionary<string, double>();
-            foreach (var (handle, gbDict) in beams)
-            {
-                var (w, d) = GradeBeamNOD.GetBeamSection(tr, gbDict);
-                double widthToUse = w;
-                beamWidths[handle] = widthToUse;
-            }
+            // --- Cache beam widths
+            var beamWidths = beams.ToDictionary(
+                b => b.Handle,
+                b => GradeBeamNOD.GetBeamSection(tr, b.Dict).Width
+            );
 
             // --- Build footprints
             var footprints = new Dictionary<ObjectId, Polyline>();
             foreach (var (handle, gbDict) in beams)
             {
-                if (!GradeBeamNOD.TryGetGradeBeamCenterline(context, tr, gbDict, out ObjectId clId))
+                if (!NODCore.TryGetObjectIdFromHandleString(tr, db, handle, out var clId))
                     continue;
 
                 var cl = tr.GetObject(clId, OpenMode.ForRead) as Polyline;
@@ -76,35 +76,35 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                 footprints[clId] = BuildFootprint(cl, beamWidths[handle]);
             }
 
-            // --- Generate and explode edges
+            // --- Generate left/right edge polylines
             var allEdges = new List<BeamEdgeSegment>();
             foreach (var (handle, gbDict) in beams)
             {
-                if (!GradeBeamNOD.TryGetGradeBeamCenterline(context, tr, gbDict, out ObjectId clId))
+                if (!NODCore.TryGetObjectIdFromHandleString(tr, db, handle, out var clId))
                     continue;
 
                 var cl = tr.GetObject(clId, OpenMode.ForRead) as Polyline;
                 if (cl == null) continue;
 
-                double widthToUse = beamWidths[handle];
+                double width = beamWidths[handle];
 
-                var left = OffsetPolyline(cl, +widthToUse);
-                var right = OffsetPolyline(cl, -widthToUse);
+                var leftOffset = OffsetPolyline(cl, +width);
+                var rightOffset = OffsetPolyline(cl, -width);
 
-                allEdges.AddRange(ExplodeEdges(clId, left, true));
-                allEdges.AddRange(ExplodeEdges(clId, right, false));
+                allEdges.AddRange(ExplodeEdges(clId, leftOffset, true));
+                allEdges.AddRange(ExplodeEdges(clId, rightOffset, false));
             }
 
-            // --- Trim edges using footprint algorithm
+            // --- Trim edges using footprints
             var trimmedEdges = TrimAllEdges(allEdges, footprints);
 
-            // --- Store edges in NOD and draw
+            // --- Store edges and draw in modelspace
             foreach (var group in trimmedEdges.GroupBy(e => e.BeamId))
             {
-                var leftSegs = group.Where(g => g.IsLeft).ToList();
-                var rightSegs = group.Where(g => !g.IsLeft).ToList();
+                var leftSegs = group.Where(e => e.IsLeft).ToList();
+                var rightSegs = group.Where(e => !e.IsLeft).ToList();
 
-                var leftIds = leftSegs.Select(seg =>
+                ObjectId[] leftIds = leftSegs.Select(seg =>
                 {
                     var ln = new Line(seg.Segment.StartPoint, seg.Segment.EndPoint) { ColorIndex = 1 };
                     ms.AppendEntity(ln);
@@ -112,7 +112,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                     return ln.ObjectId;
                 }).ToArray();
 
-                var rightIds = rightSegs.Select(seg =>
+                ObjectId[] rightIds = rightSegs.Select(seg =>
                 {
                     var ln = new Line(seg.Segment.StartPoint, seg.Segment.EndPoint) { ColorIndex = 5 };
                     ms.AppendEntity(ln);
@@ -120,11 +120,15 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
                     return ln.ObjectId;
                 }).ToArray();
 
-                GradeBeamNOD.StoreEdgeObjects(context, tr, group.Key, leftIds, rightIds);
+                string handle = group.Key.Handle.ToString();
+
+                GradeBeamNOD.StoreEdgeObjects(context, tr, db, handle, leftIds, rightIds);
             }
 
             doc.Editor.Regen();
         }
+
+
 
         // Beam edge segment data structure
         class BeamEdgeSegment
@@ -330,154 +334,5 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 
             return (crossings % 2) == 1; // odd = inside, even = outside
         }
-
-        private static List<Point3d> GetIntersectionPoints(Polyline a, Polyline b)
-        {
-            var pts = new List<Point3d>();
-
-            for (int i = 0; i < a.NumberOfVertices - 1; i++)
-                using (var la = new Line(a.GetPoint3dAt(i), a.GetPoint3dAt(i + 1)))
-                {
-                    for (int j = 0; j < b.NumberOfVertices - 1; j++)
-                        using (var lb = new Line(b.GetPoint3dAt(j), b.GetPoint3dAt(j + 1)))
-                        {
-                            var col = new Point3dCollection();
-                            la.IntersectWith(lb, Intersect.OnBothOperands, col, IntPtr.Zero, IntPtr.Zero);
-                            foreach (Point3d p in col) pts.Add(p);
-                        }
-                }
-
-            return pts;
-        }
-
-        private static List<Polyline> SplitPolylineAtPoints(
-    Polyline edge,
-    List<Point3d> splitPts,
-    BlockTableRecord btr,
-    Transaction tr)
-        {
-            var pts = new List<Point3d> { edge.StartPoint };
-            for (int i = 1; i < edge.NumberOfVertices; i++)
-                pts.Add(edge.GetPoint3dAt(i));
-
-            pts.AddRange(splitPts);
-
-            pts = pts
-                .Distinct(new Point3dEqualityComparer(new Tolerance(1e-6, 1e-6)))
-                .OrderBy(p => p.DistanceTo(edge.StartPoint))
-                .ToList();
-
-            var segs = new List<Polyline>();
-
-            for (int i = 0; i < pts.Count - 1; i++)
-            {
-                if (pts[i].DistanceTo(pts[i + 1]) < 1e-6) continue;
-
-                var pl = new Polyline();
-                pl.AddVertexAt(0, new Point2d(pts[i].X, pts[i].Y), 0, 0, 0);
-                pl.AddVertexAt(1, new Point2d(pts[i + 1].X, pts[i + 1].Y), 0, 0, 0);
-
-                btr.AppendEntity(pl);
-                tr.AddNewlyCreatedDBObject(pl, true);
-                segs.Add(pl);
-            }
-
-            return segs;
-        }
-
-
-        #region --- Step 1 ---
-
-        #endregion
-
-        #region --- Step 2 Create Offset Edges ---
-
-        private static Polyline ManualOffset(Polyline pl, double offsetDistance, bool toLeft)
-        {
-            if (pl == null || pl.NumberOfVertices < 2)
-                return null;
-
-            var offsetPts = new List<Point2d>();
-
-            for (int i = 0; i < pl.NumberOfVertices; i++)
-            {
-                Point3d pt = pl.GetPoint3dAt(i);
-
-                // Compute tangent direction for this vertex
-                Vector2d tangent;
-                if (i == 0)
-                {
-                    var vec = pl.GetPoint3dAt(1) - pt;
-                    tangent = new Vector2d(vec.X, vec.Y);
-                }
-                else if (i == pl.NumberOfVertices - 1)
-                {
-                    var vec = pt - pl.GetPoint3dAt(i - 1);
-                    tangent = new Vector2d(vec.X, vec.Y);
-                }
-                else
-                {
-                    var vPrev3d = pt - pl.GetPoint3dAt(i - 1);
-                    var vNext3d = pl.GetPoint3dAt(i + 1) - pt;
-                    var vPrev = new Vector2d(vPrev3d.X, vPrev3d.Y);
-                    var vNext = new Vector2d(vNext3d.X, vNext3d.Y);
-                    tangent = (vPrev + vNext).GetNormal(); // average direction
-                }
-
-                // Perpendicular vector
-                Vector2d perp = tangent.GetPerpendicularVector().GetNormal() * offsetDistance;
-                if (!toLeft)
-                    perp = -perp;
-
-                offsetPts.Add(new Point2d(pt.X + perp.X, pt.Y + perp.Y));
-            }
-
-            // Build new polyline
-            Polyline offsetPl = new Polyline();
-            for (int i = 0; i < offsetPts.Count; i++)
-                offsetPl.AddVertexAt(i, offsetPts[i], 0, 0, 0);
-
-            return offsetPl;
-        }
-
-        #endregion
-
-        #region --- Step 3 Trime gradebeam edges at intersections---
-
-
-        /// <summary>
-        /// Equality comparer for Point3d with tolerance.
-        /// </summary>
-        private class Point3dEqualityComparer : IEqualityComparer<Point3d>
-        {
-            private readonly Tolerance _tol;
-            public Point3dEqualityComparer(Tolerance tol) => _tol = tol;
-
-            public bool Equals(Point3d a, Point3d b) =>
-                a.IsEqualTo(b, _tol);
-
-            public int GetHashCode(Point3d obj) =>
-                obj.X.GetHashCode() ^ obj.Y.GetHashCode() ^ obj.Z.GetHashCode();
-        }
-
-
-
-
-
-
-        #endregion
-
-        #region --- Step 4 Join edge segments if they are on the same polyline---
-
-
-        #endregion
-
-        #region --- Step 5 ---
-
-        #endregion
-
-        #region --- Step 6 ---
-
-        #endregion
     }
 }
