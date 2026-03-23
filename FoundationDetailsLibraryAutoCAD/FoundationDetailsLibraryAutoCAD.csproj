@@ -74,7 +74,6 @@
     <Compile Include="AutoCAD\NOD\NODIssueValidator.cs" />
     <Compile Include="AutoCAD\NOD\NODObjectWrapper.cs" />
     <Compile Include="AutoCAD\NOD\NODScanner.cs" />
-    <Compile Include="AutoCAD\NOD\NODTraversal.cs" />
     <Compile Include="AutoCAD\NOD\NODViewer.cs" />
     <Compile Include="Services\SelectionService.cs" />
     <Compile Include="AutoCAD\Testing\FoundationTestTools.cs" />
