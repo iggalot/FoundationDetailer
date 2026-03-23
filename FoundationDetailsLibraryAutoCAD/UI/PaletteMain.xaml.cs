@@ -2,7 +2,6 @@ using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
-using Autodesk.AutoCAD.GraphicsSystem;
 using FoundationDetailer.AutoCAD;
 using FoundationDetailer.Managers;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
@@ -10,8 +9,8 @@ using FoundationDetailsLibraryAutoCAD.AutoCAD.NOD;
 using FoundationDetailsLibraryAutoCAD.Data;
 using FoundationDetailsLibraryAutoCAD.Managers;
 using FoundationDetailsLibraryAutoCAD.Services;
+using FoundationDetailsLibraryAutoCAD.UI.Controls.BeamControls;
 using FoundationDetailsLibraryAutoCAD.UI.Controls.EqualSpacingGBControl;
-using FoundationDetailsLibraryAutoCAD.UI.Controls.GradeBeamSummaryControl;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -209,6 +208,27 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 // ------------------------------------------------
                 string handle = pl.Handle.ToString();
                 var node = NODCore.GetOrCreateBoundaryGradeBeamNode(tr, db, handle);
+
+                double width, depth;
+                bool dims_are_valid = true;
+                if(!Double.TryParse(boundaryBeamDimensionControl.WidthText.Text, out width))
+                {
+                    CurrentContext.Document.Editor.WriteMessage("Invalid width dimension received from Beam Dimension control");
+                    dims_are_valid = false;
+                }
+
+                if (!Double.TryParse(boundaryBeamDimensionControl.WidthText.Text, out depth))
+                {
+                    CurrentContext.Document.Editor.WriteMessage("Invalid width dimension received from Beam Dimension control");
+                    dims_are_valid = false;
+                }
+
+                if(dims_are_valid)
+                {
+                    //_boundaryService.SetBoundaryBeamDimensions(context, width, depth);
+                    _boundaryService.SetBoundaryBeamDimensions(context, 40, 40);
+
+                }
 
                 tr.Commit();
             }
@@ -751,6 +771,14 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                         TxtBoundaryStatus.Text = "Boundary valid - " + pl.Handle.ToString();
                         TxtBoundaryVertices.Text = (pl.NumberOfVertices - 1).ToString();
 
+                        // show dims
+                        var (width, depth) = _boundaryService.GetBoundaryBeamDimensions(CurrentContext);
+                        boundaryBeamDimensionControl.Content = new BeamDimensionControl(width, depth);
+
+                        boundaryBeamDimensionControl.WidthText.Text = width.ToString();
+                        boundaryBeamDimensionControl.DepthText.Text = depth.ToString();
+
+                        // show calcs
                         double perimeter = 0;
 
                         for (int i = 0; i < pl.NumberOfVertices; i++)
@@ -766,9 +794,9 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
                         break;
                     }
-                }
 
-                tr.Commit();
+                    tr.Commit();
+                }
             }
 
             if (!isValid)
@@ -833,10 +861,8 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
             Dispatcher.BeginInvoke(new Action(UpdateTreeViewUI));  // updates the tree view in UI
 
-            //UpdateAll();
-            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
-            //UpdateBoundaryDisplay();  // update the boundary disoplay in UI
-
+            Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));  // update the boundary disoplay, beams dims, calculations in UI
+            
             Dispatcher.BeginInvoke(new Action(UpdateTables));   // updates the drawing calculation tables
 
         }
@@ -1068,5 +1094,44 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         {
 
         }
+
+        //private void LoadSelectedBoundaryBeam(ObjectId selectedId)
+        //{
+        //    var _context = CurrentContext;
+
+        //    if (_context == null) return;
+
+        //    if (!BoundaryNOD.TryResolveOwningBoundaryBeam(_context, _tr, selectedId,
+        //        out var handle, out bool isCenterline, out bool isEdge))
+        //        return;
+
+        //    if (!NODCore.TryGetBoundaryBeamNode(_tr, _context.Document.Database, handle, out var boundaryBeamDict))
+        //        return;
+
+        //    // Load dimensions into control
+        //    var (width, depth) = BoundaryNOD.GetBeamSection(_tr, boundaryBeamDict);
+        //    boundaryBeamDimensionControl.WidthText.Text = width.ToString();
+        //    boundaryBeamDimensionControl.DepthText.Text = depth.ToString();
+
+        //    // Keep dictionary reference in control for saving
+        //    boundaryBeamDimensionControl.CurrentBeamDict = boundaryBeamDict;
+        //    boundaryBeamDimensionControl.CurrentTransaction = _tr;
+        //}
+
+        //private void Save_Click(object sender, RoutedEventArgs e)
+        //{
+        //    if (CurrentTransaction == null || CurrentBeamDict == null) return;
+
+        //    if (double.TryParse(WidthTextBox.Text, out double width) &&
+        //        double.TryParse(DepthTextBox.Text, out double depth))
+        //    {
+        //        BoundaryNOD.SetBeamSection(CurrentTransaction, CurrentBeamDict, width, depth);
+        //        MessageBox.Show("Boundary beam dimensions updated.", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
+        //    }
+        //    else
+        //    {
+        //        MessageBox.Show("Invalid width or depth.", "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+        //    }
+        //}
     }
 }

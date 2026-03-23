@@ -10,6 +10,7 @@ using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Windows.Controls;
 
 namespace FoundationDetailer.Managers
 {
@@ -20,7 +21,8 @@ namespace FoundationDetailer.Managers
     /// </summary>
     public class PolylineBoundaryManager
     {
-        private const string XrecordKey = "FD_BOUNDARY";
+        private const double DEFAULT_WIDTH = 12.0;
+        private const double DEFAULT_DEPTH = 40.0;
 
         // Document -> stored ObjectId (ObjectId.Null if none)
         private static readonly ConcurrentDictionary<Document, ObjectId> _docBoundaryIds = new ConcurrentDictionary<Document, ObjectId>();
@@ -819,6 +821,96 @@ namespace FoundationDetailer.Managers
                 {
                     return false;
                 }
+            }
+        }
+
+        /// <summary>
+        /// helper function to retrieve the section dimensions of the boundary beam
+        /// </summary>
+        /// <param name="context"></param>
+        /// <returns></returns>
+        /// <exception cref="ArgumentNullException"></exception>
+        public (double, double) GetBoundaryBeamDimensions(FoundationContext context)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            var doc = context.Document;
+            if (doc == null) throw new ArgumentNullException(nameof(context));
+
+            var db = doc.Database;
+
+            using (doc.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                double width = DEFAULT_WIDTH;
+                double depth = DEFAULT_DEPTH;
+
+                foreach (var (handle, _) in BoundaryNOD.EnumerateBoundaryBeam(context, tr))
+                {
+                    var boundaryNodeDict = NODCore.GetOrCreateBoundaryGradeBeamNode(tr, db, handle);
+
+                    DBDictionary metaDict;
+                    if (NODCore.TryGetGradeBeamMeta(tr, boundaryNodeDict, out metaDict))
+                    {
+                        if (NODCore.TryGetGradeBeamSectionFromMetaDict(tr, metaDict, out var sectionDict))
+                        {
+                            width = NODCore.GetRealValue(tr, sectionDict, NODCore.KEY_SECTION_WIDTH.ToString()) ?? DEFAULT_WIDTH;
+                            depth = NODCore.GetRealValue(tr, sectionDict, NODCore.KEY_SECTION_DEPTH.ToString()) ?? DEFAULT_DEPTH;
+                        }
+                    }
+
+                    // assume only one boundary → stop early
+                    break;
+                }
+
+                return (width, depth);
+            }
+        }
+
+        /// <summary>
+        /// Sets the boundary beam dimensions, ensuring valid non-null values
+        /// </summary>
+        /// <param name="context"></param>
+        /// <param name="width">Width to set (must be > 0)</param>
+        /// <param name="depth">Depth to set (must be > 0)</param>
+        /// <exception cref="ArgumentNullException"></exception>
+        /// <exception cref="ArgumentOutOfRangeException"></exception>
+        public void SetBoundaryBeamDimensions(FoundationContext context, double width, double depth)
+        {
+            if (context == null) throw new ArgumentNullException(nameof(context));
+            var doc = context.Document;
+            if (doc == null) throw new ArgumentNullException(nameof(context));
+
+            // ensure width/depth are valid numbers
+            if (double.IsNaN(width) || width <= 0) width = DEFAULT_WIDTH;
+            if (double.IsNaN(depth) || depth <= 0) depth = DEFAULT_DEPTH;
+
+            var db = doc.Database;
+
+            using (doc.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                foreach (var (handle, _) in BoundaryNOD.EnumerateBoundaryBeam(context, tr))
+                {
+                    var boundaryNodeDict = NODCore.GetOrCreateBoundaryGradeBeamNode(tr, db, handle);
+
+                    // get or create section dictionary
+                    DBDictionary metaDict;
+                    if(NODCore.TryGetGradeBeamMeta(tr, boundaryNodeDict, out metaDict))
+                    {
+                        if (NODCore.TryGetGradeBeamSectionFromMetaDict(tr, metaDict, out var sectionDict))
+                        {
+                            // set values safely
+                            NODCore.SetRealValue(tr, sectionDict, NODCore.KEY_SECTION_WIDTH.ToString(), width);
+                            NODCore.SetRealValue(tr, sectionDict, NODCore.KEY_SECTION_DEPTH.ToString(), depth);
+                        }
+                    }
+
+
+                    // only one boundary assumed
+                    break;
+                }
+
+                tr.Commit();
             }
         }
     }

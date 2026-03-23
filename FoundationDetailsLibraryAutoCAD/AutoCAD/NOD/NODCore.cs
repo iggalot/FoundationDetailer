@@ -456,7 +456,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         /// <param name="gradeBeamNode">The grade beam node dictionary.</param>
         /// <param name="sectionDict">Outputs the SECTION dictionary if found.</param>
         /// <returns>True if SECTION dictionary exists, false otherwise.</returns>
-        internal static bool TryGetGradeBeamSection(
+        internal static bool TryGetGradeBeamSectionFromMetaDict(
             Transaction tr,
             DBDictionary gradeBeamNode,
             out DBDictionary sectionDict)

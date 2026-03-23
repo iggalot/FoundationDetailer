@@ -6,6 +6,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 {
     public static class BoundaryNOD
     {
+        
         /// <summary>
         /// Enumerates the boundary beam subdictionary in the NOD tree, returning the dictionary.
         /// </summary>

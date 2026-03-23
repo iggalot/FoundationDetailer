@@ -4,6 +4,7 @@
              xmlns:ctrls="clr-namespace:FoundationDetailsLibraryAutoCAD.UI.Controls"
              xmlns:gb_ctrl="clr-namespace:FoundationDetailsLibraryAutoCAD.UI.Controls.PrelimGBControl"
              xmlns:gb_summary_ctrl="clr-namespace:FoundationDetailsLibraryAutoCAD.UI.Controls.GradeBeamSummaryControl"
+             xmlns:beam_dim="clr-namespace:FoundationDetailsLibraryAutoCAD.UI.Controls.BeamControls"
              xmlns:equal_ctrl="clr-namespace:FoundationDetailsLibraryAutoCAD.UI.Controls.EqualSpacingGBControl"
              Height="600" Width="400">
     <Grid Margin="5">
@@ -44,6 +45,10 @@
                             </StackPanel>
                         </StackPanel>
 
+                        <StackPanel>
+                            <beam_dim:BeamDimensionControl x:Name="boundaryBeamDimensionControl" Margin="0,5"/>
+                        </StackPanel>
+                        
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="Vertices:" FontWeight="Bold"/>
                             <TextBlock x:Name="TxtBoundaryVertices" Text="-"/>

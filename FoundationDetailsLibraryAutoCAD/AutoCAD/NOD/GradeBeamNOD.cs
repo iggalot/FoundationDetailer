@@ -216,7 +216,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             int deletedCount = 0;
 
             // --- Delete SECTION metadata under FD_METADATA if it exists
-            if (NODCore.TryGetGradeBeamSection(tr, beamNode, out var sectionDict) && sectionDict != null)
+            if (NODCore.TryGetGradeBeamSectionFromMetaDict(tr, beamNode, out var sectionDict) && sectionDict != null)
             {
                 sectionDict.UpgradeOpen();
                 sectionDict.Erase();
@@ -302,7 +302,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 : NODCore.GetOrCreateNestedSubDictionary(tr, beamNode, NODCore.KEY_METADATA_SUBDICT);
 
             // --- Get or create SECTION dictionary under META
-            var sectionDict = NODCore.TryGetGradeBeamSection(tr, beamNode, out var existingSection)
+            var sectionDict = NODCore.TryGetGradeBeamSectionFromMetaDict(tr, beamNode, out var existingSection)
                 ? existingSection
                 : NODCore.GetOrCreateNestedSubDictionary(tr, metaDict, NODCore.KEY_META_SECTION_SUBDICT);
 

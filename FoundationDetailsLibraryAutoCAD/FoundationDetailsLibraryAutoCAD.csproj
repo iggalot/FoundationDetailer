@@ -98,7 +98,7 @@
     <Compile Include="Services\ModelSpaceWriterService.cs" />
     <Compile Include="Services\PolylineConversionService.cs" />
     <Compile Include="Tools\XDataViewer.cs" />
-    <Compile Include="UI\Controls\BeamDimensionControl\BeamDimensionControl.xaml.cs">
+    <Compile Include="UI\Controls\BeamControls\BeamDimensionControl.xaml.cs">
       <DependentUpon>BeamDimensionControl.xaml</DependentUpon>
     </Compile>
     <Compile Include="UI\Controls\EqualSpacingGBControl\EqualSpacingControl.xaml.cs">
@@ -128,7 +128,7 @@
     </Compile>
   </ItemGroup>
   <ItemGroup>
-    <Page Include="UI\Controls\BeamDimensionControl\BeamDimensionControl.xaml">
+    <Page Include="UI\Controls\BeamControls\BeamDimensionControl.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>

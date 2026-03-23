@@ -3,11 +3,14 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 
-namespace FoundationDetailsLibraryAutoCAD.UI.Controls.BeamDimensionControl
+namespace FoundationDetailsLibraryAutoCAD.UI.Controls.BeamControls
 {
     public partial class BeamDimensionControl : UserControl
     {
         public enum BeamControlMode { Input, Display }
+
+        public double Width { get; set; }
+        public double Depth { get; set; }
 
         // Dependency property for mode
         public static readonly DependencyProperty ModeProperty =
@@ -26,10 +29,10 @@ namespace FoundationDetailsLibraryAutoCAD.UI.Controls.BeamDimensionControl
         // Event args for submitted beam size
         public class BeamSizeEventArgs : EventArgs
         {
-            public int Width { get; }
-            public int Depth { get; }
+            public double Width { get; }
+            public double Depth { get; }
 
-            public BeamSizeEventArgs(int width, int depth)
+            public BeamSizeEventArgs(double width, double depth)
             {
                 Width = width;
                 Depth = depth;
@@ -49,6 +52,14 @@ namespace FoundationDetailsLibraryAutoCAD.UI.Controls.BeamDimensionControl
 
             WidthCombo.SelectedItem = 10;
             DepthCombo.SelectedItem = 28;
+        }
+
+        public BeamDimensionControl(double width, double depth)
+        {
+            Width = width;
+            Depth = depth;
+
+            Submitted?.Invoke(this, new BeamSizeEventArgs(width, depth));
         }
 
         private void Ok_Click(object sender, RoutedEventArgs e)
