@@ -7,12 +7,17 @@ namespace FoundationDetailsLibraryAutoCAD.UI.Controls.BeamControls
 {
     public partial class BeamDimensionControl : UserControl
     {
+        private const int MIN_SIZE = 4;
+        private const int MAX_SIZE = 60;
+
+        private bool _isInitialized = false;
+        private bool _isUpdating = false;
+
         public enum BeamControlMode { Input, Display }
 
-        public double Width { get; set; }
-        public double Depth { get; set; }
-
-        // Dependency property for mode
+        // ============================
+        // MODE PROPERTY
+        // ============================
         public static readonly DependencyProperty ModeProperty =
             DependencyProperty.Register(
                 nameof(Mode),
@@ -26,7 +31,92 @@ namespace FoundationDetailsLibraryAutoCAD.UI.Controls.BeamControls
             set => SetValue(ModeProperty, value);
         }
 
-        // Event args for submitted beam size
+        // ============================
+        // WIDTH / DEPTH PROPERTIES
+        // ============================
+        public static readonly DependencyProperty WidthValueProperty =
+            DependencyProperty.Register(
+                nameof(WidthValue),
+                typeof(int),
+                typeof(BeamDimensionControl),
+                new FrameworkPropertyMetadata(
+                    10,
+                    FrameworkPropertyMetadataOptions.BindsTwoWayByDefault,
+                    OnBeamValueChanged,
+                    CoerceSize));
+
+        public int WidthValue
+        {
+            get => (int)GetValue(WidthValueProperty);
+            set => SetValue(WidthValueProperty, value);
+        }
+
+        public static readonly DependencyProperty DepthValueProperty =
+            DependencyProperty.Register(
+                nameof(DepthValue),
+                typeof(int),
+                typeof(BeamDimensionControl),
+                new FrameworkPropertyMetadata(
+                    28,
+                    FrameworkPropertyMetadataOptions.BindsTwoWayByDefault,
+                    OnBeamValueChanged,
+                    CoerceSize));
+
+        public int DepthValue
+        {
+            get => (int)GetValue(DepthValueProperty);
+            set => SetValue(DepthValueProperty, value);
+        }
+
+        private static object CoerceSize(DependencyObject d, object baseValue)
+        {
+            int value = (int)baseValue;
+
+            if (value < MIN_SIZE || value > MAX_SIZE)
+            {
+                System.Diagnostics.Debug.WriteLine($"Invalid beam size coerced: {value}");
+            }
+
+            return Math.Max(MIN_SIZE, Math.Min(MAX_SIZE, value));
+        }
+
+        // ============================
+        // SAFE COMBO SYNC
+        // ============================
+        private void SyncComboBoxes()
+        {
+            if (_isUpdating)
+                return;
+
+            if (WidthCombo?.ItemsSource == null || DepthCombo?.ItemsSource == null)
+                return;
+
+            if (!WidthCombo.Items.Contains(WidthValue))
+                WidthCombo.SelectedItem = WidthCombo.Items[0];
+            else if (!Equals(WidthCombo.SelectedItem, WidthValue))
+                WidthCombo.SelectedItem = WidthValue;
+
+            if (!DepthCombo.Items.Contains(DepthValue))
+                DepthCombo.SelectedItem = DepthCombo.Items[0];
+            else if (!Equals(DepthCombo.SelectedItem, DepthValue))
+                DepthCombo.SelectedItem = DepthValue;
+        }
+
+        // ============================
+        // DISPLAY UPDATE (NEW)
+        // ============================
+        private void UpdateDisplayText()
+        {
+            if (WidthText != null)
+                WidthText.Text = $"W: {WidthValue}\"";
+
+            if (DepthText != null)
+                DepthText.Text = $"D: {DepthValue}\"";
+        }
+
+        // ============================
+        // EVENTS
+        // ============================
         public class BeamSizeEventArgs : EventArgs
         {
             public double Width { get; }
@@ -42,47 +132,67 @@ namespace FoundationDetailsLibraryAutoCAD.UI.Controls.BeamControls
         public event EventHandler<BeamSizeEventArgs> Submitted;
         public event EventHandler Canceled;
 
+        // ============================
+        // CONSTRUCTOR
+        // ============================
         public BeamDimensionControl()
         {
             InitializeComponent();
 
-            var sizes = Enumerable.Range(4, 57).ToList(); // 4–60
+            var sizes = Enumerable.Range(MIN_SIZE, MAX_SIZE - MIN_SIZE + 1).ToList();
+
             WidthCombo.ItemsSource = sizes;
             DepthCombo.ItemsSource = sizes;
 
-            WidthCombo.SelectedItem = 10;
-            DepthCombo.SelectedItem = 28;
+            // IMPORTANT: Delay full init until UI is ready
+            Loaded += (s, e) =>
+            {
+                _isInitialized = true;
+
+                SyncComboBoxes();
+                UpdateDisplayText();
+            };
         }
 
-        public BeamDimensionControl(double width, double depth)
+        // ============================
+        // PROPERTY CHANGE CALLBACK
+        // ============================
+        private static void OnBeamValueChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
-            Width = width;
-            Depth = depth;
+            var control = (BeamDimensionControl)d;
 
-            Submitted?.Invoke(this, new BeamSizeEventArgs(width, depth));
-        }
-
-        private void Ok_Click(object sender, RoutedEventArgs e)
-        {
-            if (WidthCombo.SelectedItem == null || DepthCombo.SelectedItem == null)
+            if (!control._isInitialized || control._isUpdating)
                 return;
 
-            int width = (int)WidthCombo.SelectedItem;
-            int depth = (int)DepthCombo.SelectedItem;
+            try
+            {
+                control._isUpdating = true;
 
-            Submitted?.Invoke(this, new BeamSizeEventArgs(width, depth));
+                control.SyncComboBoxes();
+                control.UpdateDisplayText();
+            }
+            finally
+            {
+                control._isUpdating = false;
+            }
+
+            // Fire AFTER UI is stable
+            control.Submitted?.Invoke(
+                control,
+                new BeamSizeEventArgs(control.WidthValue, control.DepthValue));
+        }
+
+        // ============================
+        // BUTTON HANDLERS
+        // ============================
+        private void Ok_Click(object sender, RoutedEventArgs e)
+        {
+            Submitted?.Invoke(this, new BeamSizeEventArgs(WidthValue, DepthValue));
         }
 
         private void Cancel_Click(object sender, RoutedEventArgs e)
         {
             Canceled?.Invoke(this, EventArgs.Empty);
-        }
-
-        // Set displayed width/depth in Display mode
-        public void SetDisplayValues(int width, int depth)
-        {
-            WidthText.Text = $"W: {width}\"";
-            DepthText.Text = $"D: {depth}\"";
         }
     }
 }

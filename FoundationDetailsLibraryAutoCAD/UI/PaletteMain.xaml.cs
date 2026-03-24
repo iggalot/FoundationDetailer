@@ -88,6 +88,62 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             BtnNEqualSpaces.Click += BtnNEqualSpaces_Click;
             BtnConvertExisting.Click += BtnConvertToPolyline_Click;
 
+            boundaryBeamDimensionControl.Submitted += OnBoundaryBeamDimensionsChanged;
+
+        }
+
+        private void OnBoundaryBeamDimensionsChanged(object sender, BeamDimensionControl.BeamSizeEventArgs e)
+        {
+            var context = CurrentContext;
+            if (context?.Document == null)
+                return;
+
+            var db = context.Document.Database;
+
+            // check for valid numeric values
+            if (e.Width <= 0 || e.Depth <= 0)
+                return;
+
+            using (context.Document.LockDocument())
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                try
+                {
+                    foreach (var (handle, _) in BoundaryNOD.EnumerateBoundaryBeam(context, tr))
+                    {
+                        // --- Get boundary node (DO NOT blindly create unless needed)
+                        if (!NODCore.TryGetBoundaryBeamNode(tr, db, out var boundaryNode))
+                            continue;
+
+                        // --- Get or create META → SECTION
+                        var metaDict = NODCore.GetOrCreateNestedSubDictionary(
+                            tr,
+                            boundaryNode,
+                            NODCore.KEY_METADATA_SUBDICT);
+
+                        var sectionDict = NODCore.GetOrCreateNestedSubDictionary(
+                            tr,
+                            metaDict,
+                            NODCore.KEY_META_SECTION_SUBDICT);
+
+                        // --- WRITE VALUES
+                        NODCore.SetRealValue(tr, sectionDict, NODCore.KEY_SECTION_WIDTH, e.Width);
+                        NODCore.SetRealValue(tr, sectionDict, NODCore.KEY_SECTION_DEPTH, e.Depth);
+
+                        MessageBox.Show("W: " + e.Width + "   D: " + e.Depth);
+
+                        break; // only one boundary
+                    }
+
+                    tr.Commit();
+
+                    UpdateAll();
+                }
+                catch (System.Exception ex)
+                {
+                    context.Document.Editor.WriteMessage($"\nError updating boundary beam: {ex.Message}");
+                }
+            }
         }
 
         /// <summary>
@@ -209,26 +265,10 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 string handle = pl.Handle.ToString();
                 var node = NODCore.GetOrCreateBoundaryGradeBeamNode(tr, db, handle);
 
-                double width, depth;
-                bool dims_are_valid = true;
-                if(!Double.TryParse(boundaryBeamDimensionControl.WidthText.Text, out width))
-                {
-                    CurrentContext.Document.Editor.WriteMessage("Invalid width dimension received from Beam Dimension control");
-                    dims_are_valid = false;
-                }
+                double width = boundaryBeamDimensionControl.WidthValue;
+                double depth = boundaryBeamDimensionControl.DepthValue;
 
-                if (!Double.TryParse(boundaryBeamDimensionControl.WidthText.Text, out depth))
-                {
-                    CurrentContext.Document.Editor.WriteMessage("Invalid width dimension received from Beam Dimension control");
-                    dims_are_valid = false;
-                }
-
-                if(dims_are_valid)
-                {
-                    //_boundaryService.SetBoundaryBeamDimensions(context, width, depth);
-                    _boundaryService.SetBoundaryBeamDimensions(context, 40, 40);
-
-                }
+                _boundaryService.SetBoundaryBeamDimensions(context, width, depth);
 
                 tr.Commit();
             }
@@ -771,12 +811,11 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                         TxtBoundaryStatus.Text = "Boundary valid - " + pl.Handle.ToString();
                         TxtBoundaryVertices.Text = (pl.NumberOfVertices - 1).ToString();
 
-                        // show dims
-                        var (width, depth) = _boundaryService.GetBoundaryBeamDimensions(CurrentContext);
-                        boundaryBeamDimensionControl.Content = new BeamDimensionControl(width, depth);
 
-                        boundaryBeamDimensionControl.WidthText.Text = width.ToString();
-                        boundaryBeamDimensionControl.DepthText.Text = depth.ToString();
+                        // show dims from NOD
+                        var (width, depth) = _boundaryService.GetBoundaryBeamDimensions(CurrentContext);
+                        TxtBoundaryWidth.Text = width.ToString();
+                        TxtBoundaryDepth.Text = depth.ToString();
 
                         // show calcs
                         double perimeter = 0;

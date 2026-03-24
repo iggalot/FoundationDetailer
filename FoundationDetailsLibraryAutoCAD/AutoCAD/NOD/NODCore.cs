@@ -15,15 +15,17 @@
 //   │   │           ├─ Width
 //   │   │           └─ Depth
 //   │   │
-//   │   └─ 2A42
-//   │       ├─ EDGES
-//   │       └─ METADATA
+//   │   └─ <additional grade beam -- same structure>
 //   │
 //   └─ FD_BOUNDARY
-//       │
-//       └─ 3B11
-//           ├─ EDGES
-//           └─ METADATA
+//   │   │
+//   │   └─ 3B11
+//   │       ├─ EDGES
+//   │       └─ METADATA
+//   │       
+//   └─ FD_SLABSTRAND
+//   │   
+//   └─ FD_REBAR
 
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Runtime;
@@ -31,9 +33,7 @@ using FoundationDetailsLibraryAutoCAD.Data;
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
 using System.Linq;
-using static FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.HandleHandler;
 
 [assembly: CommandClass(typeof(FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.NODCore))]
 
@@ -50,8 +50,8 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         // Primary subdicts under the ROOT ofthe NOD
         public const string KEY_BOUNDARY_SUBDICT = "FD_BOUNDARY";
         public const string KEY_GRADEBEAM_SUBDICT = "FD_GRADEBEAM";
-        //public const string KEY_SLABSTRAND_SUBDICT = "FD_SLABSTRAND";
-        //public const string KEY_REBAR = "FD_REBAR";
+        public const string KEY_SLABSTRAND_SUBDICT = "FD_SLABSTRAND";
+        public const string KEY_REBAR_SUBDICT = "FD_REBAR";
 
         // The gradebam NODE subdicts -- 
         public const string KEY_EDGES_SUBDICT = "FD_EDGES";
@@ -68,12 +68,13 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         public const string KEY_ANALYSIS_DESIGN = "DESIGN";
         public const string KEY_ANALYSIS_STATUS = "STATUS";
 
+        // list of primary subdirectories under EE_FDN
         public static readonly string[] KNOWN_ROOT_SUBDIRS =
         {
             KEY_BOUNDARY_SUBDICT,
             KEY_GRADEBEAM_SUBDICT,
-            //KEY_SLABSTRAND_SUBDICT,
-            //KEY_REBAR
+            KEY_SLABSTRAND_SUBDICT,
+            KEY_REBAR_SUBDICT
         };
         #endregion
 
@@ -208,7 +209,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             return null;
         }
 
-
         /// <summary>
         /// Return the FD_BOUNDARY subdictionary
         /// </summary>
@@ -249,6 +249,84 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         }
 
         /// <summary>
+        /// Return the FD_SLABSTRAND subdictionary
+        /// </summary>
+        /// <param name="tr"></param>
+        /// <param name="db"></param>
+        /// <param name="forWrite"></param>
+        /// <returns></returns>        
+        internal static DBDictionary GetOrCreateSlabStrandRootDictionary(
+            Transaction tr,
+            Database db,
+            bool forWrite = false)
+        {
+            if (tr == null || db == null)
+                return null;
+
+            var rootDict = GetFoundationRootDictionary(tr, db);
+            if (rootDict == null)
+                return null;
+
+            // If we are allowed to create it, delegate to helper
+            if (forWrite)
+            {
+                return GetOrCreateNestedSubDictionary(
+                    tr,
+                    rootDict,
+                    NODCore.KEY_SLABSTRAND_SUBDICT);
+            }
+
+            // Otherwise only return if it exists
+            if (rootDict.Contains(NODCore.KEY_SLABSTRAND_SUBDICT))
+            {
+                return tr.GetObject(
+                    rootDict.GetAt(NODCore.KEY_SLABSTRAND_SUBDICT),
+                    OpenMode.ForRead) as DBDictionary;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Return the FD_REBAR subdictionary
+        /// </summary>
+        /// <param name="tr"></param>
+        /// <param name="db"></param>
+        /// <param name="forWrite"></param>
+        /// <returns></returns>        
+        internal static DBDictionary GetOrCreateRebarRootDictionary(
+            Transaction tr,
+            Database db,
+            bool forWrite = false)
+        {
+            if (tr == null || db == null)
+                return null;
+
+            var rootDict = GetFoundationRootDictionary(tr, db);
+            if (rootDict == null)
+                return null;
+
+            // If we are allowed to create it, delegate to helper
+            if (forWrite)
+            {
+                return GetOrCreateNestedSubDictionary(
+                    tr,
+                    rootDict,
+                    NODCore.KEY_SLABSTRAND_SUBDICT);
+            }
+
+            // Otherwise only return if it exists
+            if (rootDict.Contains(NODCore.KEY_REBAR_SUBDICT))
+            {
+                return tr.GetObject(
+                    rootDict.GetAt(NODCore.KEY_REBAR_SUBDICT),
+                    OpenMode.ForRead) as DBDictionary;
+            }
+
+            return null;
+        }
+
+        /// <summary>
         /// Get or create a grade beam node under FD_BOUNDARY (single entry)
         /// </summary>
         internal static DBDictionary GetOrCreateBoundaryGradeBeamNode(Transaction tr, Database db, string handle)
@@ -257,7 +335,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 throw new ArgumentException("Handle is required", nameof(handle));
 
             var root = GetOrCreateBoundaryBeamRootDictionary(tr, db, forWrite: true);
-            return CreateGradeBeamNode_Internal(tr, root, handle);
+            return CreateNODBeamNode_Internal(tr, root, handle);
         }
 
         /// <summary>
@@ -269,14 +347,13 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 throw new ArgumentException("Handle is required", nameof(handle));
 
             var root = GetOrCreateGradeBeamRootDictionary(tr, db, forWrite: true);
-            return CreateGradeBeamNode_Internal(tr, root, handle);
+            return CreateNODBeamNode_Internal(tr, root, handle);
         }
 
         /// <summary>
         /// Creates (or gets if it already exists) a grade beam node by handle within the specified parent dictionary.
-        /// Ensures the required subdictionaries (edges and strands) are present.
-        /// </summary>
-        internal static DBDictionary CreateGradeBeamNode_Internal(
+        /// Ensures the required subdictionaries structure is correctly created.
+        internal static DBDictionary CreateNODBeamNode_Internal(
             Transaction tr,
             DBDictionary parentDict,
             string centerlineHandle)
@@ -300,9 +377,13 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             parentDict.SetAt(centerlineHandle, gbNode);
             tr.AddNewlyCreatedDBObject(gbNode, true);
 
-            // --- Ensure required subdictionaries exist
-            GetOrCreateNestedSubDictionary(tr, gbNode, NODCore.KEY_EDGES_SUBDICT);
-            GetOrCreateNestedSubDictionary(tr, gbNode, NODCore.KEY_BEAMSTRAND_SUBDICT);
+            // --- Ensure required subdictionaries exist under gbNode
+            var edgesSubDict = GetOrCreateNestedSubDictionary(tr, gbNode, NODCore.KEY_EDGES_SUBDICT);
+            var beamStrandSubDict = GetOrCreateNestedSubDictionary(tr, gbNode, NODCore.KEY_BEAMSTRAND_SUBDICT);
+            var metaDict = GetOrCreateNestedSubDictionary(tr, gbNode, NODCore.KEY_METADATA_SUBDICT);
+
+            // --- Ensure that the subdicts under META are made
+            var sectionDict = GetOrCreateNestedSubDictionary(tr, metaDict, NODCore.KEY_META_SECTION_SUBDICT);
 
             return gbNode;
         }
@@ -588,63 +669,97 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         }
 
 
-        // --- Helper to recursively erase all entries in a dictionary
         internal static void EraseDictionaryRecursive(
             Transaction tr,
             Database db,
             DBDictionary dict,
             ref int edgesDeleted,
             ref int beamsDeleted,
-            bool eraseEntities = true)
+            bool eraseEntities = true,
+            string parentKey = "<root>",
+            int depth = 0)
         {
             if (tr == null || db == null || dict == null)
                 return;
 
-            var ids = new List<ObjectId>();
-            foreach (DictionaryEntry entry in dict)
-                if (entry.Value is ObjectId id && id.IsValid && !id.IsNull)
-                    ids.Add(id);
+            string indent = new string(' ', depth * 2);
+            System.Diagnostics.Debug.WriteLine($"{indent}Processing dictionary: {parentKey}");
 
-            foreach (var id in ids)
+            // Collect all entries first
+            var entries = dict.Cast<DictionaryEntry>()
+                              .Select(e => new { Key = e.Key.ToString(), Value = e.Value as ObjectId? })
+                              .Where(e => e.Value.HasValue && e.Value.Value.IsValid && !e.Value.Value.IsNull)
+                              .ToList();
+
+            foreach (var entry in entries)
             {
-                if (id.IsErased)
-                    continue;
+                var id = entry.Value.Value;
+
+                if (id.IsErased) continue;
 
                 var obj = tr.GetObject(id, OpenMode.ForWrite, false);
 
-                if (obj is DBDictionary subDict)
+                switch (obj)
                 {
-                    EraseDictionaryRecursive(tr, db, subDict, ref edgesDeleted, ref beamsDeleted, eraseEntities);
-                    subDict.Erase();
-                }
-                else if (obj is Xrecord xrec)
-                {
-                    if (xrec.Data != null)
-                    {
-                        foreach (TypedValue tv in xrec.Data)
+                    case DBDictionary subDict:
+                        System.Diagnostics.Debug.WriteLine($"{indent}  Found sub-dictionary: {entry.Key}");
+                        // Recurse into sub-dictionary
+                        EraseDictionaryRecursive(tr, db, subDict, ref edgesDeleted, ref beamsDeleted, eraseEntities, entry.Key, depth + 1);
+                        if (!subDict.IsErased)
                         {
-                            if (!eraseEntities) continue; // <-- skip entities if false
+                            subDict.Erase();
+                            System.Diagnostics.Debug.WriteLine($"{indent}  Erased sub-dictionary: {entry.Key}");
+                        }
+                        break;
 
-                            if (tv.TypeCode == (int)DxfCode.Text && tv.Value is string handleStr)
+                    case Xrecord xrec:
+                        System.Diagnostics.Debug.WriteLine($"{indent}  Found XRecord: {entry.Key}");
+                        // Optional: erase referenced entities
+                        if (eraseEntities && xrec.Data != null)
+                        {
+                            foreach (var tv in xrec.Data)
                             {
-                                try
+                                if (tv.TypeCode == (int)DxfCode.Text && tv.Value is string handleStr)
                                 {
-                                    var handle = new Handle(Convert.ToInt64(handleStr, 16));
-                                    ObjectId entId = db.GetObjectId(false, handle, 0);
-
-                                    if (entId.IsValid && !entId.IsErased)
+                                    try
                                     {
-                                        (tr.GetObject(entId, OpenMode.ForWrite) as Entity)?.Erase();
-                                        edgesDeleted++;
+                                        var handle = new Handle(Convert.ToInt64(handleStr, 16));
+                                        var entId = db.GetObjectId(false, handle, 0);
+                                        if (entId.IsValid && !entId.IsErased)
+                                        {
+                                            (tr.GetObject(entId, OpenMode.ForWrite) as Entity)?.Erase();
+                                            edgesDeleted++;
+                                            System.Diagnostics.Debug.WriteLine($"{indent}    Erased entity from XRecord: {handleStr}");
+                                        }
                                     }
+                                    catch { }
                                 }
-                                catch { }
                             }
                         }
-                    }
 
-                    xrec.Erase();
+                        if (!xrec.IsErased)
+                        {
+                            xrec.Erase();
+                            System.Diagnostics.Debug.WriteLine($"{indent}  Erased XRecord: {entry.Key}");
+                            beamsDeleted++;
+                        }
+                        break;
+
+                    default:
+                        System.Diagnostics.Debug.WriteLine($"{indent}  Unknown object type for key: {entry.Key}");
+                        break;
                 }
+            }
+
+            // --- FINAL DEBUG: list remaining keys in this dictionary after erase ---
+            var remainingKeys = dict.Cast<DictionaryEntry>().Select(e => e.Key.ToString()).ToList();
+            if (remainingKeys.Count > 0)
+            {
+                System.Diagnostics.Debug.WriteLine($"{indent}  Remaining keys in dictionary '{parentKey}': {string.Join(", ", remainingKeys)}");
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine($"{indent}  Dictionary '{parentKey}' is now empty.");
             }
         }
 
