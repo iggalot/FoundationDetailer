@@ -12,26 +12,44 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             Transaction tr)
         {
             if (context == null || tr == null)
+            {
+                System.Diagnostics.Debug.WriteLine("[DEBUG] Context or transaction is null.");
                 yield break;
+            }
 
             var db = context.Document.Database;
 
             // --- Get the grade beam root dictionary safely
-            DBDictionary gradeBeamRoot;
-            if(!NODCore.TryGetGradeBeamsRoot(tr, db, out gradeBeamRoot))
+            if (!NODCore.TryGetGradeBeamsRoot(tr, db, out var gradeBeamRoot))
             {
+                System.Diagnostics.Debug.WriteLine("[DEBUG] GradeBeam root dictionary not found.");
                 yield break;
             }
 
-            // --- Iterate all subdictionaries (each represents a grade beam)
             foreach (var (handle, dictId) in NODCore.EnumerateDictionary(gradeBeamRoot))
             {
-                if (dictId.IsNull || dictId.IsErased || !dictId.IsValid)
-                    continue;
+                string status = $"Handle={handle} | ";
 
-                var gbDict = tr.GetObject(dictId, OpenMode.ForRead) as DBDictionary;
+                if (dictId.IsNull)
+                    status += "dictId.IsNull ";
+                if (!dictId.IsValid)
+                    status += "dictId.IsValid=false ";
+                if (dictId.IsErased)
+                    status += "dictId.IsErased ";
+
+                System.Diagnostics.Debug.WriteLine("[DEBUG] GradeBeam entry: " + status);
+
+                var gbDict = tr.GetObject(dictId, OpenMode.ForRead, false) as DBDictionary;
+
                 if (gbDict != null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"  Subdictionary '{handle}' found, count={gbDict.Count}");
                     yield return (handle, gbDict);
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine($"  Subdictionary '{handle}' could not be opened (null).");
+                }
             }
         }
 
@@ -274,6 +292,10 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             if (!NODCore.TryGetBeamEdges(tr, gradeBeamDict, out var edgesDict) || edgesDict == null)
                 return 0;
 
+            // Upgrade both the edges dictionary and the beam dictionary itself to write
+            gradeBeamDict.UpgradeOpen();
+            edgesDict.UpgradeOpen();
+
             var keys = new List<string>();
             foreach (DBDictionaryEntry entry in edgesDict)
                 keys.Add(entry.Key);
@@ -281,6 +303,8 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             foreach (var key in keys)
             {
                 var xrec = tr.GetObject(edgesDict.GetAt(key), OpenMode.ForWrite) as Xrecord;
+                System.Diagnostics.Debug.WriteLine($"BeamDict IsErased={gradeBeamDict.IsErased}, IsWriteEnabled={gradeBeamDict.IsWriteEnabled}"
+);
                 xrec?.Erase();
                 edgesDict.Remove(key);
                 deleted++;
@@ -296,15 +320,25 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             if (tr == null) throw new ArgumentNullException(nameof(tr));
             if (beamNode == null) throw new ArgumentNullException(nameof(beamNode));
 
+            // Make sure our dictionary is writeable
+            if (!beamNode.IsWriteEnabled && !beamNode.IsErased)
+                beamNode.UpgradeOpen();
+
             // --- Get or create META dictionary
             var metaDict = NODCore.TryGetGradeBeamMeta(tr, beamNode, out var existingMeta)
                 ? existingMeta
                 : NODCore.GetOrCreateNestedSubDictionary(tr, beamNode, NODCore.KEY_METADATA_SUBDICT);
 
             // --- Get or create SECTION dictionary under META
+            if (!metaDict.IsWriteEnabled && !metaDict.IsErased)
+                metaDict.UpgradeOpen();
+
             var sectionDict = NODCore.TryGetGradeBeamSectionFromMetaDict(tr, beamNode, out var existingSection)
                 ? existingSection
                 : NODCore.GetOrCreateNestedSubDictionary(tr, metaDict, NODCore.KEY_META_SECTION_SUBDICT);
+
+            if (!sectionDict.IsWriteEnabled && !sectionDict.IsErased)
+                metaDict.UpgradeOpen();
 
             // --- Read stored width/depth
             var width = NODCore.GetRealValue(tr, sectionDict, NODCore.KEY_SECTION_WIDTH);

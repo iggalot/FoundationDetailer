@@ -848,10 +848,15 @@ namespace FoundationDetailer.Managers
                 {
                     var boundaryNodeDict = NODCore.GetOrCreateBoundaryGradeBeamNode(tr, db, handle);
 
+                    foreach (DictionaryEntry entry in boundaryNodeDict)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Key: {entry.Key}");
+                    }
+
                     DBDictionary metaDict;
                     if (NODCore.TryGetGradeBeamMeta(tr, boundaryNodeDict, out metaDict))
                     {
-                        if (NODCore.TryGetGradeBeamSectionFromMetaDict(tr, metaDict, out var sectionDict))
+                        if (NODCore.TryGetGradeBeamSectionFromMetaDict(tr, boundaryNodeDict, out var sectionDict))
                         {
                             width = NODCore.GetRealValue(tr, sectionDict, NODCore.KEY_SECTION_WIDTH.ToString()) ?? DEFAULT_WIDTH;
                             depth = NODCore.GetRealValue(tr, sectionDict, NODCore.KEY_SECTION_DEPTH.ToString()) ?? DEFAULT_DEPTH;
@@ -861,6 +866,8 @@ namespace FoundationDetailer.Managers
                     // assume only one boundary → stop early
                     break;
                 }
+
+                tr.Commit();
 
                 return (width, depth);
             }
@@ -897,13 +904,17 @@ namespace FoundationDetailer.Managers
                     DBDictionary metaDict;
                     if(NODCore.TryGetGradeBeamMeta(tr, boundaryNodeDict, out metaDict))
                     {
-                        if (NODCore.TryGetGradeBeamSectionFromMetaDict(tr, metaDict, out var sectionDict))
+                        if (NODCore.TryGetGradeBeamSectionFromMetaDict(tr, boundaryNodeDict, out var sectionDict))
                         {
                             // set values safely
                             NODCore.SetRealValue(tr, sectionDict, NODCore.KEY_SECTION_WIDTH.ToString(), width);
                             NODCore.SetRealValue(tr, sectionDict, NODCore.KEY_SECTION_DEPTH.ToString(), depth);
                         }
-                    }
+                        else
+                        {
+                            doc.Editor.WriteMessage("Unable to find SECTION subdictionary for boundary beam");
+                        }
+                    } 
 
 
                     // only one boundary assumed

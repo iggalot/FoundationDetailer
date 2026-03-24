@@ -299,7 +299,7 @@ namespace FoundationDetailer.AutoCAD
         /// </summary>
         /// <param name="context"></param>
         /// <returns></returns>
-        public int DeleteEdgesForAllGradeBeams(FoundationContext context)
+        public static int DeleteEdgesForAllGradeBeams(FoundationContext context)
         {
             if (context?.Document == null)
                 return 0;
@@ -322,7 +322,7 @@ namespace FoundationDetailer.AutoCAD
         /// <summary>
         /// Deletes all edge entities of a single grade beam but keeps centerline and NOD dictionary.
         /// </summary>
-        internal int DeleteGradeBeamEdgesOnlyInternal(FoundationContext context, Transaction tr, string gradeBeamHandle)
+        internal static int DeleteGradeBeamEdgesOnlyInternal(FoundationContext context, Transaction tr, string gradeBeamHandle)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
             if (tr == null) throw new ArgumentNullException(nameof(tr));
@@ -387,6 +387,7 @@ namespace FoundationDetailer.AutoCAD
 
             return deleted;
         }
+
         /// <summary>
         /// Function to fully delete a single grade beam from the NOD and AutoCAD drawing
         /// </summary>
@@ -690,6 +691,7 @@ namespace FoundationDetailer.AutoCAD
         #region Geometry Calculations (derived)
         /// <summary>
         /// Generates edge polylines for all grade beams, adds them to ModelSpace, 
+        /// Deletes the edges of all grade beams in the drawing.
         /// and stores handles in the NOD.
         /// Returns the number of grade beams processed.
         /// </summary>
@@ -700,29 +702,9 @@ namespace FoundationDetailer.AutoCAD
             var doc = context.Document;
             var db = doc.Database;
 
-            using (doc.LockDocument())
-            using (var tr = db.TransactionManager.StartTransaction())
-            {
-                // --- Enumerate all beams in the NOD
-                var beams = GradeBeamNOD.EnumerateGradeBeams(context, tr).ToList();
-                if (beams.Count == 0)
-                {
-                    tr.Commit();
-                    return;
-                }
+            CreateGradeBeamTrimmedEdges(context);
 
-                // --- Delete existing edges for each beam (keeps centerlines)
-                foreach (var (_, gbDict) in beams)
-                {
-                    GradeBeamNOD.DeleteBeamEdgesOnly(context, tr, gbDict);
-                }
-
-                // --- Recreate edges for each beam
-                GradeBeamBuilder.CreateGradeBeams(context, tr);
-
-                tr.Commit();
-                doc.Editor.Regen();
-            }
+            doc.Editor.Regen();
         }
 
 
@@ -1119,6 +1101,123 @@ namespace FoundationDetailer.AutoCAD
 
             return totalLength;
         }
+
+        /// <summary>
+        /// Creates and trims the edges for the gradebeam and draws them in model space.
+        /// Appends edge trimmed objects to the NOD
+        /// </summary>
+        /// <param name="context"></param>
+        internal static void CreateGradeBeamTrimmedEdges(FoundationContext context)
+        {
+            if (context == null) return;
+
+            var doc = context.Document;
+            var db = doc.Database;
+
+            // --- Lock and create new transaction
+            using (doc.LockDocument())
+            {
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+                    var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+
+                    DeleteEdgesForAllGradeBeams(context);
+
+                    // --- Enumerate all grade beams
+                    var beams = GradeBeamNOD.EnumerateGradeBeams(context, tr).ToList();
+                    if (!beams.Any()) return;
+
+                    // --- Delete all existing edges
+                    foreach (var (_, gbDict) in beams)
+                        GradeBeamNOD.DeleteBeamEdgesOnly(context, tr, gbDict);
+
+                    tr.Commit();
+                }
+
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+                    var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+
+                    // --- Enumerate all grade beams
+                    var beams = GradeBeamNOD.EnumerateGradeBeams(context, tr).ToList();
+                    if (!beams.Any()) return;
+
+                    // --- Cache beam widths
+                    var beamWidths = beams.ToDictionary(
+                        b => b.Handle,
+                        b => GradeBeamNOD.GetBeamSection(tr, b.Dict).Width
+                    );
+
+                    // --- Build footprints
+                    var footprints = new Dictionary<ObjectId, Polyline>();
+                    foreach (var (handle, gbDict) in beams)
+                    {
+                        if (!NODCore.TryGetObjectIdFromHandleString(tr, db, handle, out var clId))
+                            continue;
+
+                        var cl = tr.GetObject(clId, OpenMode.ForRead) as Polyline;
+                        if (cl == null) continue;
+
+                        footprints[clId] = GradeBeamBuilder.BuildFootprint(cl, beamWidths[handle]);
+                    }
+
+                    // --- Generate left/right edge polylines
+                    var allEdges = new List<GradeBeamBuilder.BeamEdgeSegment>();
+                    foreach (var (handle, gbDict) in beams)
+                    {
+                        if (!NODCore.TryGetObjectIdFromHandleString(tr, db, handle, out var clId))
+                            continue;
+
+                        var cl = tr.GetObject(clId, OpenMode.ForRead) as Polyline;
+                        if (cl == null) continue;
+
+                        double width = beamWidths[handle];
+
+                        var leftOffset = GradeBeamBuilder.OffsetPolyline(cl, +width);
+                        var rightOffset = GradeBeamBuilder.OffsetPolyline(cl, -width);
+
+                        allEdges.AddRange(GradeBeamBuilder.ExplodeEdges(clId, leftOffset, true));
+                        allEdges.AddRange(GradeBeamBuilder.ExplodeEdges(clId, rightOffset, false));
+                    }
+
+                    // --- Trim edges using footprints
+                    var trimmedEdges = GradeBeamBuilder.TrimAllEdges(allEdges, footprints);
+
+                    // --- Store edges and draw in modelspace
+                    foreach (var group in trimmedEdges.GroupBy(e => e.BeamId))
+                    {
+                        var leftSegs = group.Where(e => e.IsLeft).ToList();
+                        var rightSegs = group.Where(e => !e.IsLeft).ToList();
+
+                        ObjectId[] leftIds = leftSegs.Select(seg =>
+                        {
+                            var ln = new Line(seg.Segment.StartPoint, seg.Segment.EndPoint) { ColorIndex = 1 };
+                            ms.AppendEntity(ln);
+                            tr.AddNewlyCreatedDBObject(ln, true);
+                            return ln.ObjectId;
+                        }).ToArray();
+
+                        ObjectId[] rightIds = rightSegs.Select(seg =>
+                        {
+                            var ln = new Line(seg.Segment.StartPoint, seg.Segment.EndPoint) { ColorIndex = 5 };
+                            ms.AppendEntity(ln);
+                            tr.AddNewlyCreatedDBObject(ln, true);
+                            return ln.ObjectId;
+                        }).ToArray();
+
+                        string handle = group.Key.Handle.ToString();
+
+                        GradeBeamNOD.StoreEdgeObjects(context, tr, db, handle, leftIds, rightIds);
+                    }
+
+                    doc.Editor.Regen();
+                    tr.Commit();
+                }
+            }
+        }
+
     }
 }
 

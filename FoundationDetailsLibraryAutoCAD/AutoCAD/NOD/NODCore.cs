@@ -15,15 +15,17 @@
 //   │   │           ├─ Width
 //   │   │           └─ Depth
 //   │   │
-//   │   └─ 2A42
-//   │       ├─ EDGES
-//   │       └─ METADATA
+//   │   └─ <additional grade beam -- same structure>
 //   │
 //   └─ FD_BOUNDARY
-//       │
-//       └─ 3B11
-//           ├─ EDGES
-//           └─ METADATA
+//   │   │
+//   │   └─ 3B11
+//   │       ├─ EDGES
+//   │       └─ METADATA
+//   │       
+//   └─ FD_SLABSTRAND
+//   │   
+//   └─ FD_REBAR
 
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Runtime;
@@ -31,9 +33,7 @@ using FoundationDetailsLibraryAutoCAD.Data;
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
 using System.Linq;
-using static FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.HandleHandler;
 
 [assembly: CommandClass(typeof(FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.NODCore))]
 
@@ -50,8 +50,8 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         // Primary subdicts under the ROOT ofthe NOD
         public const string KEY_BOUNDARY_SUBDICT = "FD_BOUNDARY";
         public const string KEY_GRADEBEAM_SUBDICT = "FD_GRADEBEAM";
-        //public const string KEY_SLABSTRAND_SUBDICT = "FD_SLABSTRAND";
-        //public const string KEY_REBAR = "FD_REBAR";
+        public const string KEY_SLABSTRAND_SUBDICT = "FD_SLABSTRAND";
+        public const string KEY_REBAR_SUBDICT = "FD_REBAR";
 
         // The gradebam NODE subdicts -- 
         public const string KEY_EDGES_SUBDICT = "FD_EDGES";
@@ -68,37 +68,61 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         public const string KEY_ANALYSIS_DESIGN = "DESIGN";
         public const string KEY_ANALYSIS_STATUS = "STATUS";
 
+        // list of primary subdirectories under EE_FDN
         public static readonly string[] KNOWN_ROOT_SUBDIRS =
         {
             KEY_BOUNDARY_SUBDICT,
             KEY_GRADEBEAM_SUBDICT,
-            //KEY_SLABSTRAND_SUBDICT,
-            //KEY_REBAR
+            KEY_SLABSTRAND_SUBDICT,
+            KEY_REBAR_SUBDICT
         };
         #endregion
 
 
         #region Enumeration Helpers
-        internal static IEnumerable<(string Key, ObjectId Id)> EnumerateDictionary(DBDictionary dict)
+        internal static IEnumerable<(string Key, ObjectId Id)> EnumerateDictionary(DBDictionary dict, string parentName = "<root>", int depth = 0)
         {
-            if (dict == null || dict.IsErased)
+            if (dict == null)
+            {
+                System.Diagnostics.Debug.WriteLine($"{new string(' ', depth * 2)}[DEBUG] Dictionary '{parentName}' is null.");
                 yield break;
+            }
+
+            if (dict.IsErased)
+            {
+                System.Diagnostics.Debug.WriteLine($"{new string(' ', depth * 2)}[DEBUG] Dictionary '{parentName}' is erased.");
+                yield break;
+            }
+
+            string indent = new string(' ', depth * 2);
 
             foreach (DictionaryEntry entry in dict)
             {
                 if (!(entry.Key is string key))
+                {
+                    System.Diagnostics.Debug.WriteLine($"{indent}[DEBUG] Skipping non-string key in '{parentName}'.");
                     continue;
+                }
 
                 if (!(entry.Value is ObjectId id))
+                {
+                    System.Diagnostics.Debug.WriteLine($"{indent}[DEBUG] Key '{key}' in '{parentName}' is not an ObjectId.");
                     continue;
+                }
+
+                string status = $"Key='{key}' | Id={id.Handle.ToString()} | IsValid={id.IsValid} | IsNull={id.IsNull} | IsErased={id.IsErased}";
+                System.Diagnostics.Debug.WriteLine($"{indent}[DEBUG] Enumerating entry: {status}");
 
                 if (!id.IsValid || id.IsNull || id.IsErased)
+                {
+                    System.Diagnostics.Debug.WriteLine($"{indent}[DEBUG] Skipping entry '{key}' because Id is invalid or erased.");
                     continue;
+                }
 
                 yield return (key, id);
             }
         }
-        
+
         #endregion
 
         #region NOD Structure Creation and Retrieval
@@ -208,7 +232,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             return null;
         }
 
-
         /// <summary>
         /// Return the FD_BOUNDARY subdictionary
         /// </summary>
@@ -249,6 +272,84 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         }
 
         /// <summary>
+        /// Return the FD_SLABSTRAND subdictionary
+        /// </summary>
+        /// <param name="tr"></param>
+        /// <param name="db"></param>
+        /// <param name="forWrite"></param>
+        /// <returns></returns>        
+        internal static DBDictionary GetOrCreateSlabStrandRootDictionary(
+            Transaction tr,
+            Database db,
+            bool forWrite = false)
+        {
+            if (tr == null || db == null)
+                return null;
+
+            var rootDict = GetFoundationRootDictionary(tr, db);
+            if (rootDict == null)
+                return null;
+
+            // If we are allowed to create it, delegate to helper
+            if (forWrite)
+            {
+                return GetOrCreateNestedSubDictionary(
+                    tr,
+                    rootDict,
+                    NODCore.KEY_SLABSTRAND_SUBDICT);
+            }
+
+            // Otherwise only return if it exists
+            if (rootDict.Contains(NODCore.KEY_SLABSTRAND_SUBDICT))
+            {
+                return tr.GetObject(
+                    rootDict.GetAt(NODCore.KEY_SLABSTRAND_SUBDICT),
+                    OpenMode.ForRead) as DBDictionary;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Return the FD_REBAR subdictionary
+        /// </summary>
+        /// <param name="tr"></param>
+        /// <param name="db"></param>
+        /// <param name="forWrite"></param>
+        /// <returns></returns>        
+        internal static DBDictionary GetOrCreateRebarRootDictionary(
+            Transaction tr,
+            Database db,
+            bool forWrite = false)
+        {
+            if (tr == null || db == null)
+                return null;
+
+            var rootDict = GetFoundationRootDictionary(tr, db);
+            if (rootDict == null)
+                return null;
+
+            // If we are allowed to create it, delegate to helper
+            if (forWrite)
+            {
+                return GetOrCreateNestedSubDictionary(
+                    tr,
+                    rootDict,
+                    NODCore.KEY_SLABSTRAND_SUBDICT);
+            }
+
+            // Otherwise only return if it exists
+            if (rootDict.Contains(NODCore.KEY_REBAR_SUBDICT))
+            {
+                return tr.GetObject(
+                    rootDict.GetAt(NODCore.KEY_REBAR_SUBDICT),
+                    OpenMode.ForRead) as DBDictionary;
+            }
+
+            return null;
+        }
+
+        /// <summary>
         /// Get or create a grade beam node under FD_BOUNDARY (single entry)
         /// </summary>
         internal static DBDictionary GetOrCreateBoundaryGradeBeamNode(Transaction tr, Database db, string handle)
@@ -257,7 +358,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 throw new ArgumentException("Handle is required", nameof(handle));
 
             var root = GetOrCreateBoundaryBeamRootDictionary(tr, db, forWrite: true);
-            return CreateGradeBeamNode_Internal(tr, root, handle);
+            return CreateNODBeamNode_Internal(tr, root, handle);
         }
 
         /// <summary>
@@ -269,14 +370,13 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 throw new ArgumentException("Handle is required", nameof(handle));
 
             var root = GetOrCreateGradeBeamRootDictionary(tr, db, forWrite: true);
-            return CreateGradeBeamNode_Internal(tr, root, handle);
+            return CreateNODBeamNode_Internal(tr, root, handle);
         }
 
         /// <summary>
         /// Creates (or gets if it already exists) a grade beam node by handle within the specified parent dictionary.
-        /// Ensures the required subdictionaries (edges and strands) are present.
-        /// </summary>
-        internal static DBDictionary CreateGradeBeamNode_Internal(
+        /// Ensures the required subdictionaries structure is correctly created.
+        internal static DBDictionary CreateNODBeamNode_Internal(
             Transaction tr,
             DBDictionary parentDict,
             string centerlineHandle)
@@ -300,9 +400,13 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             parentDict.SetAt(centerlineHandle, gbNode);
             tr.AddNewlyCreatedDBObject(gbNode, true);
 
-            // --- Ensure required subdictionaries exist
-            GetOrCreateNestedSubDictionary(tr, gbNode, NODCore.KEY_EDGES_SUBDICT);
-            GetOrCreateNestedSubDictionary(tr, gbNode, NODCore.KEY_BEAMSTRAND_SUBDICT);
+            // --- Ensure required subdictionaries exist under gbNode
+            var edgesSubDict = GetOrCreateNestedSubDictionary(tr, gbNode, NODCore.KEY_EDGES_SUBDICT);
+            var beamStrandSubDict = GetOrCreateNestedSubDictionary(tr, gbNode, NODCore.KEY_BEAMSTRAND_SUBDICT);
+            var metaDict = GetOrCreateNestedSubDictionary(tr, gbNode, NODCore.KEY_METADATA_SUBDICT);
+
+            // --- Ensure that the subdicts under META are made
+            var sectionDict = GetOrCreateNestedSubDictionary(tr, metaDict, NODCore.KEY_META_SECTION_SUBDICT);
 
             return gbNode;
         }
@@ -656,6 +760,9 @@ DBDictionary dict,
 string key,
 double value)
         {
+            if (!dict.IsWriteEnabled)
+                dict.UpgradeOpen(); // <--- critical
+
             Xrecord xr;
 
             if (dict.Contains(key))

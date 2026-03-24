@@ -1,7 +1,5 @@
 ﻿using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
-using FoundationDetailsLibraryAutoCAD.AutoCAD.NOD;
-using FoundationDetailsLibraryAutoCAD.Data;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -12,126 +10,9 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
     {
         public const double DEFAULT_BEAM_WIDTH_IN = 10.0;
         public const double DEFAULT_BEAM_DEPTH_IN = 28.0;
-        internal static void CreateGradeBeams(FoundationContext context, Transaction existingTr = null)
-        {
-            if (context == null) return;
-
-            var doc = context.Document;
-            var db = doc.Database;
-
-            using (doc.LockDocument())
-            {
-                if (existingTr != null)
-                {
-                    // --- Use existing transaction
-                    CreateGradeBeamsInternal(context, existingTr);
-                }
-                else
-                {
-                    // --- Lock and create new transaction
-                    using (var tr = db.TransactionManager.StartTransaction())
-                    {
-                        CreateGradeBeamsInternal(context, tr);
-                        tr.Commit();
-                    }
-                }
-            }
-        }
-
-        // Internal helper that assumes transaction is open
-        private static void CreateGradeBeamsInternal(FoundationContext context, Transaction tr)
-        {
-            if (context?.Document == null || tr == null) return;
-
-            var db = context.Document.Database;
-            var doc = context.Document;
-
-            var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-            var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
-
-            // --- Enumerate all grade beams
-            var beams = GradeBeamNOD.EnumerateGradeBeams(context, tr).ToList();
-            if (!beams.Any()) return;
-
-            // --- Delete all existing edges
-            foreach (var (_, gbDict) in beams)
-                GradeBeamNOD.DeleteBeamEdgesOnly(context, tr, gbDict);
-
-            // --- Cache beam widths
-            var beamWidths = beams.ToDictionary(
-                b => b.Handle,
-                b => GradeBeamNOD.GetBeamSection(tr, b.Dict).Width
-            );
-
-            // --- Build footprints
-            var footprints = new Dictionary<ObjectId, Polyline>();
-            foreach (var (handle, gbDict) in beams)
-            {
-                if (!NODCore.TryGetObjectIdFromHandleString(tr, db, handle, out var clId))
-                    continue;
-
-                var cl = tr.GetObject(clId, OpenMode.ForRead) as Polyline;
-                if (cl == null) continue;
-
-                footprints[clId] = BuildFootprint(cl, beamWidths[handle]);
-            }
-
-            // --- Generate left/right edge polylines
-            var allEdges = new List<BeamEdgeSegment>();
-            foreach (var (handle, gbDict) in beams)
-            {
-                if (!NODCore.TryGetObjectIdFromHandleString(tr, db, handle, out var clId))
-                    continue;
-
-                var cl = tr.GetObject(clId, OpenMode.ForRead) as Polyline;
-                if (cl == null) continue;
-
-                double width = beamWidths[handle];
-
-                var leftOffset = OffsetPolyline(cl, +width);
-                var rightOffset = OffsetPolyline(cl, -width);
-
-                allEdges.AddRange(ExplodeEdges(clId, leftOffset, true));
-                allEdges.AddRange(ExplodeEdges(clId, rightOffset, false));
-            }
-
-            // --- Trim edges using footprints
-            var trimmedEdges = TrimAllEdges(allEdges, footprints);
-
-            // --- Store edges and draw in modelspace
-            foreach (var group in trimmedEdges.GroupBy(e => e.BeamId))
-            {
-                var leftSegs = group.Where(e => e.IsLeft).ToList();
-                var rightSegs = group.Where(e => !e.IsLeft).ToList();
-
-                ObjectId[] leftIds = leftSegs.Select(seg =>
-                {
-                    var ln = new Line(seg.Segment.StartPoint, seg.Segment.EndPoint) { ColorIndex = 1 };
-                    ms.AppendEntity(ln);
-                    tr.AddNewlyCreatedDBObject(ln, true);
-                    return ln.ObjectId;
-                }).ToArray();
-
-                ObjectId[] rightIds = rightSegs.Select(seg =>
-                {
-                    var ln = new Line(seg.Segment.StartPoint, seg.Segment.EndPoint) { ColorIndex = 5 };
-                    ms.AppendEntity(ln);
-                    tr.AddNewlyCreatedDBObject(ln, true);
-                    return ln.ObjectId;
-                }).ToArray();
-
-                string handle = group.Key.Handle.ToString();
-
-                GradeBeamNOD.StoreEdgeObjects(context, tr, db, handle, leftIds, rightIds);
-            }
-
-            doc.Editor.Regen();
-        }
-
-
 
         // Beam edge segment data structure
-        class BeamEdgeSegment
+        internal class BeamEdgeSegment
         {
             public ObjectId BeamId;
             public bool IsLeft;
@@ -139,14 +20,14 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         }
 
         // Offset polyline safely
-        static Polyline OffsetPolyline(Polyline pl, double offset)
+        internal static Polyline OffsetPolyline(Polyline pl, double offset)
         {
             var curves = pl.GetOffsetCurves(offset);
             return (Polyline)curves[0];
         }
 
         // Build beam footprint polygon from centerline + width
-        static Polyline BuildFootprint(Polyline centerline, double halfWidth)
+        internal static Polyline BuildFootprint(Polyline centerline, double halfWidth)
         {
             var left = OffsetPolyline(centerline, +halfWidth);
             var right = OffsetPolyline(centerline, -halfWidth);
@@ -165,7 +46,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         }
 
         // Explode a polyline into atomic edge segments
-        static List<BeamEdgeSegment> ExplodeEdges(ObjectId beamId, Polyline edge, bool isLeft)
+        internal static List<BeamEdgeSegment> ExplodeEdges(ObjectId beamId, Polyline edge, bool isLeft)
         {
             var list = new List<BeamEdgeSegment>();
             for (int i = 0; i < edge.NumberOfVertices - 1; i++)
@@ -183,7 +64,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         }
 
         // Trim all edges against all other beam footprints
-        static List<BeamEdgeSegment> TrimAllEdges(
+        internal static List<BeamEdgeSegment> TrimAllEdges(
             List<BeamEdgeSegment> edges,
             Dictionary<ObjectId, Polyline> footprints)
         {
@@ -221,7 +102,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         }
 
         // Trim a line segment by a polygon footprint
-        static List<LineSegment3d> TrimSegmentByPolygon(LineSegment3d seg, Polyline poly)
+        internal static List<LineSegment3d> TrimSegmentByPolygon(LineSegment3d seg, Polyline poly)
         {
             var pts = new List<Point3d> { seg.StartPoint, seg.EndPoint };
 
@@ -251,7 +132,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             return kept;
         }
 
-        static double GetParameterAlongSegment(LineSegment3d seg, Point3d pt)
+        internal static double GetParameterAlongSegment(LineSegment3d seg, Point3d pt)
         {
             double dx = seg.EndPoint.X - seg.StartPoint.X;
             double dy = seg.EndPoint.Y - seg.StartPoint.Y;
@@ -264,7 +145,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
         }
 
 
-        static bool TryIntersect2D(LineSegment3d a, LineSegment3d b, out Point3d ip)
+        internal static bool TryIntersect2D(LineSegment3d a, LineSegment3d b, out Point3d ip)
         {
             ip = new Point3d();
 
@@ -296,7 +177,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
 
 
         // Explode polyline into line segments
-        static IEnumerable<LineSegment3d> ExplodePolylineEdges(Polyline pl)
+        internal static IEnumerable<LineSegment3d> ExplodePolylineEdges(Polyline pl)
         {
             for (int i = 0; i < pl.NumberOfVertices; i++)
             {
@@ -314,7 +195,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD
             public int GetHashCode(Point3d p) => 0;
         }
 
-        static bool PointInsidePolyline(Point3d pt, Polyline poly)
+        internal static bool PointInsidePolyline(Point3d pt, Polyline poly)
         {
             int crossings = 0;
             int n = poly.NumberOfVertices;
