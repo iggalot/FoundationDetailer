@@ -127,8 +127,8 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                             NODCore.KEY_META_SECTION_SUBDICT);
 
                         // --- WRITE VALUES
-                        NODCore.SetRealValue(tr, sectionDict, NODCore.KEY_SECTION_WIDTH, e.Width);
-                        NODCore.SetRealValue(tr, sectionDict, NODCore.KEY_SECTION_DEPTH, e.Depth);
+                        NODCore.SetXRecordValue(tr, sectionDict, NODCore.KEY_SECTION_WIDTH, e.Width);
+                        NODCore.SetXRecordValue(tr, sectionDict, NODCore.KEY_SECTION_DEPTH, e.Depth);
 
                         MessageBox.Show("W: " + e.Width + "   D: " + e.Depth);
 
@@ -1008,10 +1008,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
                 if (convertedAny)
                 {
-                    // --- Clean all existing edges before rebuilding
-                    int edgesDeleted = GradeBeamManager.DeleteEdgesForAllGradeBeams(context);
-                    ed.WriteMessage($"\n[DEBUG] Deleted {edgesDeleted} existing grade beam edges.");
-
                     // --- Regenerate edges for all grade beams
                     _gradeBeamService.GenerateEdgesForAllGradeBeams(context);
                     ed.WriteMessage("\n[DEBUG] Rebuilt grade beam edges.");
@@ -1019,7 +1015,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                     TxtStatus.Text = "Grade beams updated and edges regenerated.";
 
                     UpdateAll();
-                    //Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));
                 }
                 else
                 {

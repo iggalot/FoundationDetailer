@@ -341,14 +341,14 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 metaDict.UpgradeOpen();
 
             // --- Read stored width/depth
-            var width = NODCore.GetRealValue(tr, sectionDict, NODCore.KEY_SECTION_WIDTH);
-            var depth = NODCore.GetRealValue(tr, sectionDict, NODCore.KEY_SECTION_DEPTH);
+            var width = NODCore.GetXRecordValue(tr, sectionDict, NODCore.KEY_SECTION_WIDTH);
+            var depth = NODCore.GetXRecordValue(tr, sectionDict, NODCore.KEY_SECTION_DEPTH);
 
             // --- Set defaults if missing
             if (!width.HasValue)
-                NODCore.SetRealValue(tr, sectionDict, NODCore.KEY_SECTION_WIDTH, GradeBeamBuilder.DEFAULT_BEAM_WIDTH_IN);
+                NODCore.SetXRecordValue(tr, sectionDict, NODCore.KEY_SECTION_WIDTH, GradeBeamBuilder.DEFAULT_BEAM_WIDTH_IN);
             if (!depth.HasValue)
-                NODCore.SetRealValue(tr, sectionDict, NODCore.KEY_SECTION_DEPTH, GradeBeamBuilder.DEFAULT_BEAM_DEPTH_IN);
+                NODCore.SetXRecordValue(tr, sectionDict, NODCore.KEY_SECTION_DEPTH, GradeBeamBuilder.DEFAULT_BEAM_DEPTH_IN);
 
             return (
                 width ?? GradeBeamBuilder.DEFAULT_BEAM_WIDTH_IN,

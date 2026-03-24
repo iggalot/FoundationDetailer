@@ -858,8 +858,8 @@ namespace FoundationDetailer.Managers
                     {
                         if (NODCore.TryGetGradeBeamSectionFromMetaDict(tr, boundaryNodeDict, out var sectionDict))
                         {
-                            width = NODCore.GetRealValue(tr, sectionDict, NODCore.KEY_SECTION_WIDTH.ToString()) ?? DEFAULT_WIDTH;
-                            depth = NODCore.GetRealValue(tr, sectionDict, NODCore.KEY_SECTION_DEPTH.ToString()) ?? DEFAULT_DEPTH;
+                            width = NODCore.GetXRecordValue(tr, sectionDict, NODCore.KEY_SECTION_WIDTH.ToString()) ?? DEFAULT_WIDTH;
+                            depth = NODCore.GetXRecordValue(tr, sectionDict, NODCore.KEY_SECTION_DEPTH.ToString()) ?? DEFAULT_DEPTH;
                         }
                     }
 
@@ -907,8 +907,8 @@ namespace FoundationDetailer.Managers
                         if (NODCore.TryGetGradeBeamSectionFromMetaDict(tr, boundaryNodeDict, out var sectionDict))
                         {
                             // set values safely
-                            NODCore.SetRealValue(tr, sectionDict, NODCore.KEY_SECTION_WIDTH.ToString(), width);
-                            NODCore.SetRealValue(tr, sectionDict, NODCore.KEY_SECTION_DEPTH.ToString(), depth);
+                            NODCore.SetXRecordValue(tr, sectionDict, NODCore.KEY_SECTION_WIDTH.ToString(), width);
+                            NODCore.SetXRecordValue(tr, sectionDict, NODCore.KEY_SECTION_DEPTH.ToString(), depth);
                         }
                         else
                         {

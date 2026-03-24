@@ -788,11 +788,19 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
         #endregion
 
-        internal static void SetRealValue(
-Transaction tr,
-DBDictionary dict,
-string key,
-double value)
+        /// <summary>
+        /// Get's an Xrecord with a specified key from a dictionary.
+        /// This is a WRITE transaction event.
+        /// </summary>
+        /// <param name="tr"></param>
+        /// <param name="dict"></param>
+        /// <param name="key"></param>
+        /// <param name="value"></param>
+        internal static void SetXRecordValue(
+            Transaction tr,
+            DBDictionary dict,
+            string key,
+            double value)
         {
             if (!dict.IsWriteEnabled)
                 dict.UpgradeOpen(); // <--- critical
@@ -814,10 +822,17 @@ double value)
                 new TypedValue((int)DxfCode.Real, value));
         }
 
-        internal static double? GetRealValue(
-    Transaction tr,
-    DBDictionary dict,
-    string key)
+        /// <summary>
+        /// Gets the value from an Xrecord for a specified key in a dictionary.
+        /// </summary>
+        /// <param name="tr"></param>
+        /// <param name="dict"></param>
+        /// <param name="key"></param>
+        /// <returns></returns>
+        internal static double? GetXRecordValue(
+            Transaction tr,
+            DBDictionary dict,
+            string key)
         {
             if (!dict.Contains(key))
                 return null;
