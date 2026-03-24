@@ -692,63 +692,97 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         }
 
 
-        // --- Helper to recursively erase all entries in a dictionary
         internal static void EraseDictionaryRecursive(
             Transaction tr,
             Database db,
             DBDictionary dict,
             ref int edgesDeleted,
             ref int beamsDeleted,
-            bool eraseEntities = true)
+            bool eraseEntities = true,
+            string parentKey = "<root>",
+            int depth = 0)
         {
             if (tr == null || db == null || dict == null)
                 return;
 
-            var ids = new List<ObjectId>();
-            foreach (DictionaryEntry entry in dict)
-                if (entry.Value is ObjectId id && id.IsValid && !id.IsNull)
-                    ids.Add(id);
+            string indent = new string(' ', depth * 2);
+            System.Diagnostics.Debug.WriteLine($"{indent}Processing dictionary: {parentKey}");
 
-            foreach (var id in ids)
+            // Collect all entries first
+            var entries = dict.Cast<DictionaryEntry>()
+                              .Select(e => new { Key = e.Key.ToString(), Value = e.Value as ObjectId? })
+                              .Where(e => e.Value.HasValue && e.Value.Value.IsValid && !e.Value.Value.IsNull)
+                              .ToList();
+
+            foreach (var entry in entries)
             {
-                if (id.IsErased)
-                    continue;
+                var id = entry.Value.Value;
+
+                if (id.IsErased) continue;
 
                 var obj = tr.GetObject(id, OpenMode.ForWrite, false);
 
-                if (obj is DBDictionary subDict)
+                switch (obj)
                 {
-                    EraseDictionaryRecursive(tr, db, subDict, ref edgesDeleted, ref beamsDeleted, eraseEntities);
-                    subDict.Erase();
-                }
-                else if (obj is Xrecord xrec)
-                {
-                    if (xrec.Data != null)
-                    {
-                        foreach (TypedValue tv in xrec.Data)
+                    case DBDictionary subDict:
+                        System.Diagnostics.Debug.WriteLine($"{indent}  Found sub-dictionary: {entry.Key}");
+                        // Recurse into sub-dictionary
+                        EraseDictionaryRecursive(tr, db, subDict, ref edgesDeleted, ref beamsDeleted, eraseEntities, entry.Key, depth + 1);
+                        if (!subDict.IsErased)
                         {
-                            if (!eraseEntities) continue; // <-- skip entities if false
+                            subDict.Erase();
+                            System.Diagnostics.Debug.WriteLine($"{indent}  Erased sub-dictionary: {entry.Key}");
+                        }
+                        break;
 
-                            if (tv.TypeCode == (int)DxfCode.Text && tv.Value is string handleStr)
+                    case Xrecord xrec:
+                        System.Diagnostics.Debug.WriteLine($"{indent}  Found XRecord: {entry.Key}");
+                        // Optional: erase referenced entities
+                        if (eraseEntities && xrec.Data != null)
+                        {
+                            foreach (var tv in xrec.Data)
                             {
-                                try
+                                if (tv.TypeCode == (int)DxfCode.Text && tv.Value is string handleStr)
                                 {
-                                    var handle = new Handle(Convert.ToInt64(handleStr, 16));
-                                    ObjectId entId = db.GetObjectId(false, handle, 0);
-
-                                    if (entId.IsValid && !entId.IsErased)
+                                    try
                                     {
-                                        (tr.GetObject(entId, OpenMode.ForWrite) as Entity)?.Erase();
-                                        edgesDeleted++;
+                                        var handle = new Handle(Convert.ToInt64(handleStr, 16));
+                                        var entId = db.GetObjectId(false, handle, 0);
+                                        if (entId.IsValid && !entId.IsErased)
+                                        {
+                                            (tr.GetObject(entId, OpenMode.ForWrite) as Entity)?.Erase();
+                                            edgesDeleted++;
+                                            System.Diagnostics.Debug.WriteLine($"{indent}    Erased entity from XRecord: {handleStr}");
+                                        }
                                     }
+                                    catch { }
                                 }
-                                catch { }
                             }
                         }
-                    }
 
-                    xrec.Erase();
+                        if (!xrec.IsErased)
+                        {
+                            xrec.Erase();
+                            System.Diagnostics.Debug.WriteLine($"{indent}  Erased XRecord: {entry.Key}");
+                            beamsDeleted++;
+                        }
+                        break;
+
+                    default:
+                        System.Diagnostics.Debug.WriteLine($"{indent}  Unknown object type for key: {entry.Key}");
+                        break;
                 }
+            }
+
+            // --- FINAL DEBUG: list remaining keys in this dictionary after erase ---
+            var remainingKeys = dict.Cast<DictionaryEntry>().Select(e => e.Key.ToString()).ToList();
+            if (remainingKeys.Count > 0)
+            {
+                System.Diagnostics.Debug.WriteLine($"{indent}  Remaining keys in dictionary '{parentKey}': {string.Join(", ", remainingKeys)}");
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine($"{indent}  Dictionary '{parentKey}' is now empty.");
             }
         }
 
