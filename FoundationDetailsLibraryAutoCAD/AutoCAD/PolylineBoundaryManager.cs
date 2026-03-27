@@ -10,7 +10,6 @@ using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
-using System.Windows.Controls;
 
 namespace FoundationDetailer.Managers
 {
@@ -59,12 +58,6 @@ namespace FoundationDetailer.Managers
             BoundaryChanged?.Invoke(null, EventArgs.Empty);
         }
 
-        #region Initialization & Attach/Detach
-
-
-
-        #endregion
-
         #region Public API (original functionality preserved)
 
         public void Initialize(FoundationContext context)
@@ -91,7 +84,7 @@ namespace FoundationDetailer.Managers
         /// <param name="appendToModelSpace"></param>
         /// <returns></returns>
         /// <exception cref="ArgumentNullException"></exception>
-        internal Polyline RegisterBoundaryBeam(
+        internal Polyline RegisterGradeBeamPerimeterBeam(
             FoundationContext context,
             Polyline pl,
             Transaction tr,
@@ -110,17 +103,17 @@ namespace FoundationDetailer.Managers
             }
 
 
-            // --- Open FD_BOUNDARY root dictionary (always for write) ---
-            var boundaryRootDict = NODCore.GetOrCreateBoundaryBeamRootDictionary(tr, db, forWrite: true);
-            if (boundaryRootDict == null)
-                throw new InvalidOperationException("Unable to open FD_BOUNDARY dictionary.");
+            // --- Open FD_GRADEBEAM_PERIMETER root dictionary (always for write) ---
+            var gradebeamPerimeterRootDict = NODCore.GetOrCreateGradeBeamPerimeterRootDictionary(tr, db, forWrite: true);
+            if (gradebeamPerimeterRootDict == null)
+                throw new InvalidOperationException("Unable to open " + NODCore.KEY_GRADEBEAM_PERIMETER_SUBDICT + " dictionary.");
 
             // --- Delete existing boundary grade beam node, if any ---
-            if (boundaryRootDict.Count > 0)
+            if (gradebeamPerimeterRootDict.Count > 0)
             {
                 // FD_BOUNDARY should only have one entry, get its key
                 string existingHandle = null;
-                foreach (DictionaryEntry de in boundaryRootDict)
+                foreach (DictionaryEntry de in gradebeamPerimeterRootDict)
                 {
                     existingHandle = de.Key as string;
                     break; // only the first
@@ -129,16 +122,16 @@ namespace FoundationDetailer.Managers
                 if (!string.IsNullOrWhiteSpace(existingHandle))
                 {
                     DBDictionary existingNode;
-                    if (NODCore.TryGetBoundaryBeamNode(tr, db, out existingNode))
+                    if (NODCore.TryGetGradeBeamPerimeterBeamNode(tr, db, out existingNode))
                     {
                         int edgesDeleted = 0, beamsDeleted = 0;
                         NODCore.EraseDictionaryRecursive(tr, db, existingNode, ref edgesDeleted, ref beamsDeleted);
 
                         // Remove entry from FD_BOUNDARY
-                        if (!boundaryRootDict.IsWriteEnabled)
-                            boundaryRootDict.UpgradeOpen();
+                        if (!gradebeamPerimeterRootDict.IsWriteEnabled)
+                            gradebeamPerimeterRootDict.UpgradeOpen();
 
-                        boundaryRootDict.Remove(existingHandle);
+                        gradebeamPerimeterRootDict.Remove(existingHandle);
                     }
                 }
             }
@@ -167,7 +160,7 @@ namespace FoundationDetailer.Managers
             using (var lockDoc = context.Document.LockDocument())
             using (var tr = context.Document.Database.TransactionManager.StartTransaction())
             {
-                int deleted = DeleteBoundaryBeamEdgesOnlyInternal(context, tr);
+                int deleted = DeleteGradeBeamPerimeterBeam_EdgesOnlyInternal(context, tr);
                 tr.Commit();
                 return deleted;
             }
@@ -175,9 +168,10 @@ namespace FoundationDetailer.Managers
 
         /// <summary>
         /// Deletes all edge entities of a single grade/boundary beam but keeps centerline and NOD dictionary.
+        /// this functoion deletes the perimeter gradebeam edges
         /// Returns the number of entities erased.
         /// </summary>
-        internal int DeleteBoundaryBeamEdgesOnlyInternal(FoundationContext context, Transaction tr)
+        internal int DeleteGradeBeamPerimeterBeam_EdgesOnlyInternal(FoundationContext context, Transaction tr)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
             if (tr == null) throw new ArgumentNullException(nameof(tr));
@@ -187,7 +181,7 @@ namespace FoundationDetailer.Managers
 
             // --- Get the beam node first (boundary or gradebeam)
             DBDictionary beamNode;
-            if (!NODCore.TryGetBoundaryBeamNode(tr, db, out beamNode))
+            if (!NODCore.TryGetGradeBeamPerimeterBeamNode(tr, db, out beamNode))
                 return 0;
 
             // --- Get the EDGES subdictionary if it exists
@@ -251,7 +245,7 @@ namespace FoundationDetailer.Managers
             var db = context.Document.Database;
 
             // --- Get the FD_BOUNDARY beam node
-            if (!NODCore.TryGetBoundaryBeamNode(tr, db, out DBDictionary beamNode))
+            if (!NODCore.TryGetGradeBeamPerimeterBeamNode(tr, db, out DBDictionary beamNode))
                 return;
 
             // --- Recursively erase everything under the node
@@ -268,7 +262,7 @@ namespace FoundationDetailer.Managers
             }
 
             // --- Remove the node itself from FD_BOUNDARY
-            var rootDict = NODCore.GetOrCreateBoundaryBeamRootDictionary(tr, db, forWrite: true);
+            var rootDict = NODCore.GetOrCreateBoundaryRootDictionary(tr, db, forWrite: true);
             if (rootDict != null)
             {
                 if (!rootDict.IsWriteEnabled)
@@ -295,7 +289,7 @@ namespace FoundationDetailer.Managers
             using (var tr = context.Document.Database.TransactionManager.StartTransaction())
             {
                 var db = context.Document.Database;
-                var rootDict = NODCore.GetOrCreateBoundaryBeamRootDictionary(tr, db, forWrite: true);
+                var rootDict = NODCore.GetOrCreateBoundaryRootDictionary(tr, db, forWrite: true);
                 if (rootDict == null || rootDict.Count == 0)
                     return 0;
 
@@ -333,13 +327,13 @@ namespace FoundationDetailer.Managers
 
             // --- Get FD_BOUNDARY root dictionary
             var db = context.Document.Database;
-            var rootDict = NODCore.GetOrCreateBoundaryBeamRootDictionary(tr, db, forWrite: true);
+            var rootDict = NODCore.GetOrCreateBoundaryRootDictionary(tr, db, forWrite: true);
             if (rootDict == null || !rootDict.Contains(handle))
                 return;
 
             // --- Get the beam node dictionary
             DBDictionary beamNode;
-            if (!NODCore.TryGetBoundaryBeamNode(tr, db, out beamNode))
+            if (!NODCore.TryGetGradeBeamPerimeterBeamNode(tr, db, out beamNode))
                 return;
 
             // --- Recursively erase subdictionaries, but do NOT delete AutoCAD entities
@@ -371,7 +365,7 @@ namespace FoundationDetailer.Managers
             using (var tr = db.TransactionManager.StartTransaction())
             {
                 // --- Get the FD_BOUNDARY root dictionary
-                var rootDict = NODCore.GetOrCreateBoundaryBeamRootDictionary(tr, db);
+                var rootDict = NODCore.GetOrCreateBoundaryRootDictionary(tr, db);
                 if (rootDict == null || rootDict.Count == 0)
                     return;
 
@@ -413,7 +407,7 @@ namespace FoundationDetailer.Managers
             using (var tr = db.TransactionManager.StartTransaction())
             {
                 // --- Get the FD_BOUNDARY root dictionary
-                var rootDict = NODCore.GetOrCreateBoundaryBeamRootDictionary(tr, db);
+                var rootDict = NODCore.GetOrCreateBoundaryRootDictionary(tr, db);
                 if (rootDict == null || rootDict.Count == 0)
                     return null;
 
@@ -467,7 +461,7 @@ namespace FoundationDetailer.Managers
             using (doc.LockDocument())
             {
                 // --- Get the FD_BOUNDARY root dictionary
-                var rootDict = NODCore.GetOrCreateBoundaryBeamRootDictionary(tr, db);
+                var rootDict = NODCore.GetOrCreateBoundaryRootDictionary(tr, db);
                 if (rootDict == null || rootDict.Count == 0)
                     return;
 
@@ -743,7 +737,7 @@ namespace FoundationDetailer.Managers
                     status = $"Polyline selected. Area = {area}";
 
                     // Register the beam object into the NOD tree.
-                    RegisterBoundaryBeam(context, boundary, tr, appendToModelSpace: true);
+                    RegisterGradeBeamPerimeterBeam(context, boundary, tr, appendToModelSpace: true);
 
                     tr.Commit();
                 }
@@ -786,7 +780,7 @@ namespace FoundationDetailer.Managers
                 {
                     // --- Get the FD_BOUNDARY root dictionary
                     DBDictionary boundaryRoot;
-                    if (!NODCore.TryGetBoundaryBeamRoot(tr, db, out boundaryRoot))
+                    if (!NODCore.TryGetBoundaryRoot(tr, db, out boundaryRoot))
                         return false;
 
                     if (boundaryRoot.Count == 0)

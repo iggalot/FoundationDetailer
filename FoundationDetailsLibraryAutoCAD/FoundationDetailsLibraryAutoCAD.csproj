@@ -70,7 +70,7 @@
     <Compile Include="AutoCAD\NOD\NODCleaner.cs" />
     <Compile Include="AutoCAD\NOD\NODDebugger.cs" />
     <Compile Include="AutoCAD\NOD\NODHelper.cs" />
-    <Compile Include="AutoCAD\NOD\GradeBeamNOD.cs" />
+    <Compile Include="AutoCAD\NOD\GradeBeamInteriorNOD.cs" />
     <Compile Include="AutoCAD\NOD\NODIssueValidator.cs" />
     <Compile Include="AutoCAD\NOD\NODObjectWrapper.cs" />
     <Compile Include="AutoCAD\NOD\NODScanner.cs" />

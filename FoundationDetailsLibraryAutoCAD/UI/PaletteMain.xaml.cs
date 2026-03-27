@@ -112,7 +112,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                     foreach (var (handle, _) in BoundaryNOD.EnumerateBoundaryBeam(context, tr))
                     {
                         // --- Get boundary node (DO NOT blindly create unless needed)
-                        if (!NODCore.TryGetBoundaryBeamNode(tr, db, out var boundaryNode))
+                        if (!NODCore.TryGetGradeBeamPerimeterBeamNode(tr, db, out var boundaryNode))
                             continue;
 
                         // --- Get or create META → SECTION
@@ -351,7 +351,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
                 ed.WriteMessage("\n[DEBUG] Deleting all grade beams...");
 
-                totalBeamsDeleted += _gradeBeamService.DeleteAllGradeBeams(context);
+                totalBeamsDeleted += _gradeBeamService.DeleteAllInteriorGradeBeams(context);
                 ed.WriteMessage($"\n[DEBUG] Deleted {totalBeamsDeleted} grade beam edges.");
 
                 // --- Rebuild edges
@@ -462,7 +462,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 // --- Delete selected beam
                 foreach (var handle in uniqueHandles)
                 {
-                    totalBeamsDeleted += _gradeBeamService.DeleteSingleGradeBeam(context, handle);
+                    totalBeamsDeleted += _gradeBeamService.DeleteSingleInteriorGradeBeam(context, handle);
 
                 }
                 ed.WriteMessage($"\n[DEBUG] Deleted {totalBeamsDeleted} grade beam edges.");
@@ -519,7 +519,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 }
 
                 // --- Call manager to delete all edges
-                int totalErased = GradeBeamManager.DeleteEdgesForAllGradeBeams(context);
+                int totalErased = GradeBeamManager.DeleteEdgesForAllInteriorGradeBeams(context);
 
                 ed.WriteMessage($"\nErased {totalErased} edge entities across all grade beams.");
                 UpdateAll();
@@ -627,7 +627,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
 
                     // Add the grade beam
-                    _gradeBeamService.AddInterpolatedGradeBeam(context, start, end);
+                    _gradeBeamService.AddInterpolatedInteriorGradeBeam(context, start, end);
                 }
 
                 tr.Commit();
@@ -713,7 +713,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 using (doc.LockDocument())
                 using (var tr = db.TransactionManager.StartTransaction())
                 {
-                    _gradeBeamService.RegisterGradeBeam(context, newPl, tr, appendToModelSpace: true);
+                    _gradeBeamService.RegisterInteriorGradeBeam(context, newPl, tr, appendToModelSpace: true);
                     tr.Commit();
                 }
 
@@ -773,7 +773,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
             using (var tr = context.Document.Database.TransactionManager.StartTransaction())
             {
-                if (NODCore.TryGetBoundaryBeamRoot(tr, context.Document.Database, out var boundaryRoot))
+                if (NODCore.TryGetBoundaryRoot(tr, context.Document.Database, out var boundaryRoot))
                 {
                     foreach (var (key, _) in NODCore.EnumerateDictionary(boundaryRoot))
                     {
@@ -829,7 +829,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             RefreshGradeBeamSummary();
 
             PrelimGBControl.Visibility =
-                _gradeBeamService.HasAnyGradeBeams(CurrentContext)
+                _gradeBeamService.HasAnyInteriorGradeBeams(CurrentContext)
                 ? System.Windows.Visibility.Collapsed
                 : System.Windows.Visibility.Visible;
         }
@@ -1001,7 +1001,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 
                     // --- Convert the object to a new grade beam
                     const int minVertexCount = 5;
-                    _gradeBeamService.ConvertToGradeBeam(context, per.ObjectId, minVertexCount);
+                    _gradeBeamService.ConvertToInteriorGradeBeam(context, per.ObjectId, minVertexCount);
                     ed.WriteMessage($"\n[DEBUG] Converted object {per.ObjectId.Handle} to grade beam.");
                     convertedAny = true;
                 }
@@ -1097,7 +1097,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             int quantity;
             double total_length;
 
-            (quantity, total_length) = _gradeBeamService.GetGradeBeamSummary(context);
+            (quantity, total_length) = _gradeBeamService.GetInteriorGradeBeamSummary(context);
 
             GradeBeamSummary.UpdateSummary(quantity, total_length);
         }
@@ -1122,7 +1122,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         //        out var handle, out bool isCenterline, out bool isEdge))
         //        return;
 
-        //    if (!NODCore.TryGetBoundaryBeamNode(_tr, _context.Document.Database, handle, out var boundaryBeamDict))
+        //    if (!NODCore.TryGetGradeBeamPerimeterBeamNode(_tr, _context.Document.Database, handle, out var boundaryBeamDict))
         //        return;
 
         //    // Load dimensions into control

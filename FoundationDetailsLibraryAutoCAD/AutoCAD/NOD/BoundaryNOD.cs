@@ -25,7 +25,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 yield break;
 
             // --- Get the boundary root dictionary
-            if (!NODCore.TryGetBoundaryBeamRoot(tr, db, out var boundaryRoot))
+            if (!NODCore.TryGetBoundaryRoot(tr, db, out var boundaryRoot))
                 yield break;
 
             // --- Enumerate all entries in FD_BOUNDARY
@@ -35,7 +35,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                     continue;
 
                 // --- Use specialized function to get the boundary beam node by handle
-                if (NODCore.TryGetBoundaryBeamNode(tr, db, out var beamDict))
+                if (NODCore.TryGetGradeBeamPerimeterBeamNode(tr, db, out var beamDict))
                     yield return (key, beamDict);
             }
         }
@@ -61,7 +61,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 return false;
 
             // --- Get the FD_BOUNDARY root dictionary
-            if (!NODCore.TryGetBoundaryBeamRoot(tr, db, out var boundaryRoot) || boundaryRoot.Count == 0)
+            if (!NODCore.TryGetBoundaryRoot(tr, db, out var boundaryRoot) || boundaryRoot.Count == 0)
                 return false;
 
             // --- Boundary beam nodes are keyed by handle

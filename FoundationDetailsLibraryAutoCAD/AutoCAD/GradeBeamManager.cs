@@ -91,14 +91,14 @@ namespace FoundationDetailer.AutoCAD
                     if (trimmedPieces == null || trimmedPieces.Count == 0)
                     {
                         // Fully outside → register original
-                        RegisterGradeBeam(context, original, tr, true);
+                        RegisterInteriorGradeBeam(context, original, tr, true);
                         createdBeams.Add(original);
                     }
                     else
                     {
                         foreach (var piece in trimmedPieces)
                         {
-                            RegisterGradeBeam(context, piece, tr, true);
+                            RegisterInteriorGradeBeam(context, piece, tr, true);
                             createdBeams.Add(piece);
                         }
 
@@ -125,14 +125,14 @@ namespace FoundationDetailer.AutoCAD
 
                     if (trimmedPieces == null || trimmedPieces.Count == 0)
                     {
-                        RegisterGradeBeam(context, original, tr, true);
+                        RegisterInteriorGradeBeam(context, original, tr, true);
                         createdBeams.Add(original);
                     }
                     else
                     {
                         foreach (var piece in trimmedPieces)
                         {
-                            RegisterGradeBeam(context, piece, tr, true);
+                            RegisterInteriorGradeBeam(context, piece, tr, true);
                             createdBeams.Add(piece);
                         }
 
@@ -156,7 +156,7 @@ namespace FoundationDetailer.AutoCAD
         /// <param name="appendToModelSpace"></param>
         /// <returns></returns>
         /// <exception cref="ArgumentNullException"></exception>
-        internal Polyline RegisterGradeBeam(
+        internal Polyline RegisterInteriorGradeBeam(
             FoundationContext context,
             Polyline pl,
             Transaction tr,
@@ -176,10 +176,10 @@ namespace FoundationDetailer.AutoCAD
             string handle = pl.Handle.ToString();
 
             // --- This will safely create the grade beam node under FD_GRADEBEAMS
-            var gbNode = NODCore.GetOrCreateGradeBeamNode(tr, db, handle);
+            var gbNode = NODCore.GetOrCreateInteriorGradeBeamNode(tr, db, handle);
 
             // --- Optional: delete existing edges if needed
-            DeleteGradeBeamEdgesOnlyInternal(context, tr, handle);
+            DeleteGradeBeamInteriorBeam_EdgesOnlyInternal(context, tr, handle);
 
             return pl;
         }
@@ -194,7 +194,7 @@ namespace FoundationDetailer.AutoCAD
         /// <returns></returns>
         /// <exception cref="ArgumentNullException"></exception>
         /// <exception cref="ArgumentException"></exception>
-        internal Polyline AddInterpolatedGradeBeam(FoundationContext context, Point3d start, Point3d end, int vertexCount = DEFAULT_VERTEX_QTY)
+        internal Polyline AddInterpolatedInteriorGradeBeam(FoundationContext context, Point3d start, Point3d end, int vertexCount = DEFAULT_VERTEX_QTY)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
             if (vertexCount < 2) throw new ArgumentException("Vertex count must be >= 2", nameof(vertexCount));
@@ -215,7 +215,7 @@ namespace FoundationDetailer.AutoCAD
                 }
 
                 // Register in NOD and append to ModelSpace
-                RegisterGradeBeam(context, pl, tr, appendToModelSpace: true);
+                RegisterInteriorGradeBeam(context, pl, tr, appendToModelSpace: true);
 
                 tr.Commit();
                 return pl;
@@ -230,7 +230,7 @@ namespace FoundationDetailer.AutoCAD
         /// <param name="vertexCount"></param>
         /// <exception cref="ArgumentNullException"></exception>
         /// <exception cref="ArgumentException"></exception>
-        internal void ConvertToGradeBeam(FoundationContext context, ObjectId oldEntityId, int vertexCount)
+        internal void ConvertToInteriorGradeBeam(FoundationContext context, ObjectId oldEntityId, int vertexCount)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
             if (oldEntityId.IsNull) throw new ArgumentException("Invalid ObjectId.", nameof(oldEntityId));
@@ -258,7 +258,7 @@ namespace FoundationDetailer.AutoCAD
                     ModelSpaceWriterService.AppendToModelSpace(tr, db, newPl);
 
                     // --- Register GradeBeam metadata in NOD
-                    RegisterGradeBeam(context, newPl, tr, appendToModelSpace: false);
+                    RegisterInteriorGradeBeam(context, newPl, tr, appendToModelSpace: false);
 
                     // --- Remove old GradeBeam NOD entry if it exists
                     DeleteGradeBeamNode(context, tr, oldEnt.Handle.ToString());
@@ -274,7 +274,7 @@ namespace FoundationDetailer.AutoCAD
 
         #region DELETE FUNCTIONS
 
-        public int DeleteEdgesForMultipleBeams(FoundationContext context, IEnumerable<string> handles)
+        public int DeleteEdgesForMultipleInteriorBeams(FoundationContext context, IEnumerable<string> handles)
         {
             if (context?.Document == null || handles == null)
                 return 0;
@@ -285,7 +285,7 @@ namespace FoundationDetailer.AutoCAD
             {
                 foreach (var handle in handles)
                 {
-                    total += DeleteGradeBeamEdgesOnlyInternal(context, tr, handle);
+                    total += DeleteGradeBeamInteriorBeam_EdgesOnlyInternal(context, tr, handle);
                 }
 
                 tr.Commit();
@@ -299,7 +299,7 @@ namespace FoundationDetailer.AutoCAD
         /// </summary>
         /// <param name="context"></param>
         /// <returns></returns>
-        public static int DeleteEdgesForAllGradeBeams(FoundationContext context)
+        public static int DeleteEdgesForAllInteriorGradeBeams(FoundationContext context)
         {
             if (context?.Document == null)
                 return 0;
@@ -308,9 +308,9 @@ namespace FoundationDetailer.AutoCAD
             using (var lockDoc = context.Document.LockDocument())
             using (var tr = context.Document.Database.TransactionManager.StartTransaction())
             {
-                foreach (var (handle, _) in GradeBeamNOD.EnumerateGradeBeams(context, tr))
+                foreach (var (handle, _) in GradeBeamInteriorNOD.EnumerateInteriorGradeBeams(context, tr))
                 {
-                    total += DeleteGradeBeamEdgesOnlyInternal(context, tr, handle);
+                    total += DeleteGradeBeamInteriorBeam_EdgesOnlyInternal(context, tr, handle);
                 }
 
                 tr.Commit();
@@ -322,7 +322,7 @@ namespace FoundationDetailer.AutoCAD
         /// <summary>
         /// Deletes all edge entities of a single grade beam but keeps centerline and NOD dictionary.
         /// </summary>
-        internal static int DeleteGradeBeamEdgesOnlyInternal(FoundationContext context, Transaction tr, string gradeBeamHandle)
+        internal static int DeleteGradeBeamInteriorBeam_EdgesOnlyInternal(FoundationContext context, Transaction tr, string gradeBeamHandle)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
             if (tr == null) throw new ArgumentNullException(nameof(tr));
@@ -333,7 +333,7 @@ namespace FoundationDetailer.AutoCAD
             var db = context.Document.Database;
 
             // --- Get the beam's edges dictionary (read-only)
-            if (!NODCore.TryGetGradeBeamNode(tr, db, gradeBeamHandle, out DBDictionary beamNode) ||
+            if (!NODCore.TryGetGradeBeamInteriorBeamNode(tr, db, gradeBeamHandle, out DBDictionary beamNode) ||
                 !NODCore.TryGetBeamEdges(tr, beamNode, out DBDictionary edgesDict))
             {
                 return 0;
@@ -394,7 +394,7 @@ namespace FoundationDetailer.AutoCAD
         /// <param name="context"></param>
         /// <param name="handle"></param>
         /// <returns></returns>
-        public int DeleteSingleGradeBeam(FoundationContext context, string handle)
+        public int DeleteSingleInteriorGradeBeam(FoundationContext context, string handle)
         {
             if (context?.Document == null || string.IsNullOrWhiteSpace(handle))
                 return 0;
@@ -403,7 +403,7 @@ namespace FoundationDetailer.AutoCAD
             using (var tr = context.Document.Database.TransactionManager.StartTransaction())
             {
                 int edgesDeleted, beamsDeleted;
-                int deleted = DeleteGradeBeamFullInternal(context, tr, handle, out edgesDeleted, out beamsDeleted);
+                int deleted = DeleteInteriorGradeBeamFullInternal(context, tr, handle, out edgesDeleted, out beamsDeleted);
 
                 tr.Commit();
                 return deleted;
@@ -413,7 +413,7 @@ namespace FoundationDetailer.AutoCAD
         /// <summary>
         /// Delete all grade beams in the NOD and their associated edges from AutoCAD drawing and the NOD tree.
         /// </summary>
-        public int DeleteAllGradeBeams(FoundationContext context)
+        public int DeleteAllInteriorGradeBeams(FoundationContext context)
         {
             if (context?.Document == null)
                 return 0;
@@ -424,10 +424,10 @@ namespace FoundationDetailer.AutoCAD
             using (var tr = context.Document.Database.TransactionManager.StartTransaction())
             {
                 // Enumerate all grade beams from FD_GRADEBEAMS (read-only)
-                foreach (var (handle, _) in GradeBeamNOD.EnumerateGradeBeams(context, tr))
+                foreach (var (handle, _) in GradeBeamInteriorNOD.EnumerateInteriorGradeBeams(context, tr))
                 {
                     int edgesDeleted, beamsDeleted;
-                    DeleteGradeBeamFullInternal(context, tr, handle, out edgesDeleted, out beamsDeleted);
+                    DeleteInteriorGradeBeamFullInternal(context, tr, handle, out edgesDeleted, out beamsDeleted);
                     totalBeamsDeleted += beamsDeleted;
                 }
 
@@ -441,7 +441,7 @@ namespace FoundationDetailer.AutoCAD
         /// Fully deletes a grade beam: edges + centerline + NOD node.
         /// Upgrades objects to write only when required.
         /// </summary>
-        private int DeleteGradeBeamFullInternal(
+        private int DeleteInteriorGradeBeamFullInternal(
             FoundationContext context,
             Transaction tr,
             string handle,
@@ -457,7 +457,7 @@ namespace FoundationDetailer.AutoCAD
             var db = context.Document.Database;
 
             // --- Delete edges first
-            edgesDeleted = DeleteGradeBeamEdgesOnlyInternal(context, tr, handle);
+            edgesDeleted = DeleteGradeBeamInteriorBeam_EdgesOnlyInternal(context, tr, handle);
 
             // --- Delete centerline (upgrade to write as needed)
             if (NODCore.TryGetObjectIdFromHandleString(tr, db, handle, out ObjectId clId) &&
@@ -469,7 +469,7 @@ namespace FoundationDetailer.AutoCAD
             }
 
             // --- Delete the NOD node (dictionary) recursively
-            if (NODCore.TryGetGradeBeamNode(tr, db, handle, out DBDictionary beamNode))
+            if (NODCore.TryGetGradeBeamInteriorBeamNode(tr, db, handle, out DBDictionary beamNode))
             {
                 // Upgrade to write before erasing
                 beamNode.UpgradeOpen();
@@ -477,7 +477,7 @@ namespace FoundationDetailer.AutoCAD
                 NODCore.EraseDictionaryRecursive(tr, db, beamNode, ref edgesDeleted, ref beamsDeleted, eraseEntities: true);
 
                 // Remove from root dictionary
-                if (NODCore.TryGetGradeBeamsRoot(tr, db, out DBDictionary rootDict))
+                if (NODCore.TryGetGradeBeamInteriorRoot(tr, db, out DBDictionary rootDict))
                 {
                     rootDict.UpgradeOpen();
                     if (rootDict.Contains(handle))
@@ -563,7 +563,7 @@ namespace FoundationDetailer.AutoCAD
             }
         }
 
-        public bool HasAnyGradeBeams(FoundationContext context)
+        public bool HasAnyInteriorGradeBeams(FoundationContext context)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
             var doc = context.Document;
@@ -576,7 +576,7 @@ namespace FoundationDetailer.AutoCAD
             using (var tr = db.TransactionManager.StartTransaction())
             {
                 // --- Get the FD_GRADEBEAMS root dictionary
-                if (NODCore.TryGetGradeBeamsRoot(tr, db, out DBDictionary rootDict) && rootDict != null)
+                if (NODCore.TryGetGradeBeamInteriorRoot(tr, db, out DBDictionary rootDict) && rootDict != null)
                 {
                     // --- Check if there is at least one grade beam node
                     exists = rootDict.Count > 0;
@@ -589,7 +589,7 @@ namespace FoundationDetailer.AutoCAD
         }
 
 
-        public (int Quantity, double TotalLength) GetGradeBeamSummary(FoundationContext context)
+        public (int Quantity, double TotalLength) GetInteriorGradeBeamSummary(FoundationContext context)
         {
             if (context == null)
                 throw new ArgumentNullException(nameof(context));
@@ -604,7 +604,7 @@ namespace FoundationDetailer.AutoCAD
             using (var tr = db.TransactionManager.StartTransaction())
             {
                 // Enumerate all grade beams (handle + dictionary)
-                foreach (var (handle, gbDict) in GradeBeamNOD.EnumerateGradeBeams(context, tr))
+                foreach (var (handle, gbDict) in GradeBeamInteriorNOD.EnumerateInteriorGradeBeams(context, tr))
                 {
                     // --- Get the centerline ObjectId from the handle
                     if (!NODCore.TryGetObjectIdFromHandleString(tr, db, handle, out ObjectId clId))
@@ -652,7 +652,7 @@ namespace FoundationDetailer.AutoCAD
             using (var tr = db.TransactionManager.StartTransaction())
             {
                 // Enumerate all grade beams
-                foreach (var (handle, gbDict) in GradeBeamNOD.EnumerateGradeBeams(context, tr))
+                foreach (var (handle, gbDict) in GradeBeamInteriorNOD.EnumerateInteriorGradeBeams(context, tr))
                 {
                     // Get the centerline ObjectId from the handle
                     if (!NODCore.TryGetObjectIdFromHandleString(tr, db, handle, out ObjectId clId))
@@ -736,7 +736,7 @@ namespace FoundationDetailer.AutoCAD
             try
             {
                 // --- Get the grade beam node by handle
-                if (!NODCore.TryGetGradeBeamNode(tr, db, centerlineHandle, out DBDictionary beamNode))
+                if (!NODCore.TryGetGradeBeamInteriorBeamNode(tr, db, centerlineHandle, out DBDictionary beamNode))
                 {
                     doc.Editor.WriteMessage($"\n[GradeBeamNOD] No grade beam node found for handle {centerlineHandle}.");
                     return false;
@@ -749,7 +749,7 @@ namespace FoundationDetailer.AutoCAD
                 NODCore.EraseDictionaryRecursive(tr, db, beamNode, ref edgesDeleted, ref beamsDeleted);
 
                 // --- Remove the node itself from the parent FD_GRADEBEAMS dictionary
-                if (NODCore.TryGetGradeBeamsRoot(tr, db, out var rootDict))
+                if (NODCore.TryGetGradeBeamInteriorRoot(tr, db, out var rootDict))
                 {
                     rootDict.UpgradeOpen();
                     rootDict.Remove(centerlineHandle);
@@ -775,7 +775,7 @@ namespace FoundationDetailer.AutoCAD
             {
                 foreach (var id in objectIds)
                 {
-                    if (GradeBeamNOD.TryResolveOwningGradeBeam(context, tr, id, out string handle, out bool _, out bool _))
+                    if (GradeBeamInteriorNOD.TryResolveOwningGradeBeam(context, tr, id, out string handle, out bool _, out bool _))
                         handles.Add(handle);
                 }
             }
@@ -1020,7 +1020,7 @@ namespace FoundationDetailer.AutoCAD
             using (var tr = db.TransactionManager.StartTransaction())
             {
                 // --- Enumerate all grade beams via NODCore
-                foreach (var (handle, _) in GradeBeamNOD.EnumerateGradeBeams(context, tr))
+                foreach (var (handle, _) in GradeBeamInteriorNOD.EnumerateInteriorGradeBeams(context, tr))
                 {
                     if (string.IsNullOrWhiteSpace(handle))
                         continue;
@@ -1052,7 +1052,7 @@ namespace FoundationDetailer.AutoCAD
             using (doc.LockDocument())
             using (var tr = doc.Database.TransactionManager.StartTransaction())
             {
-                count = NODCore.CountGradeBeams(tr, doc.Database);
+                count = NODCore.CountInteriorGradeBeams(tr, doc.Database);
                 tr.Commit();
             }
 
@@ -1076,7 +1076,7 @@ namespace FoundationDetailer.AutoCAD
             using (var tr = doc.Database.TransactionManager.StartTransaction())
             {
                 var db = doc.Database;
-                var gradeBeamRoot = NODCore.GetOrCreateGradeBeamRootDictionary(tr, db, forWrite: false);
+                var gradeBeamRoot = NODCore.GetOrCreateGradeBeamInteriorRootDictionary(tr, db, forWrite: false);
                 if (gradeBeamRoot == null || gradeBeamRoot.Count == 0)
                 {
                     tr.Commit();
@@ -1122,15 +1122,15 @@ namespace FoundationDetailer.AutoCAD
                     var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
                     var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
-                    DeleteEdgesForAllGradeBeams(context);
+                    DeleteEdgesForAllInteriorGradeBeams(context);
 
                     // --- Enumerate all grade beams
-                    var beams = GradeBeamNOD.EnumerateGradeBeams(context, tr).ToList();
+                    var beams = GradeBeamInteriorNOD.EnumerateInteriorGradeBeams(context, tr).ToList();
                     if (!beams.Any()) return;
 
                     // --- Delete all existing edges
                     foreach (var (_, gbDict) in beams)
-                        GradeBeamNOD.DeleteBeamEdgesOnly(context, tr, gbDict);
+                        GradeBeamInteriorNOD.DeleteBeamEdgesOnly(context, tr, gbDict);
 
                     tr.Commit();
                 }
@@ -1141,13 +1141,13 @@ namespace FoundationDetailer.AutoCAD
                     var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
                     // --- Enumerate all grade beams
-                    var beams = GradeBeamNOD.EnumerateGradeBeams(context, tr).ToList();
+                    var beams = GradeBeamInteriorNOD.EnumerateInteriorGradeBeams(context, tr).ToList();
                     if (!beams.Any()) return;
 
                     // --- Cache beam widths
                     var beamWidths = beams.ToDictionary(
                         b => b.Handle,
-                        b => GradeBeamNOD.GetBeamSection(tr, b.Dict).Width
+                        b => GradeBeamInteriorNOD.GetBeamSection(tr, b.Dict).Width
                     );
 
                     // --- Build footprints
@@ -1209,7 +1209,7 @@ namespace FoundationDetailer.AutoCAD
 
                         string handle = group.Key.Handle.ToString();
 
-                        GradeBeamNOD.StoreEdgeObjects(context, tr, db, handle, leftIds, rightIds);
+                        GradeBeamInteriorNOD.StoreEdgeObjects(context, tr, db, handle, leftIds, rightIds);
                     }
 
                     doc.Editor.Regen();

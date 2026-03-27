@@ -5,9 +5,9 @@ using System.Collections.Generic;
 
 namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 {
-    public static class GradeBeamNOD
+    public static class GradeBeamInteriorNOD
     {
-        public static IEnumerable<(string Handle, DBDictionary Dict)> EnumerateGradeBeams(
+        public static IEnumerable<(string Handle, DBDictionary Dict)> EnumerateInteriorGradeBeams(
             FoundationContext context,
             Transaction tr)
         {
@@ -20,7 +20,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             var db = context.Document.Database;
 
             // --- Get the grade beam root dictionary safely
-            if (!NODCore.TryGetGradeBeamsRoot(tr, db, out var gradeBeamRoot))
+            if (!NODCore.TryGetGradeBeamInteriorRoot(tr, db, out var gradeBeamRoot))
             {
                 System.Diagnostics.Debug.WriteLine("[DEBUG] GradeBeam root dictionary not found.");
                 yield break;
@@ -70,7 +70,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             if (string.IsNullOrWhiteSpace(gradeBeamHandle)) throw new ArgumentException("Grade beam handle is required.", nameof(gradeBeamHandle));
 
             // --- Get or create the grade beam node
-            var gbNode = NODCore.GetOrCreateGradeBeamNode(tr, db, gradeBeamHandle);
+            var gbNode = NODCore.GetOrCreateInteriorGradeBeamNode(tr, db, gradeBeamHandle);
 
             // --- Get or create the edges subdictionary
             if (!NODCore.TryGetBeamEdges(tr, gbNode, out var edgesDict))
@@ -179,7 +179,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             string selectedHandle = selectedId.Handle.ToString();
 
             // Enumerate all grade beams
-            foreach (var (handle, gbDict) in EnumerateGradeBeams(context, tr))
+            foreach (var (handle, gbDict) in EnumerateInteriorGradeBeams(context, tr))
             {
                 // --- Check if the selected object is the centerline
                 if (handle == selectedHandle)
@@ -228,7 +228,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 return 0;
 
             // --- Get the grade beam node dictionary by handle
-            if (!NODCore.TryGetGradeBeamNode(tr, context.Document.Database, handle, out var beamNode) || beamNode == null)
+            if (!NODCore.TryGetGradeBeamInteriorBeamNode(tr, context.Document.Database, handle, out var beamNode) || beamNode == null)
                 return 0;
 
             int deletedCount = 0;

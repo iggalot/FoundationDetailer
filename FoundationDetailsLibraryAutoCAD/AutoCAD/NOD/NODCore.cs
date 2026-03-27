@@ -3,7 +3,25 @@
 //NOD
 //└─ EE_Foundation
 //   │
-//   ├─ FD_GRADEBEAM
+//   └─ FD_BOUNDARY
+//   │   │
+//   │   └─ 3B11
+//   │       ├─ EDGES (not used)
+//   │       └─ METADATA (not used)
+//   │ 
+//   ├─ FD_GRADEBEAM_PERIMETER
+//   │   │
+//   │   ├─ 2A31
+//   │       ├─ EDGES
+//   │       │   ├─ e1
+//   │       │   └─ e2
+//   │       │
+//   │       └─ METADATA
+//   │           └─ SECTION
+//   │               ├─ Width
+//   │               └─ Depth
+//   │
+//   ├─ FD_GRADEBEAM_INTERIOR
 //   │   │
 //   │   ├─ 2A31
 //   │   │   ├─ EDGES
@@ -16,13 +34,7 @@
 //   │   │           └─ Depth
 //   │   │
 //   │   └─ <additional grade beam -- same structure>
-//   │
-//   └─ FD_BOUNDARY
-//   │   │
-//   │   └─ 3B11
-//   │       ├─ EDGES
-//   │       └─ METADATA
-//   │       
+//   │      
 //   └─ FD_SLABSTRAND
 //   │   
 //   └─ FD_REBAR
@@ -49,14 +61,16 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
         // Primary subdicts under the ROOT ofthe NOD
         public const string KEY_BOUNDARY_SUBDICT = "FD_BOUNDARY";
-        public const string KEY_GRADEBEAM_SUBDICT = "FD_GRADEBEAM";
+        public const string KEY_GRADEBEAM_INTERIOR_SUBDICT = "FD_GRADEBEAM_INTERIOR";
+        public const string KEY_GRADEBEAM_PERIMETER_SUBDICT = "FD_GRADEBEAM_PERIMETER";
+
         public const string KEY_SLABSTRAND_SUBDICT = "FD_SLABSTRAND";
         public const string KEY_REBAR_SUBDICT = "FD_REBAR";
 
         // The gradebam NODE subdicts -- 
-        public const string KEY_EDGES_SUBDICT = "FD_EDGES";
-        public const string KEY_BEAMSTRAND_SUBDICT = "FD_BEAMSTRAND";
-        public const string KEY_METADATA_SUBDICT = "FD_METADATA";
+        public const string KEY_EDGES_SUBDICT = "EDGES";
+        public const string KEY_BEAMSTRAND_SUBDICT = "BEAMSTRAND";
+        public const string KEY_METADATA_SUBDICT = "METADATA";
 
         // Items under the SECTION subdict of the meta subdict
         public const string KEY_META_SECTION_SUBDICT = "SECTION";
@@ -72,7 +86,8 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         public static readonly string[] KNOWN_ROOT_SUBDIRS =
         {
             KEY_BOUNDARY_SUBDICT,
-            KEY_GRADEBEAM_SUBDICT,
+            KEY_GRADEBEAM_PERIMETER_SUBDICT,
+            KEY_GRADEBEAM_INTERIOR_SUBDICT,
             KEY_SLABSTRAND_SUBDICT,
             KEY_REBAR_SUBDICT
         };
@@ -153,43 +168,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             return root;
         }
 
-        /// <summary>
-        /// Creates or retrieves a grade beam node by handle within the specified subdictionary.
-        /// Ensures required subdictionaries (edges, strands) exist.
-        /// </summary>
-        internal static DBDictionary InitGradeBeamNode_Internal(
-            Transaction tr,
-            DBDictionary parentDict,
-            string centerlineHandle)
-        {
-            if (tr == null) throw new ArgumentNullException(nameof(tr));
-            if (parentDict == null) throw new ArgumentNullException(nameof(parentDict));
-            if (string.IsNullOrWhiteSpace(centerlineHandle)) throw new ArgumentException("Centerline handle is required.", nameof(centerlineHandle));
-
-            // --- Try to get existing node
-            if (TryGetNestedSubDictionary(tr, parentDict, out var existingNode, centerlineHandle))
-                return existingNode;
-
-            // --- Upgrade parent dictionary for writing
-            if (!parentDict.IsWriteEnabled)
-                parentDict.UpgradeOpen();
-
-            // --- Create new grade beam node
-            var gbNode = new DBDictionary();
-            parentDict.SetAt(centerlineHandle, gbNode);
-            tr.AddNewlyCreatedDBObject(gbNode, true);
-
-            // --- Ensure required subdictionaries exist
-            GetOrCreateNestedSubDictionary(tr, gbNode, KEY_EDGES_SUBDICT);
-            GetOrCreateNestedSubDictionary(tr, gbNode, KEY_BEAMSTRAND_SUBDICT);
-
-            // --- Always create META dictionary and SECTION subdictionary
-            var metaDict = GetOrCreateNestedSubDictionary(tr, gbNode, KEY_METADATA_SUBDICT);
-            GetOrCreateNestedSubDictionary(tr, metaDict, KEY_META_SECTION_SUBDICT);
-
-            return gbNode;
-        }
-
         #endregion
 
         #region GET OR CREATE functions
@@ -200,7 +178,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         /// <param name="db"></param>
         /// <param name="forWrite"></param>
         /// <returns></returns>        
-        internal static DBDictionary GetOrCreateGradeBeamRootDictionary(
+        internal static DBDictionary GetOrCreateGradeBeamInteriorRootDictionary(
             Transaction tr,
             Database db,
             bool forWrite = false)
@@ -218,14 +196,53 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 return GetOrCreateNestedSubDictionary(
                     tr,
                     rootDict,
-                    NODCore.KEY_GRADEBEAM_SUBDICT);
+                    NODCore.KEY_GRADEBEAM_INTERIOR_SUBDICT);
             }
 
             // Otherwise only return if it exists
-            if (rootDict.Contains(NODCore.KEY_GRADEBEAM_SUBDICT))
+            if (rootDict.Contains(NODCore.KEY_GRADEBEAM_INTERIOR_SUBDICT))
             {
                 return tr.GetObject(
-                    rootDict.GetAt(NODCore.KEY_GRADEBEAM_SUBDICT),
+                    rootDict.GetAt(NODCore.KEY_GRADEBEAM_INTERIOR_SUBDICT),
+                    OpenMode.ForRead) as DBDictionary;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Return the FD_GRADEBEAM subdictionary under root
+        /// </summary>
+        /// <param name="tr"></param>
+        /// <param name="db"></param>
+        /// <param name="forWrite"></param>
+        /// <returns></returns>        
+        internal static DBDictionary GetOrCreateGradeBeamPerimeterRootDictionary(
+            Transaction tr,
+            Database db,
+            bool forWrite = false)
+        {
+            if (tr == null || db == null)
+                return null;
+
+            var rootDict = GetFoundationRootDictionary(tr, db);
+            if (rootDict == null)
+                return null;
+
+            // If we are allowed to create it, delegate to helper
+            if (forWrite)
+            {
+                return GetOrCreateNestedSubDictionary(
+                    tr,
+                    rootDict,
+                    NODCore.KEY_GRADEBEAM_PERIMETER_SUBDICT);
+            }
+
+            // Otherwise only return if it exists
+            if (rootDict.Contains(NODCore.KEY_GRADEBEAM_PERIMETER_SUBDICT))
+            {
+                return tr.GetObject(
+                    rootDict.GetAt(NODCore.KEY_GRADEBEAM_PERIMETER_SUBDICT),
                     OpenMode.ForRead) as DBDictionary;
             }
 
@@ -239,7 +256,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         /// <param name="db"></param>
         /// <param name="forWrite"></param>
         /// <returns></returns>        
-        internal static DBDictionary GetOrCreateBoundaryBeamRootDictionary(
+        internal static DBDictionary GetOrCreateBoundaryRootDictionary(
             Transaction tr,
             Database db,
             bool forWrite = false)
@@ -335,7 +352,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 return GetOrCreateNestedSubDictionary(
                     tr,
                     rootDict,
-                    NODCore.KEY_SLABSTRAND_SUBDICT);
+                    NODCore.KEY_REBAR_SUBDICT);
             }
 
             // Otherwise only return if it exists
@@ -357,19 +374,31 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             if (string.IsNullOrWhiteSpace(handle))
                 throw new ArgumentException("Handle is required", nameof(handle));
 
-            var root = GetOrCreateBoundaryBeamRootDictionary(tr, db, forWrite: true);
+            var root = GetOrCreateGradeBeamPerimeterRootDictionary(tr, db, forWrite: true);
             return CreateNODBeamNode_Internal(tr, root, handle);
         }
 
         /// <summary>
-        /// Get or create a grade beam node under FD_GRADEBEAMS (multiple entries)
+        /// Get or create a grade beam node under FD_GRADEBEAMS_INTERIOR (multiple entries) or FD_GRADEBEAMS_PERIMETER (single)
         /// </summary>
-        internal static DBDictionary GetOrCreateGradeBeamNode(Transaction tr, Database db, string handle)
+        internal static DBDictionary GetOrCreateInteriorGradeBeamNode(Transaction tr, Database db, string handle)
         {
             if (string.IsNullOrWhiteSpace(handle))
                 throw new ArgumentException("Handle is required", nameof(handle));
 
-            var root = GetOrCreateGradeBeamRootDictionary(tr, db, forWrite: true);
+            var root = GetOrCreateGradeBeamInteriorRootDictionary(tr, db, forWrite: true);
+            return CreateNODBeamNode_Internal(tr, root, handle);
+        }
+
+        /// <summary>
+        /// Get or create a grade beam node under FD_GRADEBEAMS_INTERIOR (multiple entries) or FD_GRADEBEAMS_PERIMETER (single)
+        /// </summary>
+        internal static DBDictionary GetOrCreatePerimeterGradeBeamNode(Transaction tr, Database db, string handle)
+        {
+            if (string.IsNullOrWhiteSpace(handle))
+                throw new ArgumentException("Handle is required", nameof(handle));
+
+            var root = GetOrCreateGradeBeamPerimeterRootDictionary(tr, db, forWrite: true);
             return CreateNODBeamNode_Internal(tr, root, handle);
         }
 
@@ -439,7 +468,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         /// <summary>
         /// Tries to get the FD_BOUNDARY root dictionary under ROOT.
         /// </summary>
-        internal static bool TryGetBoundaryBeamRoot(Transaction tr, Database db, out DBDictionary result)
+        internal static bool TryGetBoundaryRoot(Transaction tr, Database db, out DBDictionary result)
         {
             result = null;
 
@@ -454,9 +483,9 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         }
 
         /// <summary>
-        /// Try to get a grade beam node under FD_BOUNDARY by centerline handle
+        /// Try to get a grade beam node under FD_GRADEBEAM_PERIMETER by centerline handle
         /// </summary>
-        internal static bool TryGetBoundaryBeamNode(Transaction tr, Database db, out DBDictionary result)
+        internal static bool TryGetGradeBeamPerimeterBeamNode(Transaction tr, Database db, out DBDictionary result)
         {
             result = null;
 
@@ -464,8 +493,8 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             if (tr == null || db == null)
                 return false;
 
-            // --- Get the FD_BOUNDARY root dictionary
-            if (!TryGetBoundaryBeamRoot(tr, db, out var boundaryRoot))
+            // --- Get the FD_GRADEBEAM_PERIMETER root dictionary
+            if (!TryGetGradeBeamPerimeterRoot(tr, db, out var boundaryRoot))
                 return false;
 
             if (boundaryRoot == null || boundaryRoot.Count == 0)
@@ -496,33 +525,49 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         }
 
         /// <summary>
-        /// Try to get FD_GRADEBEAMS root dictionary under ROOT
+        /// Try to get FD_GRADEBEAMS_PERIMETER root dictionary under ROOT
         /// </summary>
-        internal static bool TryGetGradeBeamsRoot(Transaction tr, Database db, out DBDictionary result)
+        internal static bool TryGetGradeBeamPerimeterRoot(Transaction tr, Database db, out DBDictionary result)
         {
             result = null;
             var root = GetFoundationRootDictionary(tr, db);
-            if (root == null || !root.Contains(KEY_GRADEBEAM_SUBDICT))
+            if (root == null || !root.Contains(KEY_GRADEBEAM_PERIMETER_SUBDICT))
                 return false;
 
-            result = tr.GetObject(root.GetAt(KEY_GRADEBEAM_SUBDICT), OpenMode.ForRead) as DBDictionary;
+            result = tr.GetObject(root.GetAt(KEY_GRADEBEAM_PERIMETER_SUBDICT), OpenMode.ForRead) as DBDictionary;
             return result != null;
         }
 
         /// <summary>
-        /// Try to get a grade beam node under FD_GRADEBEAMS by centerline handle
+        /// Try to get FD_GRADEBEAMS_INTERIOR root dictionary under ROOT
         /// </summary>
-        internal static bool TryGetGradeBeamNode(Transaction tr, Database db, string handle, out DBDictionary result)
+        internal static bool TryGetGradeBeamInteriorRoot(Transaction tr, Database db, out DBDictionary result)
         {
             result = null;
-            if (!TryGetGradeBeamsRoot(tr, db, out var gradeBeamsRoot))
+            var root = GetFoundationRootDictionary(tr, db);
+            if (root == null || !root.Contains(KEY_GRADEBEAM_INTERIOR_SUBDICT))
+                return false;
+
+            result = tr.GetObject(root.GetAt(KEY_GRADEBEAM_INTERIOR_SUBDICT), OpenMode.ForRead) as DBDictionary;
+            return result != null;
+        }
+
+
+
+        /// <summary>
+        /// Try to get a grade beam node under FD_GRADEBEAMS_INTERIOR by centerline handle
+        /// </summary>
+        internal static bool TryGetGradeBeamInteriorBeamNode(Transaction tr, Database db, string handle, out DBDictionary result)
+        {
+            result = null;
+            if (!TryGetGradeBeamInteriorRoot(tr, db, out var gradeBeamsRoot))
                 return false;
 
             return TryGetNestedSubDictionary(tr, gradeBeamsRoot, out result, handle);
         }
 
         /// <summary>
-        /// Tries to get the edges subdictionary under a grade beam node.
+        /// Tries to get the edges subdictionary under a grade beam node -- works for interior and perimeter grade beams.
         /// </summary>
         /// <param name="tr">Open transaction.</param>
         /// <param name="gradeBeamNode">The grade beam node dictionary.</param>
@@ -538,7 +583,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         }
 
         /// <summary>
-        /// Tries to get the META subdictionary under a grade beam node.
+        /// Tries to get the META subdictionary under a grade beam node -- works for interior and perimeter gradebeams.
         /// </summary>
         /// <param name="tr">Open transaction.</param>
         /// <param name="gradeBeamNode">The grade beam node dictionary.</param>
@@ -555,6 +600,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
         /// <summary>
         /// Tries to get the SECTION subdictionary under the META dictionary of a grade beam node.
+        /// -- works for both interior and perimeter gradebeams
         /// </summary>
         /// <param name="tr">Open transaction.</param>
         /// <param name="gradeBeamNode">The grade beam node dictionary.</param>
@@ -846,18 +892,18 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         }
 
         /// <summary>
-        /// Counts the number of grade beam nodes under FD_GRADEBEAM in the current document.
+        /// Counts the number of grade beam nodes under FD_GRADEBEAM_INTERIOR in the current document.
         /// </summary>
         /// <param name="tr">Open transaction</param>
         /// <param name="db">Database</param>
         /// <returns>Number of grade beam subdictionaries</returns>
-        public static int CountGradeBeams(Transaction tr, Database db)
+        public static int CountInteriorGradeBeams(Transaction tr, Database db)
         {
             if (tr == null) throw new ArgumentNullException(nameof(tr));
             if (db == null) throw new ArgumentNullException(nameof(db));
 
             // Try to get the FD_GRADEBEAM root dictionary
-            DBDictionary gradeBeamRoot = GetOrCreateGradeBeamRootDictionary(tr, db, forWrite: false);
+            DBDictionary gradeBeamRoot = GetOrCreateGradeBeamInteriorRootDictionary(tr, db, forWrite: false);
             if (gradeBeamRoot == null || gradeBeamRoot.Count == 0)
                 return 0;
 
