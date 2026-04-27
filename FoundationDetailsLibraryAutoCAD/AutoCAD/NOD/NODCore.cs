@@ -172,7 +172,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 
         #region GET OR CREATE functions
         /// <summary>
-        /// Return the FD_GRADEBEAM subdictionary under root
+        /// Return the FD_GRADEBEAM_INTERIOR subdictionary under root
         /// </summary>
         /// <param name="tr"></param>
         /// <param name="db"></param>
@@ -211,7 +211,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         }
 
         /// <summary>
-        /// Return the FD_GRADEBEAM subdictionary under root
+        /// Return the FD_GRADEBEAM_PERIMETER subdictionary under root
         /// </summary>
         /// <param name="tr"></param>
         /// <param name="db"></param>
@@ -374,7 +374,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             if (string.IsNullOrWhiteSpace(handle))
                 throw new ArgumentException("Handle is required", nameof(handle));
 
-            var root = GetOrCreateGradeBeamPerimeterRootDictionary(tr, db, forWrite: true);
+            var root = GetOrCreateBoundaryRootDictionary(tr, db, forWrite: true);
             return CreateNODBeamNode_Internal(tr, root, handle);
         }
 
@@ -744,7 +744,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             DBDictionary dict,
             ref int edgesDeleted,
             ref int beamsDeleted,
-            bool eraseEntities = true,
+            bool eraseEntities = false, // 🔥 FORCE SAFE DEFAULT
             string parentKey = "<root>",
             int depth = 0)
         {
@@ -752,9 +752,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                 return;
 
             string indent = new string(' ', depth * 2);
-            System.Diagnostics.Debug.WriteLine($"{indent}Processing dictionary: {parentKey}");
 
-            // Collect all entries first
             var entries = dict.Cast<DictionaryEntry>()
                               .Select(e => new { Key = e.Key.ToString(), Value = e.Value as ObjectId? })
                               .Where(e => e.Value.HasValue && e.Value.Value.IsValid && !e.Value.Value.IsNull)
@@ -764,71 +762,47 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             {
                 var id = entry.Value.Value;
 
-                if (id.IsErased) continue;
+                if (id.IsErased)
+                    continue;
 
                 var obj = tr.GetObject(id, OpenMode.ForWrite, false);
 
                 switch (obj)
                 {
                     case DBDictionary subDict:
-                        System.Diagnostics.Debug.WriteLine($"{indent}  Found sub-dictionary: {entry.Key}");
-                        // Recurse into sub-dictionary
-                        EraseDictionaryRecursive(tr, db, subDict, ref edgesDeleted, ref beamsDeleted, eraseEntities, entry.Key, depth + 1);
+                        EraseDictionaryRecursive(
+                            tr,
+                            db,
+                            subDict,
+                            ref edgesDeleted,
+                            ref beamsDeleted,
+                            eraseEntities,
+                            entry.Key,
+                            depth + 1);
+
                         if (!subDict.IsErased)
-                        {
                             subDict.Erase();
-                            System.Diagnostics.Debug.WriteLine($"{indent}  Erased sub-dictionary: {entry.Key}");
-                        }
+
                         break;
 
                     case Xrecord xrec:
-                        System.Diagnostics.Debug.WriteLine($"{indent}  Found XRecord: {entry.Key}");
-                        // Optional: erase referenced entities
-                        if (eraseEntities && xrec.Data != null)
-                        {
-                            foreach (var tv in xrec.Data)
-                            {
-                                if (tv.TypeCode == (int)DxfCode.Text && tv.Value is string handleStr)
-                                {
-                                    try
-                                    {
-                                        var handle = new Handle(Convert.ToInt64(handleStr, 16));
-                                        var entId = db.GetObjectId(false, handle, 0);
-                                        if (entId.IsValid && !entId.IsErased)
-                                        {
-                                            (tr.GetObject(entId, OpenMode.ForWrite) as Entity)?.Erase();
-                                            edgesDeleted++;
-                                            System.Diagnostics.Debug.WriteLine($"{indent}    Erased entity from XRecord: {handleStr}");
-                                        }
-                                    }
-                                    catch { }
-                                }
-                            }
-                        }
+                        // SAFE MODE: metadata only
+                        // DO NOT TOUCH referenced drawing entities
 
                         if (!xrec.IsErased)
                         {
                             xrec.Erase();
-                            System.Diagnostics.Debug.WriteLine($"{indent}  Erased XRecord: {entry.Key}");
                             beamsDeleted++;
                         }
+
                         break;
 
                     default:
-                        System.Diagnostics.Debug.WriteLine($"{indent}  Unknown object type for key: {entry.Key}");
+                        // NEVER TOUCH UNKNOWN TYPES
+                        System.Diagnostics.Debug.WriteLine(
+                            $"{indent}Skipping unknown type under NOD: {entry.Key}");
                         break;
                 }
-            }
-
-            // --- FINAL DEBUG: list remaining keys in this dictionary after erase ---
-            var remainingKeys = dict.Cast<DictionaryEntry>().Select(e => e.Key.ToString()).ToList();
-            if (remainingKeys.Count > 0)
-            {
-                System.Diagnostics.Debug.WriteLine($"{indent}  Remaining keys in dictionary '{parentKey}': {string.Join(", ", remainingKeys)}");
-            }
-            else
-            {
-                System.Diagnostics.Debug.WriteLine($"{indent}  Dictionary '{parentKey}' is now empty.");
             }
         }
 
@@ -920,6 +894,152 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             }
 
             return count;
+        }
+
+
+        internal static void ValidateNodHandlesRecursive(
+    Transaction tr,
+    Database db,
+    DBDictionary dict,
+    HashSet<string> missingHandles,
+    HashSet<string> validHandles,
+    string parentKey = "<root>",
+    int depth = 0)
+        {
+            if (tr == null || db == null || dict == null)
+                return;
+
+            string indent = new string(' ', depth * 2);
+
+            foreach (DictionaryEntry entry in dict)
+            {
+                string key = entry.Key.ToString();
+                ObjectId id = (ObjectId)entry.Value;
+
+                if (!id.IsValid || id.IsNull || id.IsErased)
+                    continue;
+
+                DBObject obj;
+
+                try
+                {
+                    obj = tr.GetObject(id, OpenMode.ForRead, false);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                switch (obj)
+                {
+                    case DBDictionary subDict:
+                        ValidateNodHandlesRecursive(
+                            tr,
+                            db,
+                            subDict,
+                            missingHandles,
+                            validHandles,
+                            key,
+                            depth + 1);
+                        break;
+
+                    case Xrecord xrec:
+                        ValidateXrecordHandles(
+                            xrec,
+                            db,
+                            missingHandles,
+                            validHandles,
+                            indent,
+                            key);
+                        break;
+
+                    default:
+                        // ignore unknown types
+                        break;
+                }
+            }
+        }
+
+        private static void ValidateXrecordHandles(
+    Xrecord xrec,
+    Database db,
+    HashSet<string> missingHandles,
+    HashSet<string> validHandles,
+    string indent,
+    string key)
+        {
+            if (xrec == null || xrec.Data == null)
+                return;
+
+            foreach (TypedValue tv in xrec.Data)
+            {
+                // Common pattern: stored as hex string handle
+                if (tv.Value is string handleStr)
+                {
+                    try
+                    {
+                        long handleLong = Convert.ToInt64(handleStr, 16);
+                        Handle handle = new Handle(handleLong);
+
+                        ObjectId id = db.GetObjectId(false, handle, 0);
+
+                        if (id.IsValid && !id.IsErased)
+                        {
+                            validHandles.Add(handleStr);
+                            System.Diagnostics.Debug.WriteLine(
+                                $"{indent}[OK] {key} → Handle {handleStr}");
+                        }
+                        else
+                        {
+                            missingHandles.Add(handleStr);
+                            System.Diagnostics.Debug.WriteLine(
+                                $"{indent}[MISSING] {key} → Handle {handleStr}");
+                        }
+                    }
+                    catch
+                    {
+                        missingHandles.Add(handleStr);
+                        System.Diagnostics.Debug.WriteLine(
+                            $"{indent}[INVALID FORMAT] {key} → {handleStr}");
+                    }
+                }
+            }
+        }
+
+        public static void ValidateFoundationNOD(FoundationContext context)
+        {
+            var doc = context.Document;
+            var db = doc.Database;
+            var ed = doc.Editor;
+
+            var missing = new HashSet<string>();
+            var valid = new HashSet<string>();
+
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var root = NODCore.GetFoundationRootDictionary(tr, db);
+
+                if (root == null)
+                {
+                    ed.WriteMessage("\nEE_Foundation not found.");
+                    return;
+                }
+
+                ValidateNodHandlesRecursive(tr, db, root, missing, valid);
+
+                tr.Commit();
+            }
+
+            ed.WriteMessage($"\nValidation complete.");
+            ed.WriteMessage($"\nValid handles: {valid.Count}");
+            ed.WriteMessage($"\nMissing handles: {missing.Count}");
+
+            if (missing.Count > 0)
+            {
+                ed.WriteMessage("\nBroken references:");
+                foreach (var h in missing)
+                    ed.WriteMessage($"\n  - {h}");
+            }
         }
     }
 }

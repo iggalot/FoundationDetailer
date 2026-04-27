@@ -3,6 +3,7 @@ using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using FoundationDetailsLibraryAutoCAD.Data;
 using System;
+using System.Collections.Generic;
 
 namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
 {
@@ -18,13 +19,14 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             Database db = doc.Database;
             Editor ed = doc.Editor;
 
-            // --- Confirm deletion with user ---
+            // --- Confirm deletion ---
             PromptKeywordOptions pko = new PromptKeywordOptions(
-                "\nWARNING: This will completely clear the EE_Foundation NOD. Are you sure?")
+                "\nWARNING: This will completely DELETE ALL EE_Foundation NOD data. Continue?")
             {
                 AllowNone = false,
                 Message = "\nConfirm deletion (Yes/No): "
             };
+
             pko.Keywords.Add("Yes");
             pko.Keywords.Add("No");
 
@@ -40,52 +42,74 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             {
                 try
                 {
-                    // --- Get the EE_Foundation root dictionary
                     DBDictionary root = NODCore.GetFoundationRootDictionary(tr, db);
 
-                    if (root != null)
+                    if (root == null)
                     {
-                        int edgesDeleted = 0;
-                        int beamsDeleted = 0;
-
-                        foreach (string subKey in NODCore.KNOWN_ROOT_SUBDIRS)
-                        {
-                            DBDictionary subDict;
-                            if (NODCore.TryGetNestedSubDictionary(tr, root, out subDict, subKey))
-                            {
-                                // Recursively erase contents
-                                NODCore.EraseDictionaryRecursive(tr, db, subDict, ref edgesDeleted, ref beamsDeleted, eraseEntities: true);
-
-                                // Upgrade subDict before erasing
-                                if (!subDict.IsErased)
-                                {
-                                    if (!subDict.IsWriteEnabled)
-                                        subDict.UpgradeOpen();
-
-                                    subDict.Erase();
-                                }
-
-                                // Upgrade root before removing key
-                                if (!root.IsWriteEnabled)
-                                    root.UpgradeOpen();
-
-                                if (root.Contains(subKey))
-                                    root.Remove(subKey);
-                            }
-                        }
-
-                        ed.WriteMessage($"\nCleared {edgesDeleted} edge entities and {beamsDeleted} beam nodes.");
+                        ed.WriteMessage("\nEE_Foundation root dictionary not found.");
+                        return;
                     }
 
-                    // --- Recreate empty ROOT structure and known subdicts ---
+                    int erasedEntities = 0;
+                    int erasedNodes = 0;
+
+                    // Copy keys first (IMPORTANT: avoid modifying collection while iterating)
+                    var keys = new List<DBDictionaryEntry>();
+                    foreach (DBDictionaryEntry entry in root)
+                        keys.Add(entry);
+
+                    foreach (var entry in keys)
+                    {
+                        ObjectId childId = entry.Value;
+                        string key = entry.Key;
+
+                        if (!childId.IsValid || childId.IsNull)
+                            continue;
+
+                        DBObject obj = tr.GetObject(childId, OpenMode.ForWrite, false);
+
+                        if (obj is DBDictionary childDict)
+                        {
+                            // FULL recursive delete
+                            NODCore.EraseDictionaryRecursive(
+                                tr,
+                                db,
+                                childDict,
+                                ref erasedEntities,
+                                ref erasedNodes,
+                                eraseEntities: true);
+
+                            if (!childDict.IsErased)
+                                childDict.Erase();
+                        }
+                        else
+                        {
+                            // If ever non-dictionary junk appears directly under root
+                            obj.Erase();
+                            erasedEntities++;
+                        }
+
+                        if (!root.IsWriteEnabled)
+                            root.UpgradeOpen();
+
+                        if (root.Contains(key))
+                            root.Remove(key);
+
+                        erasedNodes++;
+                    }
+
+                    ed.WriteMessage(
+                        $"\nHard NOD wipe complete. Entities erased: {erasedEntities}, nodes removed: {erasedNodes}");
+
+                    // Rebuild clean structure (optional but recommended)
                     NODCore.InitFoundationNOD(context, tr);
 
                     tr.Commit();
-                    ed.WriteMessage("\nEE_Foundation NOD has been cleared and reset.");
                 }
                 catch (System.Exception ex)
                 {
                     ed.WriteMessage($"\nError clearing NOD: {ex.Message}");
+                    tr.Abort();
                 }
             }
         }

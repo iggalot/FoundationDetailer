@@ -1060,7 +1060,7 @@ namespace FoundationDetailer.AutoCAD
         }
 
         /// <summary>
-        /// Returns the total length of all grade beam polylines stored in FD_GRADEBEAM.
+        /// Returns the total length of all grade beam polylines stored in FD_GRADEBEAM_INTERIOR.
         /// </summary>
         /// <param name="context">The current foundation context</param>
         /// <returns>Total length of all polylines (0 if none)</returns>

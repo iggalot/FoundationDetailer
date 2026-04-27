@@ -67,6 +67,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             var context = CurrentContext;
 
             BtnQuery.Click += BtnQueryNOD_Click;
+            BtnReSync.Click += BtnReSyncNOD_Click;
             BtnEraseNODFully.Click += (s, e) => BtnEraseNODFully_Click();
             BtnDeleteMultipleGradeBeamFromSelect.Click += (s, e) => BtnDeleteMultipleGradeBeamsFromSelect_Click(s, e);
             BtnRegenerateAll.Click += (s, e) => BtnRegenerateAll_Click(s, e);
@@ -154,6 +155,17 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             NODScanner.InspectFoundationNOD(CurrentContext);
 
             TxtStatus.Text = "Displaying NOD structure.";
+        }
+
+        /// <summary>
+        /// Sync the nod.  Removing nod elements that have no matching handle object in the AutoCAD drawing.
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="e"></param>
+        private void BtnReSyncNOD_Click(object sender, RoutedEventArgs e)
+        {
+            NODCore.ValidateFoundationNOD(CurrentContext);
+            TxtStatus.Text = "ReSyncing NOD structure.";
         }
 
         private void BtnDeleteBoundary_Click()
@@ -378,30 +390,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             _gradeBeamService.HighlightGradeBeams(context);
         }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
         private void BtnDrawGradeBeamTable_Click()
         {
             UpdateTables();
@@ -491,8 +479,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                 ed.WriteMessage("\nError deleting selected grade beams: " + ex.Message);
             }
         }
-
-
 
         private void BtnEraseAllGradeBeamEdges(object s, RoutedEventArgs e)
         {
@@ -612,7 +598,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
                     double t = request.Count == 1 ? 0 : (double)i / request.Count;
                     Point3d basePt = request.Start + span * t;
                     Point3d start, end;
-                    
+
                     //// Clip the line to the bounding box
                     //if (!MathHelperManager.TryClipLineToBoundingBoxExtents(basePt, dir, ext, out Point3d s, out Point3d e))
                     //    continue;
@@ -639,10 +625,6 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         }
 
         #region --- UI Updates ---
-
-
-
-
         private void GradeBeamSummary_AddSingleGradeBeamClicked(object sender, EventArgs e)
         {
             var context = CurrentContext;
@@ -734,13 +716,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             }
         }
 
-
-
-
-
-
-
-        private void SetBoundaryUIState(bool isValid)
+        private void UpdateBoundaryUIState(bool isValid)
         {
             StatusCircle.Fill = isValid ? Brushes.Green : Brushes.Red;
 
@@ -775,7 +751,8 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             {
                 if (NODCore.TryGetBoundaryRoot(tr, context.Document.Database, out var boundaryRoot))
                 {
-                    foreach (var (key, _) in NODCore.EnumerateDictionary(boundaryRoot))
+                    var enumerated_boundary_dict = NODCore.EnumerateDictionary(boundaryRoot);
+                    foreach (var (key, _) in enumerated_boundary_dict)
                     {
                         if (!NODCore.TryGetObjectIdFromHandleString(
                                 tr,
@@ -824,7 +801,7 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             if (!isValid)
                 ClearBoundaryText();
 
-            SetBoundaryUIState(isValid);
+            UpdateBoundaryUIState(isValid);
 
             RefreshGradeBeamSummary();
 
@@ -884,78 +861,18 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             Dispatcher.BeginInvoke(new Action(UpdateTreeViewUI));  // updates the tree view in UI
 
             Dispatcher.BeginInvoke(new Action(UpdateBoundaryDisplay));  // update the boundary disoplay, beams dims, calculations in UI
-            
+
             Dispatcher.BeginInvoke(new Action(UpdateTables));   // updates the drawing calculation tables
 
         }
         #endregion
 
-        #region --- NOD / TreeView ---
-        private void TreeViewExtensionData_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
-        {
-            if (!(e.NewValue is TreeViewItem tvi)) return;
-            if (!(tvi.Tag is TreeViewManager.TreeNodeInfo nodeInfo)) return;
 
-            var doc = CurrentContext?.Document;
-            if (doc == null) return;
-
-            // Collect all ObjectIds recursively
-            var ids = GetAllEntitiesFromTreeNode(tvi);
-
-            if (ids.Length == 0) return;
-
-            using (doc.LockDocument())
-            using (var tr = doc.Database.TransactionManager.StartTransaction())
-            {
-                try
-                {
-                    doc.Editor.SetImpliedSelection(ids);
-                    doc.Editor.UpdateScreen();
-                    tr.Commit();
-                }
-                catch (Autodesk.AutoCAD.Runtime.Exception ex)
-                {
-                    doc.Editor.WriteMessage($"\nError selecting object: {ex.Message}");
-                }
-            }
-
-            UpdateTreeViewUI();
-        }
-
-        /// <summary>
-        /// Recursively collects ObjectIds from a TreeViewItem and all its children
-        /// </summary>
-        private ObjectId[] GetAllEntitiesFromTreeNode(TreeViewItem node)
-        {
-            var ids = new List<ObjectId>();
-
-            if (node.Tag is TreeViewManager.TreeNodeInfo info)
-            {
-                // If we have a wrapped entity, use that
-                if (info.NODObject?.Entity != null)
-                    ids.Add(info.NODObject.Entity.ObjectId);
-                // Otherwise, fallback to ObjectId directly
-                else if (info.ObjectId != ObjectId.Null)
-                    ids.Add(info.ObjectId);
-            }
-
-            foreach (TreeViewItem child in node.Items)
-                ids.AddRange(GetAllEntitiesFromTreeNode(child));
-
-            return ids.ToArray();
-        }
-
-
-
-
-        #endregion
-
-
-        #region --- UI Button Click Handlers ---
 
 
 
 
+        #region --- UI Button Click Handlers ---
         // ---------------------------
         // Button click handler
         // ---------------------------
@@ -1111,44 +1028,5 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         {
 
         }
-
-        //private void LoadSelectedBoundaryBeam(ObjectId selectedId)
-        //{
-        //    var _context = CurrentContext;
-
-        //    if (_context == null) return;
-
-        //    if (!BoundaryNOD.TryResolveOwningBoundaryBeam(_context, _tr, selectedId,
-        //        out var handle, out bool isCenterline, out bool isEdge))
-        //        return;
-
-        //    if (!NODCore.TryGetGradeBeamPerimeterBeamNode(_tr, _context.Document.Database, handle, out var boundaryBeamDict))
-        //        return;
-
-        //    // Load dimensions into control
-        //    var (width, depth) = BoundaryNOD.GetBeamSection(_tr, boundaryBeamDict);
-        //    boundaryBeamDimensionControl.WidthText.Text = width.ToString();
-        //    boundaryBeamDimensionControl.DepthText.Text = depth.ToString();
-
-        //    // Keep dictionary reference in control for saving
-        //    boundaryBeamDimensionControl.CurrentBeamDict = boundaryBeamDict;
-        //    boundaryBeamDimensionControl.CurrentTransaction = _tr;
-        //}
-
-        //private void Save_Click(object sender, RoutedEventArgs e)
-        //{
-        //    if (CurrentTransaction == null || CurrentBeamDict == null) return;
-
-        //    if (double.TryParse(WidthTextBox.Text, out double width) &&
-        //        double.TryParse(DepthTextBox.Text, out double depth))
-        //    {
-        //        BoundaryNOD.SetBeamSection(CurrentTransaction, CurrentBeamDict, width, depth);
-        //        MessageBox.Show("Boundary beam dimensions updated.", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
-        //    }
-        //    else
-        //    {
-        //        MessageBox.Show("Invalid width or depth.", "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
-        //    }
-        //}
     }
 }

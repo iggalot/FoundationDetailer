@@ -25,7 +25,8 @@
         <!-- Main Controls -->
         <ScrollViewer Grid.Row="1">
             <StackPanel Orientation="Vertical" Margin="0,0,0,5" VerticalAlignment="Top">
-                <Button x:Name="BtnQuery" Content="Query and Sync NOD" Margin="0,5"/>
+                <Button x:Name="BtnQuery" Content="Query NOD" Margin="0,5"/>
+                <Button x:Name="BtnReSync" Content="ReSync NOD" Margin="0,5"/>
                 <Button x:Name="BtnEraseNODFully" Content="EraseNODFully" Margin="0,5"/>
 
                 <StackPanel Orientation="horizontal">
@@ -98,9 +99,6 @@
                     <Button x:Name="BtnClearPreview" Content="Clear Preview" Margin="0,2"/>
                     <Button x:Name="BtnCommit" Content="Commit to DWG" Margin="0,2"/>-->
                 </StackPanel>
-
-                <TreeView Name="TreeViewExtensionData" Margin="5"
-                        SelectedItemChanged="TreeViewExtensionData_SelectedItemChanged"/>
             </StackPanel>
         </ScrollViewer>
 
