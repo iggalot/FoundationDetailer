@@ -34,6 +34,9 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.UI.TreeViewer
                     NodeType = "Dictionary"
                 };
 
+                if (LooksLikeHandle(entry.Key))
+                    child.AutoCADHandle = entry.Key;
+
                 if (TraverseObject(tr, entry.Value, child))
                 {
                     root.Children.Add(child);
@@ -75,6 +78,9 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.UI.TreeViewer
                         NodeType = "Dictionary"
                     };
 
+                    if (LooksLikeHandle(entry.Key))
+                        child.AutoCADHandle = entry.Key;
+
                     if (TraverseObject(tr, entry.Value, child))
                     {
                         tempChildren.Add(child);
@@ -97,35 +103,41 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.UI.TreeViewer
             // ---------------------------
             // XRecord (LEFT_0 / LEFT_1 preserved + value included)
             // ---------------------------
+            // ---------------------------
+            // XRecord
+            // ---------------------------
             var xrec = obj as Xrecord;
             if (xrec != null)
             {
                 ResultBuffer rb = xrec.Data;
+
                 if (rb == null)
                     return false;
+
+                List<string> values = new List<string>();
+                string handle = null;
 
                 foreach (TypedValue tv in rb)
                 {
                     string text = TypedValueToString(tv);
+                    values.Add(text);
 
-                    // Expect format like: "LEFT_0 : value"
-                    string label;
-                    string value;
-
-                    SplitLabelValue(text, out label, out value);
-
-                    var node = new NODTreeNode
+                    if (handle == null)
                     {
-                        Name = label,
-                        NodeType = "XRecord",
-                        Value = value
-                    };
+                        string raw = tv.Value as string;
 
-                    parent.Children.Add(node);
+                        if (LooksLikeHandle(raw))
+                            handle = raw;
+                    }
                 }
 
                 rb.Dispose();
-                return parent.Children.Count > 0;
+
+                parent.NodeType = "XRecord";
+                parent.Value = string.Join("   ", values);
+                parent.AutoCADHandle = handle;
+
+                return true;
             }
 
             // ---------------------------
@@ -138,6 +150,23 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.UI.TreeViewer
             });
 
             return true;
+        }
+
+        /// <summary>
+        /// Returns true if the supplied text appears to be an AutoCAD handle.
+        /// </summary>
+        private static bool LooksLikeHandle(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return false;
+
+            long value;
+
+            return long.TryParse(
+                text,
+                System.Globalization.NumberStyles.HexNumber,
+                null,
+                out value);
         }
 
         /// <summary>
@@ -219,19 +248,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.UI.TreeViewer
                 return "AppName";
 
             return "Unknown";
-        }
-
-        private static string FormatPoint(object value)
-        {
-            try
-            {
-                var pt = (Point3d)value;
-                return string.Format("({0}, {1}, {2})", pt.X, pt.Y, pt.Z);
-            }
-            catch
-            {
-                return value != null ? value.ToString() : "null";
-            }
         }
     }
 }

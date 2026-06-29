@@ -43,15 +43,61 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.UI.TreeViewer
         /// </summary>
         private void Tree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
         {
-            if (e.NewValue is NODTreeNode node)
-            {
-                // Placeholder for future integration:
-                // - zoom to handle
-                // - highlight entity
-                // - inspect xrecord details
+            var node = e.NewValue as NODTreeNode;
 
-                System.Diagnostics.Debug.WriteLine(
+            if (node == null)
+                return;
+
+            if (string.IsNullOrWhiteSpace(node.AutoCADHandle))
+                return;
+
+            SelectObject(node.AutoCADHandle);
+
+            System.Diagnostics.Debug.WriteLine(
                     $"Selected: {node.Name} ({node.NodeType})");
+        }
+
+        /// <summary>
+        /// Selects an AutoCAD object by handle.
+        /// </summary>
+        private void SelectObject(string handleText)
+        {
+            try
+            {
+                Document doc =
+                    Autodesk.AutoCAD.ApplicationServices.Application
+                    .DocumentManager
+                    .MdiActiveDocument;
+
+                if (doc == null)
+                    return;
+
+                Database db = doc.Database;
+
+                using (Transaction tr =
+                    db.TransactionManager.StartTransaction())
+                {
+                    Handle handle =
+                        new Handle(
+                            System.Convert.ToInt64(handleText, 16));
+
+                    ObjectId id =
+                        db.GetObjectId(false, handle, 0);
+
+                    if (!id.IsNull)
+                    {
+                        doc.Editor.SetImpliedSelection(
+                            new ObjectId[] { id });
+
+                        doc.Editor.UpdateScreen();
+                    }
+
+                    tr.Commit();
+                }
+            }
+            catch
+            {
+                // Ignore invalid handles.
             }
         }
     }

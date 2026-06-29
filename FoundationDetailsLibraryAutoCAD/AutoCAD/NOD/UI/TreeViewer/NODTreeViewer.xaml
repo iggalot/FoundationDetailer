@@ -6,7 +6,9 @@
 
     <Grid>
         <TreeView x:Name="Tree"
-          ItemsSource="{Binding}">
+          ItemsSource="{Binding}"
+          SelectedItemChanged="Tree_SelectedItemChanged">
+            
 
             <TreeView.Resources>
 

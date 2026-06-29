@@ -14,6 +14,13 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.UI.TreeViewer
         // =========================================================
 
         /// <summary>
+        /// Optional AutoCAD entity handle associated with this node.
+        /// Clicking the node will attempt to select this object.
+        /// </summary>
+        public string AutoCADHandle { get; set; }
+
+
+        /// <summary>
         /// Display name of the node (dictionary name, xrecord key, etc.)
         /// </summary>
         public string Name { get; set; }
