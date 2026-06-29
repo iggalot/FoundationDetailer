@@ -3,43 +3,53 @@
 //NOD
 //└─ EE_Foundation
 //   │
-//   └─ FD_BOUNDARY
+//   └─ FD_BOUNDARY (dictionary)
 //   │   │
-//   │   └─ 3B11
+//   │   └─ 3B11 (dictionary handle)
 //   │       ├─ EDGES (not used)
-//   │       └─ METADATA (not used)
+//   │       │   ├─ e1 -- xrecord with handle
+//   │       │   └─ e2  -- xrecord with handle
+//   │       └─ BEAMSTRAND (dictionary)
+//   │          ├─ 2A31 -- xrecord with handle
+//   │       └─ METADATA (dictionary)
 //   │ 
-//   ├─ FD_GRADEBEAM_PERIMETER
+//   ├─ FD_GRADEBEAM_PERIMETER (dictionary)
 //   │   │
-//   │   ├─ 2A31
-//   │       ├─ EDGES
-//   │       │   ├─ e1
-//   │       │   └─ e2
-//   │       │
-//   │       └─ METADATA
-//   │           └─ SECTION
-//   │               ├─ Width
-//   │               └─ Depth
+//   │   ├─ 2A31 (dictionary -- name is handle for the centerline object)
+//   │       ├─ EDGES (dictionary)
+//   │       │   ├─ e1 -- xrecord with handle
+//   │       │   └─ e2  -- xrecord with handle
+//   │       └─ METADATA (dictionary)
+//   │           └─ SECTION (dictionary)
+//   │               ├─ Width -- xrecord with double
+//   │               └─ Depth -- xrecord with double
 //   │
-//   ├─ FD_GRADEBEAM_INTERIOR
+//   ├─ FD_GRADEBEAM_INTERIOR (dictionary)
 //   │   │
-//   │   ├─ 2A31
-//   │   │   ├─ EDGES
-//   │   │   │   ├─ e1
-//   │   │   │   └─ e2
-//   │   │   │
-//   │   │   └─ METADATA
-//   │   │       └─ SECTION
-//   │   │           ├─ Width
-//   │   │           └─ Depth
+//   │   ├─ 2A33 (dictionary -- name is handle for the centerline object)
+//   │       ├─ EDGES (dictionary)
+//   │       │   ├─ e1 -- xrecord with handle
+//   │       │   └─ e2  -- xrecord with handle
+//   │       └─ METADATA (dictionary)
+//   │           └─ SECTION (dictionary)
+//   │               ├─ Width -- xrecord with double
+//   │               └─ Depth -- xrecord with double
 //   │   │
-//   │   └─ <additional grade beam -- same structure>
+//   │   └─ <additional grade beam dictionary -- same structure>
 //   │      
-//   └─ FD_SLABSTRAND
+//   └─ FD_SLABSTRAND (dictionary)
+//   │   ├─ 2A33 (dictionary -- name is handle for the centerline object)
+//   │       └─ PullEnd -- xrecord with handle
+//   │       └─ DeadEnd -- xrecord with handle
+//   │       └─ Label -- xrecord with handle
 //   │   
-//   └─ FD_REBAR
+//   └─ FD_REBAR (dictionary)
+//   │       ├─ REBAR (dictionary)
+//   │       │   ├─ b1 -- xrecord with handle
+//   │       │   └─ b2  -- xrecord with handle
 
 using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Runtime;
 using FoundationDetailsLibraryAutoCAD.Data;
 using System;
@@ -897,14 +907,18 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
         }
 
 
-        internal static void ValidateNodHandlesRecursive(
-    Transaction tr,
-    Database db,
-    DBDictionary dict,
-    HashSet<string> missingHandles,
-    HashSet<string> validHandles,
-    string parentKey = "<root>",
-    int depth = 0)
+
+
+
+        internal static void ValidateNodHandleTreeRecursive(
+            Transaction tr,
+            Database db,
+            DBDictionary dict,
+            Editor ed,
+            string parentKey,
+            int depth,
+            HashSet<string> valid,
+            HashSet<string> missing)
         {
             if (tr == null || db == null || dict == null)
                 return;
@@ -914,100 +928,206 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
             foreach (DictionaryEntry entry in dict)
             {
                 string key = entry.Key.ToString();
-                ObjectId id = (ObjectId)entry.Value;
+                ObjectId childId = (ObjectId)entry.Value;
 
-                if (!id.IsValid || id.IsNull || id.IsErased)
+                // -----------------------------
+                // 1. VALIDATE HANDLE (KEY)
+                // -----------------------------
+                bool handleOk = TryResolveHandle(db, key, out ObjectId resolvedId);
+
+                if (handleOk)
+                    valid.Add(key);
+                else
+                    missing.Add(key);
+
+                ed.WriteMessage($"\n{indent}{(handleOk ? "[OK]" : "[MISSING]")} {key}");
+
+                // -----------------------------
+                // 2. RECURSE SAFELY
+                // -----------------------------
+                if (!childId.IsValid || childId.IsNull || childId.IsErased)
                     continue;
 
-                DBObject obj;
+                DBObject obj = tr.GetObject(childId, OpenMode.ForRead, false);
 
-                try
+                if (obj is DBDictionary subDict)
                 {
-                    obj = tr.GetObject(id, OpenMode.ForRead, false);
-                }
-                catch
-                {
-                    continue;
-                }
-
-                switch (obj)
-                {
-                    case DBDictionary subDict:
-                        ValidateNodHandlesRecursive(
-                            tr,
-                            db,
-                            subDict,
-                            missingHandles,
-                            validHandles,
-                            key,
-                            depth + 1);
-                        break;
-
-                    case Xrecord xrec:
-                        ValidateXrecordHandles(
-                            xrec,
-                            db,
-                            missingHandles,
-                            validHandles,
-                            indent,
-                            key);
-                        break;
-
-                    default:
-                        // ignore unknown types
-                        break;
+                    ValidateNodHandleTreeRecursive(
+                        tr,
+                        db,
+                        subDict,
+                        ed,
+                        key,
+                        depth + 1,
+                        valid,
+                        missing);
                 }
             }
         }
 
-        private static void ValidateXrecordHandles(
-    Xrecord xrec,
-    Database db,
-    HashSet<string> missingHandles,
-    HashSet<string> validHandles,
-    string indent,
-    string key)
+        public static void CleanupInvalidNodBranches(FoundationContext context)
         {
-            if (xrec == null || xrec.Data == null)
+            if (context?.Document == null)
                 return;
 
-            foreach (TypedValue tv in xrec.Data)
+            var doc = context.Document;
+            var db = doc.Database;
+            var ed = doc.Editor;
+
+            int deletedBranches = 0;
+
+            using (var tr = db.TransactionManager.StartTransaction())
             {
-                // Common pattern: stored as hex string handle
-                if (tv.Value is string handleStr)
+                var root = NODCore.GetFoundationRootDictionary(tr, db);
+
+                if (root == null)
                 {
-                    try
-                    {
-                        long handleLong = Convert.ToInt64(handleStr, 16);
-                        Handle handle = new Handle(handleLong);
-
-                        ObjectId id = db.GetObjectId(false, handle, 0);
-
-                        if (id.IsValid && !id.IsErased)
-                        {
-                            validHandles.Add(handleStr);
-                            System.Diagnostics.Debug.WriteLine(
-                                $"{indent}[OK] {key} → Handle {handleStr}");
-                        }
-                        else
-                        {
-                            missingHandles.Add(handleStr);
-                            System.Diagnostics.Debug.WriteLine(
-                                $"{indent}[MISSING] {key} → Handle {handleStr}");
-                        }
-                    }
-                    catch
-                    {
-                        missingHandles.Add(handleStr);
-                        System.Diagnostics.Debug.WriteLine(
-                            $"{indent}[INVALID FORMAT] {key} → {handleStr}");
-                    }
+                    ed.WriteMessage("\nEE_Foundation not found.");
+                    return;
                 }
+
+                CleanupRecursive(tr, db, root, ed, ref deletedBranches, "<root>", 0);
+
+                tr.Commit();
+            }
+
+            ed.WriteMessage($"\nCleanup complete. Deleted branches: {deletedBranches}");
+        }
+
+        private static void CleanupRecursive(
+            Transaction tr,
+            Database db,
+            DBDictionary dict,
+            Editor ed,
+            ref int deletedBranches,
+            string parentKey,
+            int depth)
+        {
+            if (dict == null)
+                return;
+
+            string indent = new string(' ', depth * 2);
+
+            var entries = dict.Cast<DictionaryEntry>().ToList();
+
+            foreach (var entry in entries)
+            {
+                string key = entry.Key.ToString();          // handle string
+                ObjectId childId = (ObjectId)entry.Value;
+
+                // -------------------------------------------------
+                // HANDLE VALIDATION (structure source of truth)
+                // -------------------------------------------------
+                bool handleExists =
+                    TryResolveHandle(db, key, out ObjectId resolvedId) &&
+                    resolvedId.IsValid &&
+                    !resolvedId.IsErased;
+
+                DBObject obj = null;
+
+                if (childId.IsValid && !childId.IsNull && !childId.IsErased)
+                {
+                    obj = tr.GetObject(childId, OpenMode.ForWrite, false);
+                }
+
+                // -------------------------------------------------
+                // CASE 1: VALID → KEEP + RECURSE
+                // -------------------------------------------------
+                if (handleExists)
+                {
+                    if (obj is DBDictionary subDict)
+                    {
+                        CleanupRecursive(
+                            tr,
+                            db,
+                            subDict,
+                            ed,
+                            ref deletedBranches,
+                            key,
+                            depth + 1);
+                    }
+
+                    continue;
+                }
+
+                // -------------------------------------------------
+                // CASE 2: INVALID → DELETE VIA ENGINE ONLY
+                // -------------------------------------------------
+                ed.WriteMessage($"\n{indent}[REMOVING INVALID BRANCH] {key}");
+
+                if (obj is DBDictionary badDict)
+                {
+                    int edgesDeleted = 0;
+                    int beamsDeleted = 0;
+
+                    // 🔥 SINGLE SOURCE OF TRUTH DELETION ENGINE
+                    NODCore.EraseDictionaryRecursive(
+                        tr,
+                        db,
+                        badDict,
+                        ref edgesDeleted,
+                        ref beamsDeleted,
+                        eraseEntities: false);
+                }
+                else if (obj is Xrecord xrec)
+                {
+                    if (!xrec.IsWriteEnabled)
+                        xrec.UpgradeOpen();
+
+                    xrec.Erase();
+                }
+
+                // -------------------------------------------------
+                // REMOVE FROM PARENT DICTIONARY (correct API usage)
+                // -------------------------------------------------
+                if (!dict.IsWriteEnabled)
+                    dict.UpgradeOpen();
+
+                if (dict.Contains(key))
+                {
+                    dict.Remove(key);
+                }
+
+                deletedBranches++;
+            }
+
+            // -------------------------------------------------
+            // OPTIONAL: CLEAN UP EMPTY NODES
+            // -------------------------------------------------
+            if (dict.Count == 0 && parentKey != "<root>")
+            {
+                if (!dict.IsWriteEnabled)
+                    dict.UpgradeOpen();
+
+                dict.Erase();
+            }
+        }
+
+        private static bool TryResolveHandle(Database db, string handleStr, out ObjectId id)
+        {
+            id = ObjectId.Null;
+
+            if (string.IsNullOrWhiteSpace(handleStr))
+                return false;
+
+            try
+            {
+                long h = Convert.ToInt64(handleStr, 16);
+                id = db.GetObjectId(false, new Handle(h), 0);
+
+                return id.IsValid && !id.IsErased;
+            }
+            catch
+            {
+                return false;
             }
         }
 
         public static void ValidateFoundationNOD(FoundationContext context)
         {
+            if (context == null || context.Document == null)
+                return;
+
             var doc = context.Document;
             var db = doc.Database;
             var ed = doc.Editor;
@@ -1025,20 +1145,150 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD
                     return;
                 }
 
-                ValidateNodHandlesRecursive(tr, db, root, missing, valid);
+                ValidateNodHandleTreeRecursive(tr, db, root, ed, "<root>", 0, valid, missing);
 
                 tr.Commit();
             }
 
-            ed.WriteMessage($"\nValidation complete.");
+            ed.WriteMessage("\n\nValidation complete.");
             ed.WriteMessage($"\nValid handles: {valid.Count}");
             ed.WriteMessage($"\nMissing handles: {missing.Count}");
 
             if (missing.Count > 0)
             {
-                ed.WriteMessage("\nBroken references:");
+                ed.WriteMessage("\n\nBroken references:");
                 foreach (var h in missing)
                     ed.WriteMessage($"\n  - {h}");
+            }
+        }
+
+        public static void PruneInvalidNodBranches(FoundationContext context)
+        {
+            if (context?.Document == null)
+                return;
+
+            var doc = context.Document;
+            var db = doc.Database;
+            var ed = doc.Editor;
+
+            int deletedBranches = 0;
+
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                var root = NODCore.GetFoundationRootDictionary(tr, db);
+
+                if (root == null)
+                {
+                    ed.WriteMessage("\nEE_Foundation not found.");
+                    return;
+                }
+
+                PruneRecursive(tr, db, root, ed, ref deletedBranches, "<root>", 0);
+
+                tr.Commit();
+            }
+
+            ed.WriteMessage($"\nNOD prune complete. Deleted branches: {deletedBranches}");
+        }
+
+        private static void PruneRecursive(
+            Transaction tr,
+            Database db,
+            DBDictionary dict,
+            Editor ed,
+            ref int deletedBranches,
+            string parentKey,
+            int depth)
+        {
+            if (dict == null)
+                return;
+
+            string indent = new string(' ', depth * 2);
+
+            var entries = dict.Cast<DictionaryEntry>().ToList();
+
+            foreach (var entry in entries)
+            {
+                string key = entry.Key.ToString();
+                ObjectId childId = (ObjectId)entry.Value;
+
+                bool handleExists =
+                    TryResolveHandle(db, key, out ObjectId resolvedId) &&
+                    resolvedId.IsValid &&
+                    !resolvedId.IsErased;
+
+                DBObject obj = null;
+
+                if (childId.IsValid && !childId.IsNull && !childId.IsErased)
+                    obj = tr.GetObject(childId, OpenMode.ForWrite, false);
+
+                // -----------------------------
+                // KEEP
+                // -----------------------------
+                if (handleExists)
+                {
+                    if (obj is DBDictionary subDict)
+                    {
+                        PruneRecursive(
+                            tr,
+                            db,
+                            subDict,
+                            ed,
+                            ref deletedBranches,
+                            key,
+                            depth + 1);
+                    }
+
+                    continue;
+                }
+
+                // -----------------------------
+                // DELETE
+                // -----------------------------
+                ed.WriteMessage($"\n{indent}[PRUNE INVALID] {key}");
+
+                if (obj is DBDictionary badDict)
+                {
+                    int edgesDeleted = 0;
+                    int beamsDeleted = 0;
+
+                    NODCore.EraseDictionaryRecursive(
+                        tr,
+                        db,
+                        badDict,
+                        ref edgesDeleted,
+                        ref beamsDeleted,
+                        eraseEntities: false);
+
+                    if (!badDict.IsErased)
+                    {
+                        badDict.UpgradeOpen();
+                        badDict.Erase();
+                    }
+                }
+                else if (obj is Xrecord xrec)
+                {
+                    if (!xrec.IsWriteEnabled)
+                        xrec.UpgradeOpen();
+
+                    xrec.Erase();
+                }
+
+                if (!dict.IsWriteEnabled)
+                    dict.UpgradeOpen();
+
+                dict.Remove((ObjectId)entry.Value);
+
+                deletedBranches++;
+            }
+
+            // OPTIONAL CONSISTENCY FIX (same as cleanup)
+            if (dict.Count == 0 && parentKey != "<root>")
+            {
+                if (!dict.IsWriteEnabled)
+                    dict.UpgradeOpen();
+
+                dict.Erase();
             }
         }
     }
