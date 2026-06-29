@@ -19,6 +19,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.UI.TreeViewer
         {
             var root = new NODTreeNode("NOD Root");
 
+            // IMPORTANT: use foundation root if available
             var nod = NODCore.GetFoundationRootDictionary(tr, db)
                       ?? tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead) as DBDictionary;
 
@@ -33,8 +34,10 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.UI.TreeViewer
                     NodeType = "Dictionary"
                 };
 
-                root.Children.Add(child);
-                TraverseObject(tr, entry.Value, child);
+                if (TraverseObject(tr, entry.Value, child))
+                {
+                    root.Children.Add(child);
+                }
             }
 
             return root;
@@ -42,23 +45,28 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.UI.TreeViewer
 
         /// <summary>
         /// Recursively traverses NOD objects.
-        /// NOTE: dictionary nodes are flattened to reduce visual noise.
+        /// Returns TRUE if node contains visible content.
+        /// Used for pruning empty dictionary branches.
         /// </summary>
-        private static void TraverseObject(Transaction tr, ObjectId id, NODTreeNode parent)
+        private static bool TraverseObject(Transaction tr, ObjectId id, NODTreeNode parent)
         {
             if (id.IsNull)
-                return;
+                return false;
 
             DBObject obj = tr.GetObject(id, OpenMode.ForRead);
             if (obj == null)
-                return;
+                return false;
 
             // ---------------------------
-            // Dictionary (flattened)
+            // Dictionary (flatten + count children)
             // ---------------------------
             var dict = obj as DBDictionary;
             if (dict != null)
             {
+                int visibleCount = 0;
+
+                var tempChildren = new List<NODTreeNode>();
+
                 foreach (DBDictionaryEntry entry in dict)
                 {
                     var child = new NODTreeNode
@@ -67,88 +75,57 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.UI.TreeViewer
                         NodeType = "Dictionary"
                     };
 
-                    parent.Children.Add(child);
-                    TraverseObject(tr, entry.Value, child);
+                    if (TraverseObject(tr, entry.Value, child))
+                    {
+                        tempChildren.Add(child);
+                        visibleCount++;
+                    }
                 }
-                return;
+
+                if (visibleCount == 0)
+                    return false;
+
+                // apply children
+                parent.Children.AddRange(tempChildren);
+
+                // append count to label
+                parent.Name = parent.Name + " (" + visibleCount + ")";
+
+                return true;
             }
 
             // ---------------------------
-            // XRecord (robust key → grouped values)
+            // XRecord (LEFT_0 / LEFT_1 preserved + value included)
             // ---------------------------
             var xrec = obj as Xrecord;
             if (xrec != null)
             {
                 ResultBuffer rb = xrec.Data;
-
                 if (rb == null)
+                    return false;
+
+                foreach (TypedValue tv in rb)
                 {
-                    parent.Children.Add(new NODTreeNode
+                    string text = TypedValueToString(tv);
+
+                    // Expect format like: "LEFT_0 : value"
+                    string label;
+                    string value;
+
+                    SplitLabelValue(text, out label, out value);
+
+                    var node = new NODTreeNode
                     {
-                        Name = "XRecord",
+                        Name = label,
                         NodeType = "XRecord",
-                        Value = "<empty>"
-                    });
-                    return;
+                        Value = value
+                    };
+
+                    parent.Children.Add(node);
                 }
 
-                using (rb)
-                {
-                    TypedValue[] values = rb.AsArray();
-
-                    string currentKey = null;
-                    List<string> buffer = new List<string>();
-
-                    for (int i = 0; i < values.Length; i++)
-                    {
-                        TypedValue tv = values[i];
-                        string text = TypedValueToString(tv);
-
-                        bool isKey =
-                            tv.TypeCode == (short)DxfCode.ExtendedDataAsciiString ||
-                            tv.TypeCode == (short)DxfCode.Text;
-
-                        // ---------------------------
-                        // NEW KEY FOUND → flush previous
-                        // ---------------------------
-                        if (isKey)
-                        {
-                            if (currentKey != null)
-                            {
-                                parent.Children.Add(new NODTreeNode
-                                {
-                                    Name = currentKey + " → " + string.Join(" | ", buffer),
-                                    NodeType = "XRecord"
-                                });
-
-                                buffer.Clear();
-                            }
-
-                            currentKey = text;
-                            continue;
-                        }
-
-                        // ---------------------------
-                        // VALUE (ANY TYPE)
-                        // ---------------------------
-                        if (currentKey != null)
-                        {
-                            buffer.Add(text);
-                        }
-                    }
-
-                    // flush last group
-                    if (currentKey != null)
-                    {
-                        parent.Children.Add(new NODTreeNode
-                        {
-                            Name = currentKey + " → " + string.Join(" | ", buffer),
-                            NodeType = "XRecord"
-                        });
-                    }
-                }
-
-                return;
+                rb.Dispose();
+                return parent.Children.Count > 0;
             }
 
             // ---------------------------
@@ -159,11 +136,31 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.UI.TreeViewer
                 Name = obj.GetType().Name,
                 NodeType = "Object"
             });
+
+            return true;
+        }
+
+        /// <summary>
+        /// Splits "LEFT_0 : 3F2A9" into label/value parts.
+        /// </summary>
+        private static void SplitLabelValue(string input, out string label, out string value)
+        {
+            label = input;
+            value = "";
+
+            if (string.IsNullOrEmpty(input))
+                return;
+
+            int idx = input.IndexOf(':');
+            if (idx > 0)
+            {
+                label = input.Substring(0, idx).Trim();
+                value = input.Substring(idx + 1).Trim();
+            }
         }
 
         /// <summary>
         /// Converts TypedValue into readable string (C# 7.3 safe).
-        /// Uses DXF codes for stability across AutoCAD versions.
         /// </summary>
         private static string TypedValueToString(TypedValue tv)
         {
@@ -174,26 +171,28 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.UI.TreeViewer
             string typeName = GetDxfTypeName(code);
 
             if (code == (short)DxfCode.Text)
-                return (tv.Value ?? "").ToString();
-
-            if (code == (short)DxfCode.ExtendedDataAsciiString)
-                return (tv.Value ?? "").ToString();
+                return typeName + ": " + (tv.Value ?? "");
 
             if (code == (short)DxfCode.Real)
-                return (tv.Value ?? "").ToString();
+                return typeName + ": " + tv.Value;
 
             if (code == (short)DxfCode.Int16)
-                return (tv.Value ?? "").ToString();
+                return typeName + ": " + tv.Value;
 
             if (code == (short)DxfCode.Int32)
-                return (tv.Value ?? "").ToString();
+                return typeName + ": " + tv.Value;
 
-            if (code == (short)DxfCode.XCoordinate ||
-                code == (short)DxfCode.YCoordinate ||
-                code == (short)DxfCode.ZCoordinate)
-                return (tv.Value ?? "").ToString();
+            if (IsCoordinate(code))
+                return typeName + ": " + tv.Value;
 
             return typeName + ": " + (tv.Value ?? "").ToString();
+        }
+
+        private static bool IsCoordinate(short code)
+        {
+            return code == (short)DxfCode.XCoordinate ||
+                   code == (short)DxfCode.YCoordinate ||
+                   code == (short)DxfCode.ZCoordinate;
         }
 
         /// <summary>
@@ -213,13 +212,8 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.UI.TreeViewer
             if (code == (short)DxfCode.Int32)
                 return "Int32";
 
-            if (code == (short)DxfCode.XCoordinate ||
-                code == (short)DxfCode.YCoordinate ||
-                code == (short)DxfCode.ZCoordinate)
+            if (IsCoordinate(code))
                 return "Coordinate";
-
-            if (code == (short)DxfCode.ExtendedDataAsciiString)
-                return "String";
 
             if (code == (short)DxfCode.ExtendedDataRegAppName)
                 return "AppName";
