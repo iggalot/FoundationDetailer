@@ -64,6 +64,12 @@
     <Compile Include="AutoCAD\AutoCADAdapter.cs" />
     <Compile Include="AutoCAD\GradeBeamBuilder.cs" />
     <Compile Include="AutoCAD\GradeBeamPolylineJig.cs" />
+    <Compile Include="AutoCAD\NOD\NODInspector.cs" />
+    <Compile Include="AutoCAD\NOD\UI\TreeViewer\NODTreeNode.cs" />
+    <Compile Include="AutoCAD\NOD\UI\TreeViewer\NODTreeReader.cs" />
+    <Compile Include="AutoCAD\NOD\UI\TreeViewer\NODTreeViewer.xaml.cs">
+      <DependentUpon>NODTreeViewer.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Services\HighlightService.cs" />
     <Compile Include="AutoCAD\NOD\BoundaryNOD.cs" />
     <Compile Include="AutoCAD\NOD\HandleHandler.cs" />
@@ -128,6 +134,10 @@
     </Compile>
   </ItemGroup>
   <ItemGroup>
+    <Page Include="AutoCAD\NOD\UI\TreeViewer\NODTreeViewer.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
     <Page Include="UI\Controls\BeamControls\BeamDimensionControl.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>

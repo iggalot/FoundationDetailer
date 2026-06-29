@@ -6,7 +6,9 @@
              xmlns:gb_summary_ctrl="clr-namespace:FoundationDetailsLibraryAutoCAD.UI.Controls.GradeBeamSummaryControl"
              xmlns:beam_dim="clr-namespace:FoundationDetailsLibraryAutoCAD.UI.Controls.BeamControls"
              xmlns:equal_ctrl="clr-namespace:FoundationDetailsLibraryAutoCAD.UI.Controls.EqualSpacingGBControl"
+             xmlns:tree_ctrl="clr-namespace:FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.UI.TreeViewer"
              Height="600" Width="400">
+
     <Grid Margin="5">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -25,6 +27,7 @@
         <!-- Main Controls -->
         <ScrollViewer Grid.Row="1">
             <StackPanel Orientation="Vertical" Margin="0,0,0,5" VerticalAlignment="Top">
+
                 <Button x:Name="BtnQuery" Content="Query NOD" Margin="0,5"/>
                 <Button x:Name="BtnReSync" Content="ReSync NOD" Margin="0,5"/>
                 <Button x:Name="BtnEraseNODFully" Content="EraseNODFully" Margin="0,5"/>
@@ -43,12 +46,14 @@
                                 <Ellipse x:Name="StatusCircle" Width="14" Height="14" Margin="0,0,5,0" Fill="Red" Stroke="Black"/>
                                 <TextBlock x:Name="TxtBoundaryStatus" Text="No boundary selected" VerticalAlignment="Center"/>
                             </StackPanel>
+
                             <StackPanel Orientation="Horizontal" Margin="4,2,0,0">
                                 <TextBlock Text="Width: " FontWeight="Bold" />
                                 <TextBlock x:Name="TxtBoundaryWidth" Width="40" />
                                 <TextBlock Text="Depth: " FontWeight="Bold" Margin="10,0,0,0"/>
                                 <TextBlock x:Name="TxtBoundaryDepth" Width="40" />
                             </StackPanel>
+
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
                                 <Button x:Name="BtnShowBoundary" Content="Show" Width="50" Margin="5"/>
                                 <Button x:Name="BtnZoomBoundary" Content="Zoom" Width="50" Margin="5"/>
@@ -68,7 +73,7 @@
 
                 <!-- Action Buttons -->
                 <StackPanel x:Name="ActionButtonsPanel" Orientation="Vertical" Margin="0,10,0,0">
-                    <!-- Replace the old prelim grade beam section with: -->
+
                     <gb_ctrl:PrelimGradeBeamControl x:Name="PrelimGBControl" Margin="0,5"/>
 
                     <StackPanel Orientation="Horizontal">
@@ -77,35 +82,34 @@
                         <Button x:Name="BtnRegenerateAll" Content="Regenerate" Width="90" Height="26" Margin="0,0,0,6"/>
                         <Button x:Name="BtnClearAllEdges" Content="Clear Edges" Width="90" Height="26" Margin="0,0,0,6"/>
                         <Button x:Name="BtnDeleteMultipleGradeBeamFromSelect" Content="Delete Multiple" Width="90" Height="26" Margin="0,0,0,6"/>
-
-
                     </StackPanel>
+
                     <gb_summary_ctrl:GradeBeamSummaryControl x:Name="GradeBeamSummary" Margin="0,5"/>
 
                     <Button x:Name="BtnDrawGradeBeamTable" Content="Draw Grade Beam Table" Margin="0,5"/>
-
                     <Button x:Name="BtnAddRebar" Content="Add Rebar Bars" Margin="0,5"/>
                     <Button x:Name="BtnAddStrands" Content="Add Strands" Margin="0,5"/>
 
-
-                    <!--<Button x:Name="BtnAddPiers" Content="Add Piers" Margin="0,5"/>
-                    
-                    -->
-                    <!-- Pier Control container -->
-                    <!--
-                    <StackPanel x:Name="PierContainer" Orientation="Vertical" Margin="0,10,0,0"/>
-                    
-                    <Button x:Name="BtnPreview" Content="Preview" Margin="0,2"/>
-                    <Button x:Name="BtnClearPreview" Content="Clear Preview" Margin="0,2"/>
-                    <Button x:Name="BtnCommit" Content="Commit to DWG" Margin="0,2"/>-->
                 </StackPanel>
+
+                <!-- ✅ TREE VIEWER HOST -->
+                <ContentControl x:Name="TreeViewerHost"
+                                Margin="0,10,0,0"/>
+
             </StackPanel>
         </ScrollViewer>
 
         <!-- Status Bar -->
-        <StackPanel Orientation="Horizontal" Grid.Row="3" HorizontalAlignment="Center" Margin="0,10,0,0">
+        <StackPanel Orientation="Horizontal"
+                    Grid.Row="3"
+                    HorizontalAlignment="Center"
+                    Margin="0,10,0,0">
+
             <TextBlock Text="Status:" Margin="10,0,2,0" VerticalAlignment="Center"/>
-            <TextBlock x:Name="TxtStatus" Text="Ready" FontStyle="Italic" VerticalAlignment="Center"/>
+            <TextBlock x:Name="TxtStatus"
+                       Text="Ready"
+                       FontStyle="Italic"
+                       VerticalAlignment="Center"/>
         </StackPanel>
     </Grid>
 </UserControl>

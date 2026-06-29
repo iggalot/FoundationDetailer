@@ -6,6 +6,7 @@ using FoundationDetailer.AutoCAD;
 using FoundationDetailer.Managers;
 using FoundationDetailsLibraryAutoCAD.AutoCAD;
 using FoundationDetailsLibraryAutoCAD.AutoCAD.NOD;
+using FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.UI.TreeViewer;
 using FoundationDetailsLibraryAutoCAD.Data;
 using FoundationDetailsLibraryAutoCAD.Managers;
 using FoundationDetailsLibraryAutoCAD.Services;
@@ -24,6 +25,8 @@ namespace FoundationDetailsLibraryAutoCAD.UI
 {
     public partial class PaletteMain : UserControl
     {
+        private NODTreeViewer _treeViewer;
+
         private readonly PolylineBoundaryManager _boundaryService = new PolylineBoundaryManager();
         private readonly GradeBeamManager _gradeBeamService = new GradeBeamManager();
         private readonly FoundationPersistenceManager _persistenceService = new FoundationPersistenceManager();
@@ -34,6 +37,8 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         public PaletteMain()
         {
             InitializeComponent();
+
+            InitializeTree();
 
             PolylineBoundaryManager.BoundaryChanged += OnBoundaryChanged;  // subscribe for the boundary changed event
 
@@ -60,6 +65,12 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             // Optional: auto-refresh on document switch
             Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.DocumentActivated += OnDocumentActivated;
 
+        }
+
+        private void InitializeTree()
+        {
+            _treeViewer = new NODTreeViewer();
+            TreeViewerHost.Content = _treeViewer;
         }
 
         private void WireEvents()
@@ -1024,9 +1035,9 @@ namespace FoundationDetailsLibraryAutoCAD.UI
         /// <summary>
         /// Rebuilds the TreeView based on the NOD tree and allows entity selection.
         /// </summary>
-        internal void UpdateTreeViewUI()
+        private void UpdateTreeViewUI()
         {
-
+            _treeViewer?.Refresh();
         }
     }
 }
