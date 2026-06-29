@@ -20,8 +20,8 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.UI.TreeViewer
             var root = new NODTreeNode("NOD Root");
 
             var nod = NODCore.GetFoundationRootDictionary(tr, db)
-                      ?? tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead) as DBDictionary; 
-            
+                      ?? tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead) as DBDictionary;
+
             if (nod == null)
                 return root;
 
@@ -34,7 +34,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.UI.TreeViewer
                 };
 
                 root.Children.Add(child);
-
                 TraverseObject(tr, entry.Value, child);
             }
 
@@ -69,46 +68,86 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.UI.TreeViewer
                     };
 
                     parent.Children.Add(child);
-
                     TraverseObject(tr, entry.Value, child);
                 }
                 return;
             }
 
             // ---------------------------
-            // XRecord
-            // ---------------------------
-            // ---------------------------
-            // XRecord (compressed to single line)
+            // XRecord (robust key → grouped values)
             // ---------------------------
             var xrec = obj as Xrecord;
             if (xrec != null)
             {
-                var xrecNode = new NODTreeNode("XRecord");
-
-                // Build one-line representation of all values
                 ResultBuffer rb = xrec.Data;
 
                 if (rb == null)
                 {
-                    xrecNode.Value = "<empty>";
-                    parent.Children.Add(xrecNode);
+                    parent.Children.Add(new NODTreeNode
+                    {
+                        Name = "XRecord",
+                        NodeType = "XRecord",
+                        Value = "<empty>"
+                    });
                     return;
                 }
 
-                List<string> parts = new List<string>();
-
-                foreach (TypedValue tv in rb)
+                using (rb)
                 {
-                    parts.Add(TypedValueToString(tv));
+                    TypedValue[] values = rb.AsArray();
+
+                    string currentKey = null;
+                    List<string> buffer = new List<string>();
+
+                    for (int i = 0; i < values.Length; i++)
+                    {
+                        TypedValue tv = values[i];
+                        string text = TypedValueToString(tv);
+
+                        bool isKey =
+                            tv.TypeCode == (short)DxfCode.ExtendedDataAsciiString ||
+                            tv.TypeCode == (short)DxfCode.Text;
+
+                        // ---------------------------
+                        // NEW KEY FOUND → flush previous
+                        // ---------------------------
+                        if (isKey)
+                        {
+                            if (currentKey != null)
+                            {
+                                parent.Children.Add(new NODTreeNode
+                                {
+                                    Name = currentKey + " → " + string.Join(" | ", buffer),
+                                    NodeType = "XRecord"
+                                });
+
+                                buffer.Clear();
+                            }
+
+                            currentKey = text;
+                            continue;
+                        }
+
+                        // ---------------------------
+                        // VALUE (ANY TYPE)
+                        // ---------------------------
+                        if (currentKey != null)
+                        {
+                            buffer.Add(text);
+                        }
+                    }
+
+                    // flush last group
+                    if (currentKey != null)
+                    {
+                        parent.Children.Add(new NODTreeNode
+                        {
+                            Name = currentKey + " → " + string.Join(" | ", buffer),
+                            NodeType = "XRecord"
+                        });
+                    }
                 }
 
-                rb.Dispose();
-
-                // IMPORTANT: single-line compression
-                xrecNode.Value = string.Join(" | ", parts);
-
-                parent.Children.Add(xrecNode);
                 return;
             }
 
@@ -124,7 +163,7 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.UI.TreeViewer
 
         /// <summary>
         /// Converts TypedValue into readable string (C# 7.3 safe).
-        /// Uses DxfCode enum for stability and readability.
+        /// Uses DXF codes for stability across AutoCAD versions.
         /// </summary>
         private static string TypedValueToString(TypedValue tv)
         {
@@ -135,37 +174,30 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.UI.TreeViewer
             string typeName = GetDxfTypeName(code);
 
             if (code == (short)DxfCode.Text)
-                return "String: " + (tv.Value ?? "");
+                return (tv.Value ?? "").ToString();
+
+            if (code == (short)DxfCode.ExtendedDataAsciiString)
+                return (tv.Value ?? "").ToString();
 
             if (code == (short)DxfCode.Real)
-                return "Double: " + tv.Value;
+                return (tv.Value ?? "").ToString();
 
             if (code == (short)DxfCode.Int16)
-                return "Int16: " + tv.Value;
+                return (tv.Value ?? "").ToString();
 
             if (code == (short)DxfCode.Int32)
-                return "Int32: " + tv.Value;
+                return (tv.Value ?? "").ToString();
 
-            // These are individual components of a point, not a full point
-            if (IsCoordinatePair(code))
-                return typeName + ": " + tv.Value;
-
-            if (code == (short)DxfCode.ExtendedDataRegAppName)
-                return "AppName: " + (tv.Value ?? "");
+            if (code == (short)DxfCode.XCoordinate ||
+                code == (short)DxfCode.YCoordinate ||
+                code == (short)DxfCode.ZCoordinate)
+                return (tv.Value ?? "").ToString();
 
             return typeName + ": " + (tv.Value ?? "").ToString();
         }
 
-        private static bool IsCoordinatePair(short code)
-        {
-            return code == (short)DxfCode.XCoordinate ||
-                   code == (short)DxfCode.YCoordinate ||
-                   code == (short)DxfCode.ZCoordinate;
-        }
-
         /// <summary>
         /// Maps DXF type codes to human-readable names.
-        /// Includes safe fallback for unknown/unsupported codes.
         /// </summary>
         private static string GetDxfTypeName(short code)
         {
@@ -185,6 +217,9 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.UI.TreeViewer
                 code == (short)DxfCode.YCoordinate ||
                 code == (short)DxfCode.ZCoordinate)
                 return "Coordinate";
+
+            if (code == (short)DxfCode.ExtendedDataAsciiString)
+                return "String";
 
             if (code == (short)DxfCode.ExtendedDataRegAppName)
                 return "AppName";
