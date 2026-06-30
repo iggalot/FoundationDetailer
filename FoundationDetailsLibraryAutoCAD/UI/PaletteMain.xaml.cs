@@ -956,19 +956,39 @@ namespace FoundationDetailsLibraryAutoCAD.UI
             }
         }
 
-
         private void BtnNEqualSpaces_Click(object sender, RoutedEventArgs e)
         {
             var doc = CurrentContext.Document;
             var ed = doc.Editor;
 
-            // get the interpolated points.
-            (Point3d? start, Point3d? end) = AutoCADEditorPromptService.PromptForSpacingPoints(CurrentContext);
+            string mode = AutoCADEditorPromptService
+                        .PromptForSpacingSource(CurrentContext);
+
+            if (mode == null)
+                return;
+
+            Point3d? start = null;
+            Point3d? end = null;
+
+            // switch the prompt based on the mode
+            if (mode == "Edge")
+            {
+                (start, end) = AutoCADEditorPromptService
+                        .PromptForBoundaryEdge(CurrentContext);
+            }
+            else
+            {
+                (start, end) =
+                    AutoCADEditorPromptService
+                        .PromptForSpacingPoints(CurrentContext);
+            }
+
             if (start == null || end == null)
             {
-                ed.WriteMessage("No points selected.");
+                ed.WriteMessage("\nNo valid spacing definition selected.");
                 return;
             }
+
             var spaces = AutoCADEditorPromptService.PromptForEqualSpacingCount(CurrentContext);
             if (spaces <= 1)
             {

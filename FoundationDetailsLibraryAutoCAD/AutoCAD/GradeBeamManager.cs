@@ -66,7 +66,8 @@ namespace FoundationDetailer.AutoCAD
                 horizMax,
                 vertMin,
                 vertMax,
-                vertexCount
+                vertexCount,
+                false  // don't include the first and last of the intervals
             );
 
             using (context.Document.LockDocument())

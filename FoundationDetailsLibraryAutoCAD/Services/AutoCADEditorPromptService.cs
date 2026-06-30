@@ -1,8 +1,10 @@
 ﻿using Autodesk.AutoCAD.ApplicationServices;
+using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using FoundationDetailsLibraryAutoCAD.Data;
 using FoundationDetailsLibraryAutoCAD.UI.Controls.EqualSpacingGBControl;
+using System;
 
 namespace FoundationDetailsLibraryAutoCAD.Services
 {
@@ -65,6 +67,79 @@ namespace FoundationDetailsLibraryAutoCAD.Services
 
             return res.Value;
         }
+
+        public static string PromptForSpacingSource(FoundationContext context)
+        {
+            Editor ed = context.Document.Editor;
+
+            PromptKeywordOptions pko =
+                new PromptKeywordOptions(
+                    "\nSelect spacing source [Points/Edge] <Points>: ");
+
+            pko.Keywords.Add("Points");
+            pko.Keywords.Add("Edge");
+            pko.Keywords.Default = "Edge";
+            pko.AllowNone = true;
+
+            PromptResult res = ed.GetKeywords(pko);
+
+            if (res.Status != PromptStatus.OK)
+                return null;
+
+            return string.IsNullOrWhiteSpace(res.StringResult)
+                ? "Edge"
+                : res.StringResult;
+        }
+
+        public static (Point3d? Start, Point3d? End) PromptForBoundaryEdge(FoundationContext context)
+        {
+            Document doc = context.Document;
+            Database db = doc.Database;
+            Editor ed = doc.Editor;
+
+            PromptEntityOptions peo =
+                new PromptEntityOptions("\nSelect boundary edge: ");
+
+            peo.SetRejectMessage("\nSelect a closed polyline only.");
+            peo.AddAllowedClass(typeof(Polyline), false);
+
+            PromptEntityResult per = ed.GetEntity(peo);
+
+            if (per.Status != PromptStatus.OK)
+                return (null, null);
+
+            using (Transaction tr = db.TransactionManager.StartTransaction())
+            {
+                Polyline pl =
+                    tr.GetObject(per.ObjectId, OpenMode.ForRead) as Polyline;
+
+                if (pl == null || !pl.Closed)
+                {
+                    ed.WriteMessage("\nSelected object must be a closed polyline.");
+                    return (null, null);
+                }
+
+                // Snap pick to polyline
+                Point3d snapped =
+                    pl.GetClosestPointTo(per.PickedPoint, false);
+
+                double param = pl.GetParameterAtPoint(snapped);
+
+                int i = (int)Math.Floor(param);
+                if (i >= pl.NumberOfVertices)
+                    i = pl.NumberOfVertices - 1;
+
+                int j = (i + 1) % pl.NumberOfVertices;
+
+                Point3d start = pl.GetPoint3dAt(i);
+                Point3d end = pl.GetPoint3dAt(j);
+
+                tr.Commit();
+
+                return (start, end);
+            }
+        }
+
         public static SpacingDirections? PromptForSpacingDirection(FoundationContext context)
         {
             if (context == null)

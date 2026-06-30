@@ -8,13 +8,13 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
     public static class GridlineManager
     {
         public static (List<List<Point3d>> Horizontal, List<List<Point3d>> Vertical)
-            ComputeBothGridlines(Polyline pl, double horiz_min, double horiz_max, double vert_min, double vert_max, int vertexCount)
+            ComputeBothGridlines(Polyline pl, double horiz_min, double horiz_max, double vert_min, double vert_max, int vertexCount, bool include_ends)
         {
             ValidateInputs(pl, horiz_min, horiz_max, vert_min, vert_max, vertexCount);
 
             return (
-                ComputeGridlines(pl, horiz_max, vertexCount, horizontal: true), // horiz prelim lines
-                ComputeGridlines(pl, vert_max, vertexCount, horizontal: false)  // vert prelim lines
+                ComputeGridlines(pl, horiz_max, vertexCount, horizontal: true, inclusive_ends: include_ends), // horiz prelim lines
+                ComputeGridlines(pl, vert_max, vertexCount, horizontal: false, inclusive_ends: include_ends)  // vert prelim lines
             );
         }
 
@@ -38,7 +38,7 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
             if (vertexCount < 2) throw new ArgumentException("vertexCount must be >= 2.", nameof(vertexCount));
         }
 
-        private static List<List<Point3d>> ComputeGridlines(Polyline pl, double maxSpacing, int vertexCount, bool horizontal)
+        private static List<List<Point3d>> ComputeGridlines(Polyline pl, double maxSpacing, int vertexCount, bool horizontal, bool inclusive_ends)
         {
             var ext = pl.GeometricExtents;
             double minX = ext.MinPoint.X, maxX = ext.MaxPoint.X;
@@ -53,8 +53,16 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
 
             var result = new List<List<Point3d>>(intervals + 1); // +1 for end line
 
-            // Loop from 0 to intervals inclusive to include both ends
-            for (int i = 0; i <= intervals; i++)
+            int lower = 0;
+            int upper = intervals;
+
+            if (inclusive_ends is false)
+            {
+                lower = 1;
+                upper = intervals - 1;
+            }
+            // Loop from 1 to intervals-1 to exclude both ends 
+            for (int i = lower; i <= upper; i++)
             {
                 double c = (horizontal ? minY : minX) + i * spacing;
                 Point3d start = horizontal ? new Point3d(minX, c, 0) : new Point3d(c, minY, 0);
