@@ -123,47 +123,85 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
             out Point3d p2)
         {
             const double eps = 1e-9;
+
             p1 = Point3d.Origin;
             p2 = Point3d.Origin;
 
             if (pl == null || pl.NumberOfVertices < 2)
                 return false;
 
-            var intersections = new List<Point3d>();
+            dir = dir.GetNormal();
 
-            // Loop through all polyline segments
-            for (int i = 0; i < pl.NumberOfVertices - 1; i++)
+            // Compute a safe large length based on polyline size
+            var ext = pl.GeometricExtents;
+            double diag =
+                Math.Sqrt(
+                    Math.Pow(ext.MaxPoint.X - ext.MinPoint.X, 2) +
+                    Math.Pow(ext.MaxPoint.Y - ext.MinPoint.Y, 2));
+
+            double L = diag * 2.0 + 100.0;
+
+            Point3d A = origin - dir * L;
+            Point3d B = origin + dir * L;
+
+            var hits = new List<double>();
+
+            int n = pl.NumberOfVertices;
+
+            for (int i = 0; i < n; i++)
             {
-                Point3d a = pl.GetPoint3dAt(i);
-                Point3d b = pl.GetPoint3dAt(i + 1);
+                Point3d c1 = pl.GetPoint3dAt(i);
+                Point3d c2 = pl.GetPoint3dAt((i + 1) % n);
 
-                if (TryIntersectLineSegment(origin, dir, a, b, out Point3d pt))
+                if (!pl.Closed && i == n - 1)
+                    break;
+
+                if (TryIntersectSegments(A, B, c1, c2, out Point3d hit))
                 {
-                    intersections.Add(pt);
+                    double t = (hit - origin).DotProduct(dir);
+                    hits.Add(t);
                 }
             }
 
-            // If polyline is closed, include last segment
-            if (pl.Closed)
-            {
-                if (TryIntersectLineSegment(origin, dir, pl.GetPoint3dAt(pl.NumberOfVertices - 1), pl.GetPoint3dAt(0), out Point3d pt))
-                    intersections.Add(pt);
-            }
-
-            if (intersections.Count < 2)
+            if (hits.Count < 2)
                 return false;
 
-            // Sort points along the line direction
-            intersections.Sort((x, y) =>
-            {
-                double dx = (x - origin).DotProduct(dir);
-                double dy = (y - origin).DotProduct(dir);
-                return dx.CompareTo(dy);
-            });
+            hits.Sort();
 
-            // Return the two outermost points along the line
-            p1 = intersections.First();
-            p2 = intersections.Last();
+            p1 = origin + dir * hits.First();
+            p2 = origin + dir * hits.Last();
+
+            return true;
+        }
+
+        private static bool TryIntersectSegments(
+    Point3d p1, Point3d p2,
+    Point3d p3, Point3d p4,
+    out Point3d intersection)
+        {
+            const double eps = 1e-9;
+
+            intersection = Point3d.Origin;
+
+            Vector3d r = p2 - p1;
+            Vector3d s = p4 - p3;
+
+            double rxs = r.X * s.Y - r.Y * s.X;
+            double qpxr = (p3 - p1).X * r.Y - (p3 - p1).Y * r.X;
+
+            if (Math.Abs(rxs) < eps)
+                return false; // parallel or collinear
+
+            double t = ((p3 - p1).X * s.Y - (p3 - p1).Y * s.X) / rxs;
+            double u = qpxr / rxs;
+
+            if (t < -eps || t > 1 + eps)
+                return false;
+
+            if (u < -eps || u > 1 + eps)
+                return false;
+
+            intersection = p1 + r * t;
             return true;
         }
 
@@ -456,27 +494,48 @@ namespace FoundationDetailsLibraryAutoCAD.Managers
         /// Checks intersection of infinite line (origin + t*dir) with a segment [a,b].
         /// Returns true if they intersect and outputs the intersection point.
         /// </summary>
-        private static bool TryIntersectLineSegment(Point3d origin, Vector3d dir, Point3d a, Point3d b, out Point3d intersection)
+        private static bool TryIntersectLineSegment(
+            Point3d origin,
+            Vector3d dir,
+            Point3d a,
+            Point3d b,
+            out Point3d intersection)
         {
+            const double eps = 1e-9;
+
             intersection = Point3d.Origin;
 
-            // Represent segment as vector
             Vector3d seg = b - a;
 
-            // Solve for t (line) and u (segment)
-            double det = dir.X * seg.Y - dir.Y * seg.X;
+            double dx = dir.X;
+            double dy = dir.Y;
 
-            if (Math.Abs(det) < 1e-9)
-                return false; // Parallel lines
+            double sx = seg.X;
+            double sy = seg.Y;
 
-            double t = ((a.X - origin.X) * seg.Y - (a.Y - origin.Y) * seg.X) / det;
-            double u = ((a.X - origin.X) * dir.Y - (a.Y - origin.Y) * dir.X) / det;
+            double ax = a.X - origin.X;
+            double ay = a.Y - origin.Y;
 
-            if (u < -1e-9 || u > 1.0 + 1e-9)
-                return false; // Intersection is outside segment
+            double det = dx * sy - dy * sx;
 
-            // Intersection point
-            intersection = origin + dir * t;
+            if (Math.Abs(det) < eps)
+                return false;
+
+            double t = (ax * sy - ay * sx) / det;
+            double u = (ax * dy - ay * dx) / det;
+
+            if (u < -eps || u > 1.0 + eps)
+                return false;
+
+            if (t < -eps)
+                return false;
+
+            intersection = new Point3d(
+                origin.X + t * dx,
+                origin.Y + t * dy,
+                origin.Z
+            );
+
             return true;
         }
 
