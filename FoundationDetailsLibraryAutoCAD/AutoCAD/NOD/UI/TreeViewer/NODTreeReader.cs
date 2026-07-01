@@ -19,7 +19,6 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.UI.TreeViewer
         {
             var root = new NODTreeNode("NOD Root");
 
-            // IMPORTANT: use foundation root if available
             var nod = NODCore.GetFoundationRootDictionary(tr, db)
                       ?? tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead) as DBDictionary;
 
@@ -37,9 +36,22 @@ namespace FoundationDetailsLibraryAutoCAD.AutoCAD.NOD.UI.TreeViewer
                 if (LooksLikeHandle(entry.Key))
                     child.AutoCADHandle = entry.Key;
 
-                if (TraverseObject(tr, entry.Value, child))
+                bool isProtectedRoot =
+                    Array.IndexOf(NODCore.KNOWN_ROOT_SUBDIRS, entry.Key) >= 0;
+
+                // ALWAYS keep root-level known directories
+                if (isProtectedRoot)
                 {
+                    TraverseObject(tr, entry.Value, child);
                     root.Children.Add(child);
+                }
+                else
+                {
+                    // normal behavior: prune if empty
+                    if (TraverseObject(tr, entry.Value, child))
+                    {
+                        root.Children.Add(child);
+                    }
                 }
             }
 
